@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+
+/* EDITH 테마 — 차가운 회색 바탕에 인디고 포인트. 어두운 화면은 OS 설정을 따른다.
+   코드·터미널 출력은 밝은 화면에서도 어두운 판(--code)에 그려 색이 잘 보이게 한다. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.004 270);
+  --foreground: oklch(0.24 0.025 270);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.025 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.025 270);
+  --primary: oklch(0.54 0.2 277);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.955 0.01 270);
+  --secondary-foreground: oklch(0.3 0.03 270);
+  --muted: oklch(0.955 0.008 270);
+  --muted-foreground: oklch(0.52 0.025 270);
+  --accent: oklch(0.95 0.025 277);
+  --accent-foreground: oklch(0.36 0.12 277);
+  --destructive: oklch(0.58 0.22 25);
+  --border: oklch(0.91 0.01 270);
+  --input: oklch(0.9 0.012 270);
+  --ring: oklch(0.6 0.17 277);
+  --sidebar: oklch(0.97 0.007 270);
+  --code: oklch(0.2 0.02 270);
+  --code-foreground: oklch(0.92 0.01 270);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.165 0.014 270);
+    --foreground: oklch(0.93 0.008 270);
+    --card: oklch(0.2 0.016 270);
+    --card-foreground: oklch(0.93 0.008 270);
+    --popover: oklch(0.22 0.018 270);
+    --popover-foreground: oklch(0.93 0.008 270);
+    --primary: oklch(0.7 0.16 277);
+    --primary-foreground: oklch(0.18 0.03 277);
+    --secondary: oklch(0.25 0.018 270);
+    --secondary-foreground: oklch(0.9 0.01 270);
+    --muted: oklch(0.24 0.016 270);
+    --muted-foreground: oklch(0.68 0.02 270);
+    --accent: oklch(0.28 0.05 277);
+    --accent-foreground: oklch(0.86 0.08 277);
+    --destructive: oklch(0.68 0.19 22);
+    --border: oklch(1 0 0 / 9%);
+    --input: oklch(1 0 0 / 14%);
+    --ring: oklch(0.65 0.15 277);
+    --sidebar: oklch(0.185 0.015 270);
+    --code: oklch(0.13 0.012 270);
+    --code-foreground: oklch(0.9 0.01 270);
+  }
+}
+
+@theme inline {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, "D2Coding", ui-monospace, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-code: var(--code);
+  --color-code-foreground: var(--code-foreground);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  /* 글씨를 조금 크고 진하게 — 기준 크기 106%(16→17px), 본문 굵기 450(Pretendard 가변 글꼴). 글자 크기는 모두 rem 이라 같이 커진다(터미널 칸은 px 그대로) */
+  html { font-size: 106.25%; }
+  body { @apply bg-background font-sans text-foreground antialiased; font-weight: 450; font-feature-settings: "ss01", "tnum"; }
+  ::selection { background: color-mix(in oklch, var(--primary) 25%, transparent); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { border-radius: 9999px; border: 3px solid transparent; background: color-mix(in oklch, var(--muted-foreground) 35%, transparent) padding-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+/* 어두운 코드·출력 판 — 코드 블록, 도구 결과, 셸 출력, 진행 화면 */
+@utility code-panel { @apply overflow-x-auto rounded-lg bg-code px-3 py-2 font-mono text-xs leading-relaxed text-code-foreground; }
+
+/* 마크다운(Claude 답 · result.md · 작업 문서) */
+.md { @apply space-y-3 text-[0.84375rem] leading-[1.75] text-foreground; }
+.md h1 { @apply text-lg font-bold tracking-tight; }
+.md h2 { @apply mt-6 border-b pb-1 text-base font-bold tracking-tight; }
+.md h3 { @apply mt-4 text-sm font-semibold text-accent-foreground; }
+.md strong { @apply font-semibold text-foreground; }
+.md em { @apply text-muted-foreground; }
+.md ul { @apply list-disc space-y-1 pl-5 marker:text-primary/70; }
+.md ol { @apply list-decimal space-y-1 pl-5 marker:font-semibold marker:text-primary/70; }
+.md a { @apply font-medium text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary; }
+.md hr { @apply my-4; }
+.md table { @apply w-full border-collapse overflow-hidden rounded-md text-xs; }
+.md th { @apply border bg-muted px-2.5 py-1.5 text-left font-semibold; }
+.md td { @apply border px-2.5 py-1.5 align-top; }
+.md tr:nth-child(even) td { @apply bg-muted/40; }
+.md :not(pre) > code { @apply rounded-md bg-accent px-1.5 py-0.5 font-mono text-[0.75rem] text-accent-foreground; }
+.md pre { @apply code-panel; }
+.md pre code { @apply bg-transparent p-0 text-code-foreground; }
+.md blockquote { @apply rounded-r-md border-l-4 border-primary/50 bg-accent/40 py-1 pl-3 text-muted-foreground; }
+
+/* 코드 문법 색(highlight.js) — 어두운 판 기준 */
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag { color: oklch(0.78 0.13 300); }
+.hljs-string, .hljs-regexp, .hljs-addition { color: oklch(0.8 0.13 150); }
+.hljs-number, .hljs-literal, .hljs-symbol { color: oklch(0.82 0.13 75); }
+.hljs-comment, .hljs-quote { color: oklch(0.6 0.02 270); font-style: italic; }
+.hljs-title, .hljs-section, .hljs-function .hljs-title { color: oklch(0.8 0.11 235); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable { color: oklch(0.82 0.09 210); }
+.hljs-built_in, .hljs-type, .hljs-class .hljs-title { color: oklch(0.85 0.11 95); }
+.hljs-meta, .hljs-tag { color: oklch(0.7 0.05 270); }
+.hljs-name { color: oklch(0.78 0.14 15); }
+.hljs-deletion { color: oklch(0.72 0.16 25); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
+/* diff 본문(밝은 화면) — 밝은 판에 맞춘 문법 색(GitHub 계열). 어두운 화면은 위 색 그대로 */
+@media not (prefers-color-scheme: dark) {
+  .diff-code .hljs-keyword, .diff-code .hljs-selector-tag, .diff-code .hljs-doctag { color: #cf222e; }
+  .diff-code .hljs-string, .diff-code .hljs-regexp { color: #0a3069; }
+  .diff-code .hljs-number, .diff-code .hljs-literal, .diff-code .hljs-symbol { color: #0550ae; }
+  .diff-code .hljs-comment, .diff-code .hljs-quote { color: #6e7781; }
+  .diff-code .hljs-title, .diff-code .hljs-section, .diff-code .hljs-function .hljs-title { color: #8250df; }
+  .diff-code .hljs-attr, .diff-code .hljs-attribute, .diff-code .hljs-property, .diff-code .hljs-variable, .diff-code .hljs-template-variable { color: #0550ae; }
+  .diff-code .hljs-built_in, .diff-code .hljs-type, .diff-code .hljs-class .hljs-title { color: #953800; }
+  .diff-code .hljs-meta, .diff-code .hljs-tag { color: #6e7781; }
+  .diff-code .hljs-name { color: #116329; }
+}

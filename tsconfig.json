@@ -1,0 +1,16 @@
+{
+  // 실행은 node 의 type stripping 으로 빌드 없이 한다(`node src/cli.ts`). tsc 는 타입 검사만.
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}

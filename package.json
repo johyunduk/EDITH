@@ -1,0 +1,24 @@
+{
+  "name": "edith",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Browser console for herdr — watch and drive Claude Code and Codex panes",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "edith": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "node src/cli.ts serve",
+    "build": "npm --prefix web ci && npm --prefix web run build",
+    "test": "node --test",
+    "typecheck": "tsc && npm --prefix web run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
+  }
+}
