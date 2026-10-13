@@ -349,8 +349,9 @@ function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
         {/* 둘째 줄 하나에 pane 이름·사용량·경로(홈은 ~, 길면 자름 — 복사는 전체 경로)·칸 보기 전환을 모아 본문 자리를 넓힌다 */}
         <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
           <Kind agent={p.agent} /><span className="shrink-0 text-foreground">{paneText(p)}</span>
-          <span className="shrink-0">{p.agent && `· ${p.agent}`}{p.name && ` ${p.name}`} · {p.id}</span>
-          <span className="ml-1.5"><Usage p={p} /></span>
+          <span className="shrink-0">{p.name && `· ${p.name} `}· {p.id}</span>{/* 종류(claude·codex)는 앞 아이콘이 보여 준다 */}
+          {/* 탭 전체 칸 보기면 칸마다 머리에 사용량이 있으니 여기서는 뺀다(중복) — 이 pane 만 볼 때만 여기 */}
+          {!(multi && mode === 'tab' && !diffOn) && <span className="ml-1.5"><Usage p={p} /></span>}
           <span className="ml-1.5 min-w-0 truncate font-mono text-xs" title={p.cwd}>{p.cwd.replace(/^\/(Users|home)\/[^/]+/, '~')}</span>
           <button onClick={() => void copyText(p.cwd)} title="경로 복사" className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground"><Icon className="size-3.5">{COPY}</Icon></button>
           {multi && !diffOn && <div className="ml-auto flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5">{pick('tab', `탭 전체 ${lay!.panes.length}칸`)}{pick('one', '이 pane 만')}</div>}

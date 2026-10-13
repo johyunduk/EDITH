@@ -184,16 +184,28 @@ function titleOf(file: string) {
   return custom || ai;
 }
 
+// 붙잡은 파일보다 나중에 만든, 제목이 같은 세션 파일 중 가장 새것.
+export function newerSame(held: string, files: string[], title: string) {
+  const born = (f: string) => statSync(f).birthtimeMs, b = born(held);
+  return files.filter(f => f !== held && born(f) > b).sort((x, y) => born(y) - born(x)).find(f => titleOf(f) === title);
+}
+
 // pane → 세션 파일. 제목이 바뀌지 않는 동안은 다시 찾지 않는다(제목 찾기는 파일 전체를 읽는다).
 const picked = new Map<string, { title: string; file: string }>();
 function claudeFile(pane: string, cwd: string, title: string, others: string[]) {
   if (!title || title === 'Claude Code') return null;
-  const hit = picked.get(pane);
-  if (hit && hit.title === title && existsSync(hit.file)) return hit.file;
   const dir = transcriptDir(cwd);
   if (!existsSync(dir)) return null;
-  const files = readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f))
-    .map(f => ({ f, m: statSync(f).mtimeMs })).sort((a, b) => b.m - a.m).slice(0, 8).map(x => x.f);
+  const all = readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f));
+  const hit = picked.get(pane);
+  if (hit && hit.title === title && existsSync(hit.file)) {
+    // /clear 는 같은 제목(이름 붙인 세션)으로 새 세션 파일을 만든다 — 붙잡은 파일보다 나중에 만든 같은 제목 파일이 있으면 그쪽으로 옮긴다
+    const moved = newerSame(hit.file, all, title);
+    if (!moved) return hit.file;
+    picked.set(pane, { title, file: moved });
+    return moved;
+  }
+  const files = all.map(f => ({ f, m: statSync(f).mtimeMs })).sort((a, b) => b.m - a.m).slice(0, 8).map(x => x.f);
   // 제목이 안 맞으면 다른 pane 이 안 쓰는 최근 파일로 — 단 이 pane 에 에이전트가 새로 떴으면 그 뒤에 만든 파일만(옛 세션을 붙이지 않게)
   const since = agentSince(pane);
   const own = (f: string) => since === undefined || statSync(f).birthtimeMs >= since - 60_000;
