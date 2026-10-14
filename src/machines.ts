@@ -11,7 +11,7 @@ import { hostname } from 'node:os';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { CONFIG_DIR, HOME } from './config.ts';
+import { CONFIG_DIR, DATA_DIR, HOME } from './config.ts';
 import { q, sh } from './sh.ts';
 
 export type Machine = { name: string; ssh: string; port: number; local: number };
@@ -86,10 +86,23 @@ export async function openMachine(name: string) {
   return `http://127.0.0.1:${m.local}/?key=${key}`;
 }
 
-// edith connect — 이 기기에서 그 기기로 비밀번호 없이(키) 들어가게 하고 machines.json 에 적는다.
-// 키가 없으면 ~/.ssh/id_ed25519 를 만든다(암호 없이 — ssh 가 기본으로 쓰는 키). 등록할 때만 그 기기 비밀번호를 한 번 묻는다.
+// 다른 기기 잇기(edith connect·화면의 「다른 기기 잇기」) — 이 기기에서 그 기기로 비밀번호 없이(키) 들어가게 하고 machines.json 에 적는다.
+// 키가 없으면 ~/.ssh/id_ed25519 를 만든다(암호 없이 — ssh 가 기본으로 쓰는 키). 등록할 때만 그 기기 비밀번호를 한 번 쓴다:
+// 터미널이면 ssh 가 직접 묻고, 화면이면 받은 비밀번호를 SSH_ASKPASS 로 넘긴다(파일·로그에 남기지 않는다).
 // 처음 보는 기기의 호스트 키는 받아 둔다(accept-new) — Tailscale·VPN 안의 기기라는 전제.
-const batchOk = (target: string) => spawnSync('ssh', [...SSH, '-o', 'StrictHostKeyChecking=accept-new', target, 'exit'], { stdio: 'ignore', timeout: 20_000 }).status === 0;
+// ponytail: 화면에서 잇기는 macOS·Linux 만(Windows 는 SSH_ASKPASS 가 달라 edith connect 로). 비밀번호는 ssh 가 도는 몇 초 동안 그 프로세스 환경에 있다.
+const batchOk = async (target: string) => (await sh('ssh', [...SSH, '-o', 'StrictHostKeyChecking=accept-new', target, 'exit'], { ok: true, timeoutMs: 20_000 }).catch(() => null))?.code === 0;
+const ASKPASS = join(DATA_DIR, 'askpass.sh');
+function askpass(password: string) {
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(ASKPASS, '#!/bin/sh\nprintf \'%s\\n\' "$EDITH_SSH_PASSWORD"\n', { mode: 0o700 });
+  return { ...process.env, SSH_ASKPASS: ASKPASS, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: process.env.DISPLAY ?? ':0', EDITH_SSH_PASSWORD: password };
+}
+// ssh 오류 끝줄 → 알아듣기 쉬운 말
+const why = (err: string) => /Connection refused/i.test(err) ? '그 기기의 원격 로그인(Remote Login)이 꺼져 있다'
+  : /Permission denied/i.test(err) ? '사용자 이름이나 비밀번호가 맞지 않다'
+  : /resolve|timed out|No route|unreachable/i.test(err) ? '그 기기에 닿지 않는다 — Tailscale(또는 VPN) 연결을 확인한다'
+  : err.trim().split('\n').pop() || '알 수 없는 이유';
 function ensureKey() {
   const dir = join(HOME, '.ssh'), file = join(dir, 'id_ed25519');
   if (!existsSync(`${file}.pub`)) {
@@ -98,16 +111,18 @@ function ensureKey() {
   }
   return readFileSync(`${file}.pub`, 'utf8').trim();
 }
-export async function connectMachine(name: string, target: string, log: (m: string) => void) {
-  if (!name.trim()) throw new Error('기기 이름이 비었다');
+export async function connectMachine(name: string, target: string, log: (m: string) => void, password?: string) {
+  if (!name.trim() || name.length > 40) throw new Error('기기 이름은 1~40자');
   if (!SSH_TARGET.test(target)) throw new Error('SSH 대상은 user@host 꼴(글자·숫자·.-_@, - 로 시작하지 않게)');
-  if (batchOk(target)) log(`${target} — 이미 키로 들어가진다`);
+  if (await batchOk(target)) log(`${target} — 이미 키로 들어가진다`);
   else {
     const pub = ensureKey();
-    log(`${target} 에 이 기기 키를 등록한다 — 그 기기 비밀번호를 한 번 묻는다(그 기기의 원격 로그인이 켜져 있어야 한다)`);
     const add = `umask 077; mkdir -p .ssh && touch .ssh/authorized_keys && (grep -qxF ${q(pub)} .ssh/authorized_keys || echo ${q(pub)} >> .ssh/authorized_keys)`;
-    spawnSync('ssh', ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10', target, add], { stdio: 'inherit' });
-    if (!batchOk(target)) throw new Error(`${target} 에 키로 들어가지 못했다 — 주소·사용자 이름, 그 기기의 원격 로그인(SSH)을 확인한다`);
+    const args = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10', '-o', 'NumberOfPasswordPrompts=1', target, add];
+    let err = '';
+    if (password) err = (await sh('ssh', args, { ok: true, timeoutMs: 30_000, env: askpass(password) }).catch((e: Error) => ({ stderr: e.message }))).stderr;
+    else { log(`${target} 에 이 기기 키를 등록한다 — 그 기기 비밀번호를 한 번 묻는다(그 기기의 원격 로그인이 켜져 있어야 한다)`); spawnSync('ssh', args, { stdio: 'inherit' }); }
+    if (!(await batchOk(target))) throw new Error(`${target} 에 들어가지 못했다 — ${err ? why(err) : '주소·사용자 이름, 그 기기의 원격 로그인(SSH)을 확인한다'}`);
     log('키 등록 끝');
   }
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });

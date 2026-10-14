@@ -139,8 +139,8 @@ EDITH 는 그 기기의 herdr 만 봅니다. 집에서 회사 PC 의 herdr·대�
 
 1. **두 기기를 잇는다** — [Tailscale](https://tailscale.com)(개인 무료)을 두 기기에 깔고 같은 계정으로 로그인합니다. 회사 PC 에 이미 VPN 이 있으면 같이 쓸 수 있는지, 회사 규정에 맞는지 먼저 확인합니다. 집에서 회사 VPN 에 들어갈 수 있으면 그것도 됩니다.
 2. **회사 PC 에 SSH 를 켠다** — macOS: 시스템 설정 → 일반 → 공유 → 원격 로그인. Linux: `openssh-server`. Windows 를 열리는 쪽으로 쓰려면 설정 → 선택적 기능에서 OpenSSH 서버를 켜고, 키는 손으로 등록합니다(`edith connect` 의 키 등록은 macOS·Linux 만 — Windows 쪽은 아직 실기기 확인 전).
-3. **집 PC 에서 `edith connect`** — Tailscale 에 붙은 기기 목록에서 회사 PC 를 고르고, 그 기기 사용자 이름·EDITH 에 보일 이름(예: 회사)을 넣습니다. 이렇게 합니다:
-   - SSH 키가 없으면 `~/.ssh/id_ed25519` 를 만들고, 회사 PC 에 등록합니다 — **회사 PC 비밀번호를 한 번** 묻습니다.
+3. **집 EDITH 사이드 메뉴 아래 「+ 다른 기기 잇기」**(터미널이면 `edith connect`) — Tailscale 에 붙은 기기 목록에서 회사 PC 를 고르고, 그 기기 사용자 이름·EDITH 에 보일 이름(예: 회사)·비밀번호를 넣습니다. 이렇게 합니다:
+   - SSH 키가 없으면 `~/.ssh/id_ed25519` 를 만들고, 회사 PC 에 등록합니다 — **회사 PC 비밀번호를 한 번** 씁니다(화면에서 넣은 비밀번호는 ssh 에 넘기고 저장하지 않습니다).
    - `~/.config/edith/machines.json` 에 `{ "회사": "<사용자>@<회사 PC 의 Tailscale 이름>" }` 을 적고, 회사 EDITH 열쇠가 읽히는지 봅니다.
    - Tailscale 없이(회사 VPN 등) 잇는다면 `edith connect 회사 <사용자>@<주소>`. 회사 EDITH 가 다른 포트면 machines.json 에서 `{ "회사": { "ssh": "…", "port": 4400 } }`. 집 쪽 포트는 적은 순서대로 4321, 4322 … 를 씁니다.
 4. **회사 PC 에서 EDITH 를 띄워 둔다** — `edith --no-open`(꺼져 있으면 「떠 있지 않다」 고 알려 줍니다).

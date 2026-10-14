@@ -7,7 +7,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname, join, resolve, sep } from 'node:path';
-import { hostname } from 'node:os';
+import { hostname, userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
@@ -18,7 +18,7 @@ import { branches, diff } from './diff.ts';
 import { summarize } from './summary.ts';
 import { forgetSkills, skillFile, skills } from './skills.ts';
 import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
-import { machines, openMachine } from './machines.ts';
+import { connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -131,6 +131,13 @@ export function serve(port: number) {
       if (path === '/api/machines') return reply(res, 200, machines().map(m => m.name));
       if (path === '/api/machines/open' && req.method === 'POST')
         return await openMachine(String((await body(req) as { name?: unknown }).name ?? '')).then(url => reply(res, 200, { url }), fail);
+      // 다른 기기 잇기 — Tailscale 기기 목록, 잇기(키 등록·machines.json — 비밀번호는 ssh 에 한 번 넘기고 버린다)
+      if (path === '/api/machines/peers') { const peers = tailscalePeers(); return reply(res, 200, { tailscale: peers !== null, peers: peers ?? [], user: userInfo().username }); }
+      if (path === '/api/machines/connect' && req.method === 'POST') {
+        const b = await body(req) as { name?: unknown; target?: unknown; password?: unknown }, log: string[] = [];
+        return await connectMachine(String(b.name ?? ''), String(b.target ?? ''), m => log.push(m), typeof b.password === 'string' && b.password ? b.password : undefined)
+          .then(() => reply(res, 200, { log }), fail);
+      }
       // 스킬 옮기기 — 고른 스킬(내 것·공유만)을 묶음 파일로(공개 스킬·부르는 플러그인은 설치 명령으로), 받은 묶음은 먼저 미리 보고(apply 없이)
       // 고른 대로 홈에 쓰고 고른 설치 명령을 돌린다
       if (path === '/api/skills/export' && req.method === 'POST') {

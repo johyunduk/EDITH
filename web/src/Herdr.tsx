@@ -52,10 +52,11 @@ export function HerdrPage({ pane, side = true }: { pane?: string; side?: boolean
   );
 }
 
-// 다른 기기 — EDITH 는 이 기기의 herdr 만 본다. machines.json 에 둔 기기는 SSH 터널로 그 기기의 EDITH 를 새 탭으로 연다(서버 machines.ts). 없으면 안 보인다.
+// 다른 기기 — EDITH 는 이 기기의 herdr 만 본다. machines.json 에 둔 기기는 SSH 터널로 그 기기의 EDITH 를 새 탭으로 연다(서버 machines.ts).
+// 「+ 다른 기기 잇기」 — Tailscale 기기를 고르고 그 기기 사용자 이름·비밀번호를 넣으면 SSH 키를 등록하고 목록에 더한다(비밀번호는 한 번 쓰고 버린다).
 function OtherDevices() {
   const { data = [] } = useQuery({ queryKey: ['machines'], queryFn: () => get<string[]>('/api/machines'), staleTime: 60_000 });
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null), [adding, setAdding] = useState(false);
   const open = (name: string) => {
     const w = window.open('', '_blank');   // 누른 순간 먼저 열어 둔다 — 터널을 기다린 뒤 열면 팝업 막힘에 걸린다
     if (w) w.opener = null;
@@ -64,7 +65,6 @@ function OtherDevices() {
       .then(r => { if (w) w.location.href = r.url; }, (e: Error) => { w?.close(); toast(`${name} 을 열지 못했다 — ${e.message}`, 6000); })
       .finally(() => setBusy(null));
   };
-  if (!data.length) return null;
   const row = 'flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-[0.8125rem] text-muted-foreground hover:bg-card hover:text-foreground';
   return (
     <div className="m-1.5 mt-0 shrink-0 border-t pt-1.5">
@@ -74,7 +74,45 @@ function OtherDevices() {
           <span className="ml-auto text-xs text-muted-foreground/70">{busy === n ? '여는 중…' : 'EDITH ↗'}</span>
         </button>
       ))}
+      {adding ? <ConnectForm onClose={() => setAdding(false)} /> : (
+        <button onClick={() => setAdding(true)} className={row}><span className="w-4 text-center text-base leading-none">+</span>다른 기기 잇기</button>
+      )}
     </div>
+  );
+}
+
+type Peer = { host: string; dns: string; os: string; online: boolean };
+function ConnectForm({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['peers'], queryFn: () => get<{ tailscale: boolean; peers: Peer[]; user: string }>('/api/machines/peers') });
+  const [host, setHost] = useState(''), [user, setUser] = useState(''), [name, setName] = useState(''), [pw, setPw] = useState(''), [busy, setBusy] = useState(false);
+  const peers = [...(data?.peers ?? [])].sort((a, b) => Number(b.online) - Number(a.online));
+  const peer = peers.find(p => p.dns === host);
+  const go = () => {
+    setBusy(true);
+    void post<{ log: string[] }>('/api/machines/connect', { name: name.trim() || peer?.host || host.split('.')[0], target: `${user.trim() || data?.user}@${host.trim()}`, password: pw })
+      .then(r => { toast(r.log.at(-1) ?? '이었다', 6000); setPw(''); void qc.invalidateQueries({ queryKey: ['machines'] }); onClose(); },
+        (e: Error) => toast(e.message, 7000))
+      .finally(() => setBusy(false));
+  };
+  const input = 'w-full rounded-md border bg-card px-2 py-1 text-[0.8125rem] outline-none focus:ring-2 focus:ring-ring/50';
+  return (
+    <form onSubmit={e => { e.preventDefault(); go(); }} className="space-y-1.5 rounded-md border bg-card/60 p-2 text-[0.8125rem]">
+      <div className="flex items-center font-semibold">다른 기기 잇기<button type="button" onClick={onClose} className="ml-auto text-muted-foreground hover:text-foreground">×</button></div>
+      {data && !data.tailscale && <p className="text-xs text-muted-foreground">Tailscale 이 없거나 꺼져 있다 — 주소를 직접 넣는다(회사 VPN 안의 주소 등)</p>}
+      {peers.length > 0 && (
+        <select value={peer ? host : ''} onChange={e => setHost(e.target.value)} className={input}>
+          <option value="">Tailscale 기기 고르기…</option>
+          {peers.map(p => <option key={p.dns} value={p.dns}>{p.host} · {p.os}{p.online ? '' : ' (꺼짐)'}</option>)}
+        </select>
+      )}
+      <input value={host} onChange={e => setHost(e.target.value)} placeholder="주소(Tailscale 이름·IP)" className={input} />
+      <input value={user} onChange={e => setUser(e.target.value)} placeholder={`그 기기 사용자 이름 (${data?.user ?? ''})`} className={input} />
+      <input value={name} onChange={e => setName(e.target.value)} placeholder={`여기 보일 이름 (${peer?.host ?? '예: 회사'})`} className={input} />
+      <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="그 기기 로그인 비밀번호(처음 한 번)" autoComplete="off" className={input} />
+      <p className="text-[0.6875rem] leading-snug text-muted-foreground">그 기기에서 System Settings → General → Sharing → Remote Login 이 켜져 있어야 한다. 비밀번호는 SSH 키를 등록할 때 한 번만 쓰고 저장하지 않는다. 그 기기에 EDITH 가 떠 있어야 열린다.</p>
+      <button disabled={busy || !host.trim()} className="w-full rounded-md border bg-primary px-2 py-1 font-semibold text-primary-foreground disabled:opacity-50">{busy ? '잇는 중…' : '잇기'}</button>
+    </form>
   );
 }
 
