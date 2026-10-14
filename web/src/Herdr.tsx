@@ -65,7 +65,12 @@ function useMove() {
   };
 }
 // 우클릭 메뉴 — pane(사이드바 줄·칸 머리), 워크스페이스(사이드바). 고르는 것은 버튼·끌어 놓기와 같은 API 를 부른다.
-const shellIdle = (p: HPane) => !p.agent && (!p.title || /^[^\s@]+@[^:\s]+:/.test(p.title));
+// 셸이 프롬프트에서 쉬는 중인지 — 창 제목이 비었거나, macOS·Linux 는 사용자@호스트:경로, Windows 는 셸 이름·경로(pwsh·powershell·cmd).
+// 명령이 돌면 창 제목이 그 명령이 된다.
+// ponytail: Windows 셸 창 제목은 확인하지 않았다 — 명령이 돌아도 제목이 그대로면 「실행 중」 이 안 보일 뿐이다.
+const atPrompt = (title: string) => !title || /^[^\s@]+@[^:\s]+:/.test(title)
+  || /(^|[\\/ ])(pwsh|powershell|cmd)(\.exe)?$/i.test(title.trim()) || /^(Windows )?PowerShell( \d.*)?$/i.test(title.trim());
+const shellIdle = (p: HPane) => !p.agent && atPrompt(p.title);
 function usePaneMenu() {
   const move = useMove();
   return (p: HPane): MenuItem[] => {
@@ -236,7 +241,7 @@ function State({ v }: { v: string }) {
 
 // pane 이름 — 창 제목(종류는 앞 아이콘). 셸은 프롬프트(사용자@호스트:경로)면 「셸」, 명령이 돌면 그 명령.
 export function paneText(p: HPane) {
-  if (!p.agent) return !p.title || /^[^\s@]+@[^:\s]+:/.test(p.title) ? '셸' : p.title;
+  if (!p.agent) return atPrompt(p.title) ? '셸' : p.title;
   return p.title || p.agent;
 }
 
@@ -352,7 +357,7 @@ function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
           <span className="shrink-0">{p.name && `· ${p.name} `}· {p.id}</span>{/* 종류(claude·codex)는 앞 아이콘이 보여 준다 */}
           {/* 탭 전체 칸 보기면 칸마다 머리에 사용량이 있으니 여기서는 뺀다(중복) — 이 pane 만 볼 때만 여기 */}
           {!(multi && mode === 'tab' && !diffOn) && <span className="ml-1.5"><Usage p={p} /></span>}
-          <span className="ml-1.5 min-w-0 truncate font-mono text-xs" title={p.cwd}>{p.cwd.replace(/^\/(Users|home)\/[^/]+/, '~')}</span>
+          <span className="ml-1.5 min-w-0 truncate font-mono text-xs" title={p.cwd}>{p.cwd.replace(/^\/(Users|home)\/[^/]+|^[A-Za-z]:\\Users\\[^\\]+/, '~')}</span>
           <button onClick={() => void copyText(p.cwd)} title="경로 복사" className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground"><Icon className="size-3.5">{COPY}</Icon></button>
           {multi && !diffOn && <div className="ml-auto flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5">{pick('tab', `탭 전체 ${lay!.panes.length}칸`)}{pick('one', '이 pane 만')}</div>}
         </div>
@@ -516,7 +521,7 @@ function TabLayout({ lay, data, sel }: { lay: HerdrView['layouts'][number]; data
 type SBlock = { cmd: string; where: string; out: string[] };
 
 function ShellLog({ p }: { p: HPane }) {
-  const running = !!p.title && !/^[^\s@]+@[^:\s]+:/.test(p.title);   // 프롬프트면 창 제목이 사용자@호스트:경로, 명령이 돌면 그 명령
+  const running = !atPrompt(p.title);
   const [busy, setBusy] = useState(''), [err, setErr] = useState('');
   const launch = async (kind: string) => {
     setBusy(kind); setErr('');

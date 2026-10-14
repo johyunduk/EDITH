@@ -1,13 +1,15 @@
 // 대화 — Claude·Codex pane 의 세션 기록(JSONL)을 화면용 대화로 푼다. 터미널 대신 브라우저에서 읽고 스크롤하려고.
-// herdr 통합 훅이 pane 의 세션을 알려 줬으면(0.9.2+, herdr.ts sessionOf) 그 파일을 바로 쓴다. 아니면 추측한다:
+// herdr 통합 훅이 pane 의 세션을 알려 줬으면(0.9.2+, herdr.ts sessionOf) 그 파일을 바로 쓴다. 없으면 Claude 는 그 pane 의 claude 프로세스가 쓰는
+// ~/.claude/sessions/<pid>.json 으로(통합 설치 전에 시작한 pane). 둘 다 없으면 추측한다:
 // - Claude: pane 작업 폴더의 기록 중 제목(custom-title·ai-title)이 pane 창 제목과 같은 것. 없으면 같은 폴더의 다른 Claude pane 제목이
 //   아닌 것 중 가장 최근 것. 창 제목이 기본값(「Claude Code」)이면 아직 대화가 없는 새 세션이라 고르지 않는다.
 // - Codex: 창 제목 「스레드 이름 | 폴더」 의 이름으로 ~/.codex/session_index.jsonl 에서 스레드 ID 를 찾고(최근 것부터),
 //   ~/.codex/sessions/ 아래 그 ID 의 rollout 중 작업 폴더가 같은 것.
 // 기록은 수십 MB 가 되므로 처음엔 끝 4MB 만 읽고 그 뒤엔 늘어난 만큼만 읽는다.
+import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { agentSince, sessionOf, until } from './herdr.ts';
 import { sh } from './sh.ts';
 
@@ -231,10 +233,31 @@ function metaCwd(file: string) {
     return typeof p.source === 'object' && p.source && 'subagent' in p.source ? '' : p.cwd ?? '';
   } catch { return ''; } finally { closeSync(fd); }
 }
-// herdr 가 알려 준 세션 → 기록 파일. 알려 준 게 없거나 파일이 아직 없으면(첫 메시지 전) null — 그때는 추측으로.
+// herdr 가 세션을 모르는 Claude pane(통합 설치 전에 시작한 것) — 그 pane 의 claude 프로세스가 쓰는 ~/.claude/sessions/<pid>.json 의
+// sessionId(/clear·/resume 을 따라 바뀐다). Claude Code 의 내부 파일이라(2.1.x 확인) 없거나 모양이 바뀌면 추측으로 넘어간다.
+// pid 는 pane 마다 기억한다 — 프로세스가 끝났으면(파일은 남는다) herdr 에 다시 묻는다.
+const pids = new Map<string, number>();
+function liveSession(pane: string) {
+  const read = (pid: number) => {
+    try { process.kill(pid, 0); } catch { return undefined; }
+    try { return JSON.parse(readFileSync(join(homedir(), '.claude', 'sessions', `${pid}.json`), 'utf8')).sessionId as string | undefined; } catch { return undefined; }
+  };
+  const cached = pids.get(pane), hit = cached ? read(cached) : undefined;
+  if (hit) return hit;
+  try {
+    const out = execFileSync('herdr', ['pane', 'process-info', '--pane', pane], { encoding: 'utf8', timeout: 3000 });
+    const pid = (JSON.parse(out).result.process_info as { foreground_processes: { argv0: string; pid: number }[] }).foreground_processes.find(p => p.argv0 === 'claude')?.pid;
+    if (!pid) return undefined;
+    pids.set(pane, pid);
+    return read(pid);
+  } catch { return undefined; }
+}
+
+// herdr 가 알려 준 세션(없으면 Claude 는 프로세스의 세션) → 기록 파일. 그래도 없거나 파일이 아직 없으면(첫 메시지 전) null — 그때는 추측으로.
 function reported(pane: string, agent: string, cwd: string) {
-  const s = sessionOf(pane);
-  if (!s || s.agent !== agent) return null;
+  const told = sessionOf(pane), live = !told && agent === 'claude' ? liveSession(pane) : undefined;
+  const s = told?.agent === agent ? told : live ? { kind: 'id', value: live } : undefined;
+  if (!s) return null;
   if (s.kind === 'path') return existsSync(s.value) ? s.value : null;
   if (agent === 'codex') return rollouts().find(f => f.endsWith(`-${s.value}.jsonl`)) ?? null;
   const here = join(transcriptDir(cwd), `${s.value}.jsonl`);
@@ -249,6 +272,8 @@ function rollouts() {
   const days = (d: string, depth: number): string[] => depth ? readdirSync(d).sort().reverse().flatMap(x => days(join(d, x), depth - 1)) : [d];
   return days(root, 3).slice(0, 30).flatMap(d => readdirSync(d).map(f => join(d, f)));
 }
+// Windows 는 경로 대소문자·구분자가 달라도 같은 폴더다
+const samePath = (a: string, b: string) => process.platform === 'win32' ? !!a && resolve(a).toLowerCase() === resolve(b).toLowerCase() : a === b;
 function codexFile(pane: string, cwd: string, title: string) {
   const told = reported(pane, 'codex', cwd);
   if (told) { picked.set(pane, { title, file: told }); return told; }
@@ -260,8 +285,8 @@ function codexFile(pane: string, cwd: string, title: string) {
     ids = readFileSync(join(CODEX, 'session_index.jsonl'), 'utf8').split('\n').flatMap(l => { try { const o = JSON.parse(l); return o.thread_name === name ? [o.id as string] : []; } catch { return []; } }).reverse();
   } catch { /* 색인 없음 */ }
   const files = rollouts();
-  const file = ids.map(id => files.find(f => f.endsWith(`${id}.jsonl`))).find(f => f && metaCwd(f) === cwd)
-    ?? files.map(f => ({ f, m: statSync(f).mtimeMs })).sort((a, b) => b.m - a.m).slice(0, 40).find(x => metaCwd(x.f) === cwd)?.f;
+  const file = ids.map(id => files.find(f => f.endsWith(`${id}.jsonl`))).find(f => f && samePath(metaCwd(f), cwd))
+    ?? files.map(f => ({ f, m: statSync(f).mtimeMs })).sort((a, b) => b.m - a.m).slice(0, 40).find(x => samePath(metaCwd(x.f), cwd))?.f;
   if (file) picked.set(pane, { title, file });
   return file ?? null;
 }
@@ -392,8 +417,9 @@ export function backgroundTasks(pane: string, cwd: string, title: string, others
 export async function checkAlive<T extends { kind: string; status: string; path: string }>(tasks: T[]) {
   return Promise.all(tasks.map(async t => {
     if (t.kind !== '셸' || t.status !== '실행 중' || !t.path) return t;
-    const r = await sh('lsof', ['-t', '--', t.path], { ok: true, timeoutMs: 5000 });
-    return r.stdout.trim() ? t : { ...t, status: '끝남' };
+    // lsof 가 없으면(Windows, 일부 Linux) 확인을 건너뛴다 — 끝 표시·알림으로만 가린다
+    const r = await sh('lsof', ['-t', '--', t.path], { ok: true, timeoutMs: 5000 }).catch(() => null);
+    return !r || r.stdout.trim() ? t : { ...t, status: '끝남' };
   }));
 }
 
@@ -408,14 +434,20 @@ function exitOf(path: string, size: number) {
   return code === null ? '끝남' : code === 0 ? '끝남' : code > 128 ? `멈춤(코드 ${code})` : `실패(코드 ${code})`;
 }
 
-// 백그라운드 작업 출력 끝 64KB — 그 세션 기록에 나온 작업만, Claude 임시 폴더 안 파일만
+// 백그라운드 작업 출력 끝 64KB — 그 세션 기록에 나온 작업만, Claude 임시 폴더 안 파일만.
+// Claude 임시 폴더: macOS·Linux 는 /tmp/claude-<uid>(macOS 는 /private/tmp), Windows 는 OS 임시 폴더 아래 claude… 로 본다.
+// ponytail: Windows 의 Claude 임시 폴더 위치는 확인하지 않았다 — 다르면 출력이 안 보일 뿐(목록은 보인다).
 export function taskOutput(pane: string, cwd: string, title: string, others: string[], id: string) {
   const t = backgroundTasks(pane, cwd, title, others).find(x => x.id === id);
   if (!t?.path) return null;
   let p: string;
   try { p = realpathSync(t.path); } catch { return ''; }
-  const uid = process.getuid?.() ?? 0;
-  if (![`/private/tmp/claude-${uid}/`, `/tmp/claude-${uid}/`].some(d => p.startsWith(d))) return null;
+  const inside = (root: string) => {
+    const r = relative(root, p), first = r.split(/[\\/]/)[0];
+    return !isAbsolute(r) && !r.startsWith('..') && (process.getuid ? first === `claude-${process.getuid()}` : first.startsWith('claude'));
+  };
+  const tmp = (() => { try { return realpathSync(tmpdir()); } catch { return tmpdir(); } })();
+  if (![`/tmp`, `/private/tmp`, tmp].some(inside)) return null;
   const size = statSync(p).size, n = Math.min(size, 65_536), buf = Buffer.alloc(n), fd = openSync(p, 'r');
   try { readSync(fd, buf, 0, n, size - n); } finally { closeSync(fd); }
   // 화면 열쇠가 찍힌 출력(serve 시작 줄의 …/?key=)은 가린다

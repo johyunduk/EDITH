@@ -1,7 +1,7 @@
 // herdr — 워크스페이스·탭·pane·에이전트 상태, pane 터미널 흐름(보기·입력), 프롬프트·키 보내기. 화면 서버가 쓴다.
 // 자주 부르는 읽기는 herdr CLI 로 한다 — Node 가 소켓에 바로 붙으면 herdr 서버가 요청마다 100ms 를 기다린다(0.8.0·0.9.4 실측)
 // (요청이 접속 순간에 와 있지 않으면). 프롬프트·키처럼 가끔 쓰는 쓰기는 소켓으로 — 글이 CLI 옵션으로 읽힐 걱정이 없다.
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { connect } from 'node:net';
@@ -11,12 +11,19 @@ import { createInterface } from 'node:readline';
 import { sh } from './sh.ts';
 import { toCodex } from './complete.ts';
 
-const SOCKET = process.env.HERDR_SOCKET_PATH ?? join(homedir(), '.config', 'herdr', 'herdr.sock');
+// herdr 소켓 — macOS·Linux 는 도메인 소켓, Windows 는 named pipe. herdr pane 안에서 띄우면 HERDR_SOCKET_PATH 가 있고,
+// 없으면 `herdr status server` 가 알려 주는 경로(socket: …). 둘 다 못 얻으면 Unix 기본 경로 — 그때는 기억하지 않고 다음에 다시 묻는다.
+let socketPath = process.env.HERDR_SOCKET_PATH;
+function socket() {
+  if (socketPath) return socketPath;
+  const out = spawnSync('herdr', ['status', 'server'], { encoding: 'utf8', timeout: 5000 }).stdout ?? '';
+  return (socketPath = out.match(/^socket:\s*(.+)$/m)?.[1].trim()) ?? join(homedir(), '.config', 'herdr', 'herdr.sock');
+}
 
 // 소켓 요청 하나 — 연결 하나에 요청 하나(herdr 가 답하고 닫는다).
 function api(method: string, params: Record<string, unknown>) {
   return new Promise<unknown>((ok, no) => {
-    const s = connect(SOCKET);
+    const s = connect(socket());
     let buf = '';
     s.on('connect', () => s.write(`${JSON.stringify({ id: 'edith', method, params })}\n`));
     s.on('data', d => {
@@ -104,7 +111,7 @@ const WATCH = ['workspace.created', 'workspace.updated', 'workspace.renamed', 'w
 export function watch(changed: () => void) {
   let sock: ReturnType<typeof connect> | undefined, panes: string[] = [];
   const open = () => {
-    const s = sock = connect(SOCKET);
+    const s = sock = connect(socket());
     s.write(`${JSON.stringify({ id: 'edith-watch', method: 'events.subscribe', params: { subscriptions: [
       ...WATCH.map(type => ({ type })), ...panes.map(pane_id => ({ type: 'pane.agent_status_changed', pane_id }))] } })}\n`);
     createInterface({ input: s }).on('line', changed);
@@ -235,9 +242,9 @@ const fromSeen = (l: { pct: number; at: number | null }, day: boolean): Limit =>
   l.at && l.at <= Date.now() ? { pct: 0, reset: null } : { pct: l.pct, reset: l.at ? until(l.at, day) : null };
 
 // 셸 명령 기록 — 터미널의 지난 출력을 프롬프트 줄 기준으로 「명령 + 출력」 으로 자른다(브라우저 스크롤로 보려고).
-// 프롬프트 기호는 줄 첫 낱말 중 흔한 것(➜ ❯ $ % # λ)에서 가장 많이 나온 것. 오래된 출력은 끝 3000줄까지만. 출력 줄은 색(ANSI) 그대로.
-// ponytail: robbyrussell(➜ 폴더 git:(브랜치) ✗ 명령) 꼴만 명령을 떼어 낸다. 다른 테마는 프롬프트 줄 통째로 보인다.
-const MARKS = ['➜', '❯', '$', '%', '#', 'λ'];
+// 프롬프트 기호는 줄 첫 낱말 중 흔한 것(➜ ❯ $ % # λ, PowerShell 의 PS)에서 가장 많이 나온 것. 오래된 출력은 끝 3000줄까지만. 출력 줄은 색(ANSI) 그대로.
+// ponytail: robbyrussell(➜ 폴더 git:(브랜치) ✗ 명령)·PowerShell(PS 경로> 명령) 꼴만 명령을 떼어 낸다. 다른 테마는 프롬프트 줄 통째로 보인다.
+const MARKS = ['➜', '❯', '$', '%', '#', 'λ', 'PS'];
 export async function history(id: string) {
   // 출력은 터미널 색(ANSI) 그대로 넘기고, 프롬프트 찾기는 색을 뺀 글로 한다
   const raw = (await sh('herdr', ['pane', 'read', id, '--source', 'recent-unwrapped', '--lines', '3000', '--format', 'ansi'])).stdout.replace(/\r/g, '').split('\n');
@@ -250,7 +257,9 @@ export async function history(id: string) {
   let cur: Block | null = null;
   lines.forEach((l, i) => {
     if (mark && l.startsWith(`${mark} `)) {
-      const m = l.match(/^\S+\s+(\S+)(?:\s+git:\([^)]*\))?(?:\s+✗)?\s?(.*)$/);
+      // PowerShell 은 「PS C:\경로> 명령」 — 폴더는 경로의 마지막 칸
+      const ps = mark === 'PS' ? l.match(/^PS (.+?)>\s?(.*)$/) : null;
+      const m = ps ? [l, ps[1].split(/[\\/]/).pop() ?? ps[1], ps[2]] : l.match(/^\S+\s+(\S+)(?:\s+git:\([^)]*\))?(?:\s+✗)?\s?(.*)$/);
       cur = { cmd: m ? m[2] : l, where: m ? m[1] : '', out: [] };
       blocks.push(cur);
     } else if (cur) cur.out.push(raw[i]);
@@ -297,7 +306,7 @@ export async function movePane(id: string, to: { pane?: unknown; side?: unknown;
   return moved;
 }
 // 새 워크스페이스 — 이름과 시작 폴더(있는 폴더만, ~ 는 집). 첫 pane 을 돌려준다.
-const expand = (p: string) => p.replace(/^~(?=\/|$)/, homedir());
+const expand = (p: string) => p.replace(/^~(?=[\\/]|$)/, homedir());
 export async function newWorkspace(label: unknown, cwd: unknown) {
   if (typeof label !== 'string' || !label.trim() || label.length > 100) throw new Error('이름이 비었거나 너무 길다');
   const dir = typeof cwd === 'string' && cwd.trim() ? expand(cwd.trim()) : homedir();
@@ -307,7 +316,7 @@ export async function newWorkspace(label: unknown, cwd: unknown) {
 }
 // 폴더 고르기 — 셸 탭 완성처럼 마지막 칸의 앞글자로 하위 폴더를 찾는다(숨김 폴더는 . 으로 시작할 때만).
 export function folders(q: string) {
-  const full = expand(q || '~/'), cut = full.lastIndexOf('/');
+  const full = expand(q || '~/'), cut = Math.max(full.lastIndexOf('/'), full.lastIndexOf('\\'));   // Windows 는 \ 도
   const parent = full.slice(0, cut + 1) || '/', head = full.slice(cut + 1).toLowerCase();
   try {
     return readdirSync(parent, { withFileTypes: true })

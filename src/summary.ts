@@ -33,6 +33,7 @@ export function split(text: string) {
 
 async function ask(batch: ReturnType<typeof split>) {
   const input = batch.map(f => f.raw.length > 20_000 ? `${f.raw.slice(0, 20_000)}\n… (뒤는 잘림)\n` : f.raw).join('');
+  // ponytail: Windows 에서 npm 으로 깐 claude(.cmd)는 셸 없이 못 띄운다 — 네이티브 설치(claude.exe)만 된다
   const r = await sh('claude', ['-p', PROMPT, '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--no-session-persistence',
     '--output-format', 'json', '--settings', '{"disableAllHooks":true}'], { input, cwd: tmpdir(), timeoutMs: 180_000 });
   const out = JSON.parse(r.stdout) as { result?: string; is_error?: boolean };
