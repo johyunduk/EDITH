@@ -2,7 +2,8 @@
 # Safe to run again: tools already present are skipped, integrations and the skill are refreshed.
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/johyunduk/EDITH/main/install.ps1 | iex"
 # No admin rights. Downloads only from each tool's official installer (herdr.dev, claude.ai, npm, winget) and this repo.
-# Run from a checkout and EDITH is built there; otherwise it is cloned to $env:EDITH_DIR (default ~\.edith).
+# Run from a checkout and EDITH is built there; otherwise $env:EDITH_REPO (default: this repo) is cloned to $env:EDITH_DIR (default ~\.edith).
+# In your own copy (template or fork), change only the default repo URL below.
 # This file stays ASCII: Windows PowerShell 5.1 reads a BOM-less .ps1 in the ANSI code page and would mangle anything else.
 # ponytail: not yet run on a real Windows machine. If a step fails, follow the manual install in the README.
 
@@ -29,7 +30,7 @@ function Write-Utf8([string]$path, [string]$text) { [IO.File]::WriteAllText($pat
 function Main {
   $ErrorActionPreference = 'Stop'
   [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)   # read `herdr --skill` output intact
-  $repo = 'https://github.com/johyunduk/EDITH.git'
+  $repo = if ($env:EDITH_REPO) { $env:EDITH_REPO } else { 'https://github.com/johyunduk/EDITH.git' }
   Refresh-Path
   if (-not (Have git)) { throw 'git is required. Install Git for Windows (https://git-scm.com) and run again; Claude Code uses its Git Bash too.' }
 

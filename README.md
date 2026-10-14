@@ -35,6 +35,8 @@ edith
 
 herdr 서버가 꺼져 있으면 화면 없이 띄우고, 브라우저로 EDITH 를 엽니다. 다음부터는 `edith` 만 치면 됩니다.
 
+설명서: [사용 설명서](docs/guide.md) · [고치기](docs/customize.md)
+
 > 확인한 환경: macOS, herdr 0.9.4, Claude Code 2.1.x. Linux·Windows 는 코드만 맞춰 두었고 아직 실기기에서 돌려 보지 않았습니다 — 막히면 「막힐 때」 를 보고 이슈로 알려 주세요.
 
 ## 쓰기
@@ -50,6 +52,16 @@ edith setup          # 설치 스크립트 다시 — 빠진 도구, herdr 통�
 - Ctrl+C 로 EDITH 를 꺼도 herdr 서버와 그 안의 pane 은 계속 돕니다. 터미널에서도 보려면 `herdr` 로 같은 서버에 붙습니다.
 - 처음엔 워크스페이스가 없을 수 있습니다 — 왼쪽 「+ 새 워크스페이스」 로 폴더를 고르고, 셸 pane 에서 Claude·Codex 를 띄웁니다.
 - 업데이트: `git -C ~/.edith pull && edith setup` (직접 클론했으면 그 폴더에서).
+
+## 내 것으로 만들기
+
+EDITH 는 받아서 마음대로 고쳐 쓰라고 만든 기본판입니다(MIT).
+
+1. GitHub 의 **Use this template** 로 내 레포를 만든다(원본 변경을 계속 받으려면 Fork).
+2. `install.sh`·`install.ps1`·이 README 의 `johyunduk/EDITH` 를 내 레포 주소로 바꾼다.
+3. 고치고 싶은 것을 쓰고 있는 Claude Code·Codex 에게 시킨다 — 레포의 [`AGENTS.md`](AGENTS.md)(Claude 는 `CLAUDE.md` 가 불러온다)에 구조·확인 명령·지켜야 할 보안 규칙이 있다.
+
+구조 지도, 흔한 수정(pane 버튼·우클릭 메뉴·API·화면 탭 더하기), 고치면서 보는 법, 원본 변경 받기는 [docs/customize.md](docs/customize.md).
 
 ## 하는 일
 
@@ -142,6 +154,8 @@ npm test             # node --test
 npm run typecheck    # 서버 + 화면
 npm --prefix web run dev   # 화면 개발(Vite) — edith --no-open 을 띄운 채, /api 는 4320 으로 넘김
 ```
+
+규칙·구조는 [`AGENTS.md`](AGENTS.md)·[docs/customize.md](docs/customize.md).
 
 - 서버 `src/`(Node 내장만), 화면 `web/`(React·Vite·Tailwind·xterm.js).
 - TypeScript 는 지울 수 있는 문법만 씁니다 — enum·namespace·생성자 매개변수 속성 금지(`erasableSyntaxOnly`).

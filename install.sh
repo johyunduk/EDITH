@@ -2,11 +2,12 @@
 # EDITH 설치 — herdr·Claude Code·Codex CLI, herdr 통합·스킬, EDITH 를 한 번에. 다시 돌려도 된다(있는 것은 건너뛰고 통합·스킬은 새로 맞춘다).
 #   curl -fsSL https://raw.githubusercontent.com/johyunduk/EDITH/main/install.sh | bash
 # sudo 는 쓰지 않는다. 받는 곳은 각 도구의 공식 설치 경로(herdr.dev·claude.ai·npm)와 이 레포뿐이다.
-# EDITH 는 이 파일이 든 체크아웃에서 돌리면 그 폴더에, 아니면 $EDITH_DIR(기본 ~/.edith)에 받는다.
+# EDITH 는 이 파일이 든 체크아웃에서 돌리면 그 폴더에, 아니면 $EDITH_REPO(기본 이 레포)를 $EDITH_DIR(기본 ~/.edith)에 받는다.
+# 내 것으로 만든(템플릿·포크) 레포라면 아래 기본 주소만 내 레포로 바꾼다.
 set -euo pipefail
 
 main() {
-  local repo=https://github.com/johyunduk/EDITH.git path0=$PATH
+  local repo=${EDITH_REPO:-https://github.com/johyunduk/EDITH.git} path0=$PATH
   export PATH="$HOME/.local/bin:$PATH"   # Claude Code·herdr 설치 스크립트가 여기에 둔다
 
   case "$(uname -s)" in Darwin | Linux) ;; *) die "macOS·Linux 만 지원한다" ;; esac
