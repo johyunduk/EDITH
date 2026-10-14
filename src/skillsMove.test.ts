@@ -56,3 +56,26 @@ test('나쁜 묶음은 통째로 거절 — 밖으로 나가는 경로·링크, 
   bad({ links: [{ path: '.claude/skills/x', target: '../../.agents/skills/y' }], files: [{ path: '.claude/skills/x/SKILL.md', data: '' }] });
   assert.throws(() => unpack(Buffer.from('그냥 글')));
 });
+
+test('공개 스킬·플러그인은 설치 명령으로 — 고른 스킬이 부르는 플러그인만 need 와 함께, 이상한 이름·주소는 걸러 낸다', async () => {
+  const { plan } = await import('./skillsMove.ts');
+  const home = mkdtempSync(join(tmpdir(), 'edith-plan-'));
+  try {
+    mkdirSync(join(home, '.claude/plugins'), { recursive: true });
+    writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ enabledPlugins: { 'diagram@dm': true, 'other@om': true } }));
+    writeFileSync(join(home, '.claude/plugins/known_marketplaces.json'), JSON.stringify({ dm: { source: { source: 'github', repo: 'o/diagram' } }, om: { source: { source: 'directory', path: '/x' } } }));
+    const pub = { id: 'shared:find', name: 'find', path: join(home, '.agents/skills/find'), source: 'shared', uses: [], origin: 'v/skills' };
+    const mine = { id: 'claude:mine', name: 'mine', path: join(home, '.claude/skills/mine'), source: 'user', uses: [{ id: 'claude:diagram:d', how: '/' }] };
+    const plug = { id: 'claude:diagram:d', name: 'diagram:d', path: '/p', source: 'plugin:diagram', uses: [] };
+    const p = plan(home, [pub, mine], [pub, mine, plug], false);
+    assert.deepEqual(p.sources, [{ name: 'find', source: 'v/skills' }]);
+    assert.deepEqual(p.plugins, [{ id: 'diagram@dm', add: 'o/diagram', need: ['mine'] }]);
+    assert.deepEqual(plan(home, [mine], [mine, plug], true).plugins.map(x => [x.id, x.add]), [['diagram@dm', 'o/diagram'], ['other@om', null]]);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+
+  const b = unpack(gzipSync(JSON.stringify({ edith: 1, at: '', files: [], links: [],
+    sources: [{ name: 'ok', source: 'a/b' }, { name: '-x', source: 'a/b' }, { name: 'y', source: '--evil' }],
+    plugins: [{ id: 'p@m', add: 'o/r', need: ['s'] }, { id: 'q@m', add: '--upload-pack=x' }, { id: '-z@m', add: null }] })));
+  assert.deepEqual(b.sources, [{ name: 'ok', source: 'a/b' }]);
+  assert.deepEqual(b.plugins, [{ id: 'p@m', add: 'o/r', need: ['s'] }, { id: 'q@m', add: null, need: [] }]);
+});

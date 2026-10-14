@@ -7,6 +7,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname, join, resolve, sep } from 'node:path';
+import { hostname } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
 import { backgroundTasks, chat, checkAlive, codexUsage, remoteControl, taskOutput } from './chat.ts';
@@ -15,7 +17,7 @@ import { firstLine } from './sh.ts';
 import { branches, diff } from './diff.ts';
 import { summarize } from './summary.ts';
 import { forgetSkills, skillFile, skills } from './skills.ts';
-import { apply, enabledPlugins, pack, preview, unitsAt, unpack } from './skillsMove.ts';
+import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
 import { machines, openMachine } from './machines.ts';
 
 const WEB = join(REPO, 'web', 'dist');
@@ -38,6 +40,11 @@ function watchHerdr() {
 }
 
 const lastUsage = new Map<string, Usage>();
+// 이 기기 이름 — macOS 는 hostname 이 네트워크 이름(ip-192-168-…)일 때가 많아 「컴퓨터 이름」 을 쓴다
+const machineName = (() => {
+  if (process.platform === 'darwin') try { return execFileSync('scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000 }).trim(); } catch { /* 아래로 */ }
+  return hostname().split('.')[0];
+})();
 
 // Host 는 127.0.0.1·localhost 만 받는다(DNS rebinding — 남의 도메인 이름으로 이 서버를 부르지 못하게). 포트는 묻지 않는다:
 // 다른 기기가 이 EDITH 를 SSH 터널로 열면 그 기기의 다른 포트로 들어온다(machines.ts).
@@ -124,27 +131,32 @@ export function serve(port: number) {
       if (path === '/api/machines') return reply(res, 200, machines().map(m => m.name));
       if (path === '/api/machines/open' && req.method === 'POST')
         return await openMachine(String((await body(req) as { name?: unknown }).name ?? '')).then(url => reply(res, 200, { url }), fail);
-      // 스킬 옮기기 — 고른 스킬(내 것·공유만)을 묶음 파일로, 받은 묶음은 먼저 미리 보고(apply 없이) 고른 대로 홈에 쓴다
+      // 스킬 옮기기 — 고른 스킬(내 것·공유만)을 묶음 파일로(공개 스킬·부르는 플러그인은 설치 명령으로), 받은 묶음은 먼저 미리 보고(apply 없이)
+      // 고른 대로 홈에 쓰고 고른 설치 명령을 돌린다
       if (path === '/api/skills/export' && req.method === 'POST') {
-        const b = await body(req) as { ids?: unknown; plugins?: unknown }, ids = Array.isArray(b.ids) ? b.ids : [];
-        const nodes = skills().filter(n => ids.includes(n.id) && !n.source.startsWith('plugin:') && n.source !== 'system');
-        const buf = pack(HOME, unitsAt(HOME, nodes.map(n => n.path)), b.plugins ? enabledPlugins(HOME) : []);
+        if (hp === String(port)) return reply(res, 403, '이 기기 스킬은 이미 여기 있다 — 다른 기기에서 이 EDITH 를 열었을 때만 내려받는다');
+        const b = await body(req) as { ids?: unknown; plugins?: unknown }, ids = Array.isArray(b.ids) ? b.ids : [], all = skills();
+        const p = plan(HOME, all.filter(n => ids.includes(n.id) && !n.source.startsWith('plugin:') && n.source !== 'system'), all, !!b.plugins);
+        const buf = pack(HOME, p.units, p.plugins, p.sources);
         res.writeHead(200, { 'content-type': 'application/gzip', 'content-disposition': `attachment; filename="edith-skills-${new Date().toISOString().slice(0, 10)}.json.gz"` });
         return res.end(buf);
       }
       if (path === '/api/skills/import' && req.method === 'POST') {
-        const b = await body(req, 40 * 1024 * 1024) as { data?: unknown; apply?: unknown; overwrite?: unknown };
+        const b = await body(req, 40 * 1024 * 1024) as { data?: unknown; apply?: unknown; overwrite?: unknown; install?: { sources?: unknown; plugins?: unknown } };
         try {
           if (typeof b.data !== 'string') throw new Error('파일이 없다');
           const bundle = unpack(Buffer.from(b.data, 'base64'));
           if (!b.apply) return reply(res, 200, preview(HOME, bundle));
           const done = apply(HOME, bundle, Array.isArray(b.overwrite) ? b.overwrite.filter((u): u is string => typeof u === 'string') : []);
+          const installed = b.install ? await install(bundle, b.install) : [];
           forgetSkills();
-          return reply(res, 200, done);
+          return reply(res, 200, { ...done, installed });
         } catch (e) { return fail(e); }
       }
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());
+      // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
+      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName });
       const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);
       if (h?.[2] === 'stream' && req.method === 'GET')
         return await streamPane(req, res, h[1], { control: url.searchParams.get('mode') === 'control', takeover: url.searchParams.has('takeover') });

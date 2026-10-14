@@ -13,6 +13,7 @@ export type Use = { id: string; how: string };
 export type SkillNode = {
   id: string; name: string; call: string; agents: Agent[]; source: string; kind: 'skill' | 'command' | 'prompt';
   desc: string; path: string; files: string[]; uses: Use[];
+  origin?: string;   // 공개 스킬의 출처(github owner/repo) — 옮길 때 파일 대신 설치 명령으로
 };
 
 const H = homedir();
@@ -59,6 +60,13 @@ function collect() {
   }
   const nodes = [...byPath.values()];
   for (const n of nodes) if (n.agents.length > 1) n.source = 'shared';
+  // 공개 스킬 — skills CLI(npx skills add)로 깐 것은 ~/.agents/.skill-lock.json 에 출처가 남는다(~/.agents/skills/<이름> 인 것만)
+  let lock: Record<string, { source?: string; sourceType?: string }> = {};
+  try { lock = JSON.parse(readFileSync(join(H, '.agents', '.skill-lock.json'), 'utf8')).skills ?? {}; } catch { /* 없음 */ }
+  for (const n of nodes) {
+    const l = lock[basename(n.path)];
+    if (l?.sourceType === 'github' && /^[\w.-]+\/[\w.-]+$/.test(l.source ?? '') && real(join(H, '.agents', 'skills', basename(n.path))) === n.path) n.origin = l.source;
+  }
   link(nodes, n => n.files.map(f => { try { return readFileSync(n.files.length === 1 && !isDir(n.path) ? n.path : join(n.path, f), 'utf8'); } catch { return ''; } }).join('\n').slice(0, 400_000));
   return nodes;
 }
