@@ -46,7 +46,7 @@ async function serve(args: string[]) {
   const server = await import('./server.ts');
   const url = await server.serve(port).catch(async (e: NodeJS.ErrnoException) => {
     if (e.code !== 'EADDRINUSE') throw e;
-    if (!(await isEdith(port))) fail(`포트 ${port} 를 다른 프로그램이 쓴다 — edith --port <다른 번호>`);
+    if (!(await isEdith(port))) fail(`${port} 포트를 다른 프로그램이 쓴다 — edith --port <다른 번호>`);
     const url = `http://127.0.0.1:${port}/?key=${server.consoleKey()}`;
     console.log(`EDITH 가 이미 떠 있다 — ${open ? '브라우저만 연다' : url}`);
     if (open) openBrowser(url);
