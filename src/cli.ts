@@ -39,7 +39,7 @@ const isEdith = (port: number) => fetch(`http://127.0.0.1:${port}/`).then(r => r
 async function serve(args: string[]) {
   const i = args.indexOf('--port'), port = i >= 0 ? Number(args[i + 1]) : 4320, open = !args.includes('--no-open');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) fail('--port 는 1~65535');
-  if (!existsSync(join(REPO, 'web', 'dist', 'index.html'))) fail('화면이 아직 빌드되지 않았다 — edith setup');
+  if (!existsSync(join(REPO, 'web', 'dist', 'index.html'))) fail(`화면이 아직 빌드되지 않았다 — edith setup(클론한 직후면 ${join(REPO, win ? 'install.ps1' : 'install.sh')})`);
   if (!onPath('herdr')) fail('herdr 가 없다 — edith setup 으로 설치한다');
   for (const a of ['claude', 'codex']) if (!onPath(a)) console.log(`${a} 가 없다 — 쓰려면 edith setup`);
   await ensureHerdr();

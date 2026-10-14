@@ -13,10 +13,17 @@ main() {
   have git || die "git 이 필요하다"
   have curl || die "curl 이 필요하다"
 
+  # Homebrew 가 없으면 nvm 으로(sudo 없이 ~/.nvm 에, nvm 이 셸 설정에 자기 줄을 넣는다)
   step "Node 24+ (EDITH 서버·Codex CLI)"
-  if ! have node || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 24 ]; then
+  if ! node_ok; then
     if have brew; then run brew install node
-    else die "Node 24 이상이 필요하다 — https://nodejs.org 또는 nvm 으로 설치하고 다시 돌린다"; fi
+    else
+      touch "$(profile)"   # 새 맥엔 ~/.zshrc 가 없는데, nvm 은 셸 설정 파일이 없으면 자기 줄을 넣지 않는다
+      pipe https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh bash
+      export NVM_DIR="$HOME/.nvm"
+      set +eu; . "$NVM_DIR/nvm.sh"; run nvm install 24; set -eu   # nvm.sh 는 -e·-u 를 견디지 못한다 — 결과는 아래 node_ok 로 본다
+    fi
+    node_ok || die "Node 24 를 설치하지 못했다 — https://nodejs.org 에서 설치하고 다시 돌린다"
   fi
   echo "  node $(node -v)"
 
@@ -32,6 +39,15 @@ main() {
   step "Codex CLI"
   if have codex; then echo "  있음 — $(codex --version)"
   else run npm install -g @openai/codex; fi
+
+  # Claude Code·herdr 설치 스크립트는 ~/.local/bin 에 두고 PATH 는 알려 주기만 한다 — 새 터미널에서도 찾게 셸 설정에 넣는다
+  if [ -e "$HOME/.local/bin/claude" ] || [ -e "$HOME/.local/bin/herdr" ]; then
+    case ":$path0:" in *":$HOME/.local/bin:"*) ;; *)
+      local rc line='export PATH="$HOME/.local/bin:$PATH"'
+      rc=$(profile)
+      if ! grep -qsF "$line" "$rc"; then printf '\n# EDITH 설치 — Claude Code·herdr\n%s\n' "$line" >> "$rc"; echo "  $rc 에 ~/.local/bin 을 PATH 로 넣었다"; fi ;;
+    esac
+  fi
 
   # 통합은 설정 폴더가 있어야 설치된다 — 처음 설치면 아직 없어서 만든다(Claude·Codex 는 빈 폴더를 그대로 쓴다)
   step "herdr 통합 — 세션 ID 를 herdr 에 알린다(EDITH 대화 화면이 그 기록을 바로 연다)"
@@ -58,7 +74,7 @@ main() {
   fi
   (cd "$dir" && run npm install --no-audit --no-fund && run npm run build && run npm link)
 
-  step "끝 — 남은 일(처음 한 번)"
+  step "끝 — 새 터미널을 열고(PATH·nvm 이 새 터미널부터 잡힌다) 처음 한 번"
   cat <<EOF
   claude   # 로그인
   codex    # 로그인
@@ -66,14 +82,21 @@ main() {
 
   선택: Claude 사용량 칩 — README 「사용량 칩」 처럼 statusLine 을 $dir/extras/statusline.sh 로
 EOF
-  [ -e "$HOME/.local/bin/claude" ] || [ -e "$HOME/.local/bin/herdr" ] || return 0
-  case ":$path0:" in *":$HOME/.local/bin:"*) ;; *) printf '\n  ~/.local/bin 이 PATH 에 없다 — 셸 설정에 export PATH="$HOME/.local/bin:$PATH" 를 넣는다\n' ;; esac
 }
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 run() { printf '  $ %s\n' "$*"; "$@"; }
 pipe() { printf '  $ curl -fsSL %s | %s\n' "$1" "$2"; curl -fsSL "$1" | "$2"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+node_ok() { have node && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 24 ]; }
+# 새 터미널이 읽는 셸 설정 파일 — zsh 는 .zshrc, bash 는 macOS 면 .bash_profile·Linux 면 .bashrc
+profile() {
+  case "${SHELL##*/}" in
+    zsh) echo "$HOME/.zshrc" ;;
+    bash) if [ "$(uname -s)" = Darwin ]; then echo "$HOME/.bash_profile"; else echo "$HOME/.bashrc"; fi ;;
+    *) echo "$HOME/.profile" ;;
+  esac
+}
 die() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
 # 맨 끝에서 부른다 — 받다 끊긴 스크립트가 반만 돌지 않게

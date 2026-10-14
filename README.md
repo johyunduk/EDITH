@@ -41,13 +41,16 @@ powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/joh
 
 [`install.sh`](install.sh)·[`install.ps1`](install.ps1) 이 하는 일(sudo·관리자 권한은 쓰지 않습니다 — 먼저 읽어 보고 돌려도 됩니다):
 
-1. Node 24+ 확인(없으면 macOS·Linux 는 Homebrew, Windows 는 winget 으로 — 둘 다 없으면 안내만)
+1. Node 24+ 확인(없으면 macOS·Linux 는 Homebrew, Homebrew 가 없으면 nvm, Windows 는 winget 으로)
 2. herdr(Homebrew 또는 `https://herdr.dev/install.sh`·`.ps1`), Claude Code(`https://claude.ai/install.sh`·`.ps1`), Codex CLI(`npm i -g @openai/codex`) — 이미 있으면 건너뜀
 3. herdr 통합 `herdr integration install claude`·`codex`(`~/.claude`·`~/.codex` 에 세션을 알리는 훅)
 4. herdr 스킬(`herdr --skill`) → `~/.agents/skills/herdr`(Codex), `~/.claude/skills/herdr` 는 그 링크(Claude, Windows 는 복사본)
-5. EDITH 를 `~/.edith`(또는 `EDITH_DIR`)에 받고 `npm install` → `npm run build` → `npm link`
+5. Claude Code·herdr 가 깔린 `~/.local/bin` 이 PATH 에 없으면 셸 설정(`~/.zshrc` 등, Windows 는 사용자 PATH)에 넣음
+6. EDITH 를 `~/.edith`(또는 `EDITH_DIR`)에 받고 `npm install` → `npm run build` → `npm link`
 
-끝나면 처음 한 번 `claude`·`codex` 로 로그인하고 `edith` 를 칩니다.
+끝나면 새 터미널을 열고(바뀐 PATH 는 새 터미널부터) 처음 한 번 `claude`·`codex` 로 로그인한 뒤 `edith` 를 칩니다.
+
+직접 클론했다면 그 폴더에서 `./install.sh`(Windows 는 `.\install.ps1`)를 한 번 돌립니다 — 그 폴더에서 빌드하고 `edith` 명령을 등록합니다. `edith` 는 alias 가 아니라 `npm link` 가 npm 전역 bin(macOS·Linux 는 Homebrew·nvm 의 bin, Windows 는 `%APPDATA%\npm`)에 만든 명령이라 셸 설정 없이 새 터미널에서 바로 됩니다(nvm 으로 Node 판을 바꾸면 그 판에서 `edith setup` 한 번).
 
 손으로 설치:
 

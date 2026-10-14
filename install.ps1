@@ -50,6 +50,14 @@ function Main {
   Step 'Codex CLI'
   if (Have codex) { Write-Host "  found: $(codex --version)" } else { Run npm @('install', '-g', '@openai/codex'); Refresh-Path }
 
+  # The Claude and herdr installers put their binaries in ~\.local\bin; keep it on the user PATH for new terminals.
+  $lb = "$HOME\.local\bin"
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  if ((Test-Path "$lb\claude.exe") -and -not ("$userPath" -split ';' -contains $lb)) {
+    [Environment]::SetEnvironmentVariable('Path', ("$userPath".TrimEnd(';') + ";$lb").TrimStart(';'), 'User')
+    Write-Host "  added $lb to your user PATH"
+  }
+
   # The integrations need the config folders to exist; a fresh install may not have them yet (both tools accept an empty one).
   Step 'herdr integrations (report session IDs so EDITH opens the right transcript)'
   New-Item -ItemType Directory -Force "$HOME\.claude", "$HOME\.codex" | Out-Null
@@ -76,7 +84,7 @@ function Main {
   Push-Location $dir
   try { Run npm @('install', '--no-audit', '--no-fund'); Run npm @('run', 'build'); Run npm @('link') } finally { Pop-Location }
 
-  Step 'Done. Once, in a new PowerShell window:'
+  Step 'Done. Open a new PowerShell window (it picks up the new PATH), then once:'
   Write-Host @'
   claude   # sign in
   codex    # sign in
