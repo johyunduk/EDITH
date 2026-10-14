@@ -8,7 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { CONFIG_DIR, DATA_DIR, REPO } from './config.ts';
-import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, workspaceAction, type Usage } from './herdr.ts';
+import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
 import { backgroundTasks, chat, checkAlive, codexUsage, taskOutput } from './chat.ts';
 import { commands, findFiles } from './complete.ts';
 import { firstLine } from './sh.ts';
@@ -20,16 +20,19 @@ const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
 // 실시간 갱신(SSE) — herdr 상태가 바뀌면 herdr. 화면이 그때 목록을 다시 받는다.
-// ponytail: 2초마다 snapshot 을 떠서 비교한다. 승인 대기 알림이 2초도 늦으면 herdr events.subscribe 로 바꾼다.
+// 이벤트 구독(herdr.ts watch)으로 — 이벤트가 오면 스냅샷을 떠서 달라졌을 때만 알린다. 몰려 오면 100ms 안의 것을 한 번으로 묶는다.
 const clients = new Set<ServerResponse>();
-let lastHerdr = '', herdrBusy = false;
-function tick() {
-  if (!clients.size || herdrBusy) return;
-  herdrBusy = true;
-  snapshot().then(s => {
-    const sig = signature(s);
-    if (sig !== lastHerdr) { lastHerdr = sig; for (const c of clients) c.write('event: herdr\ndata:\n\n'); }
-  }).catch(() => undefined).finally(() => { herdrBusy = false; });
+let lastHerdr = '';
+function watchHerdr() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const resubscribe = watch(() => {
+    clearTimeout(timer);
+    timer = setTimeout(() => void snapshot().then(s => {
+      resubscribe(s.panes.filter(p => p.agent).map(p => p.id));
+      const sig = signature(s);
+      if (sig !== lastHerdr) { lastHerdr = sig; for (const c of clients) c.write('event: herdr\ndata:\n\n'); }
+    }).catch(() => undefined), 100);
+  });
 }
 
 const lastUsage = new Map<string, Usage>();
@@ -78,7 +81,7 @@ function upload(b: { name?: unknown; data?: unknown }) {
 
 export function serve(port: number) {
   const KEY = consoleKey();
-  setInterval(tick, 2000);
+  watchHerdr();
   createServer(async (req, res) => {
     if (req.headers.host !== `127.0.0.1:${port}` && req.headers.host !== `localhost:${port}`) return reply(res, 403, 'host');
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;

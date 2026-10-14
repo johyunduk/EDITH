@@ -1,5 +1,5 @@
 // herdr — 워크스페이스·탭·pane·에이전트 상태, pane 터미널 흐름(보기·입력), 프롬프트·키 보내기. 화면 서버가 쓴다.
-// 자주 부르는 읽기는 herdr CLI 로 한다 — Node 가 소켓에 바로 붙으면 herdr 서버(0.8.0)가 요청마다 100ms 를 기다린다
+// 자주 부르는 읽기는 herdr CLI 로 한다 — Node 가 소켓에 바로 붙으면 herdr 서버가 요청마다 100ms 를 기다린다(0.8.0·0.9.4 실측)
 // (요청이 접속 순간에 와 있지 않으면). 프롬프트·키처럼 가끔 쓰는 쓰기는 소켓으로 — 글이 CLI 옵션으로 읽힐 걱정이 없다.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -32,6 +32,7 @@ function api(method: string, params: Record<string, unknown>) {
 
 type RawPane = {
   pane_id: string; tab_id: string; workspace_id: string; agent?: string | null; name?: string; agent_status?: string;
+  agent_session?: { agent: string; kind: string; value: string };
   terminal_title_stripped?: string; cwd?: string; foreground_cwd?: string; focused: boolean; scroll?: { viewport_rows: number };
 };
 type Rect = { x: number; y: number; width: number; height: number };
@@ -55,6 +56,11 @@ export function noteAgents(panes: { id: string; agent: string | null }[]) {
   }
   started = true;
 }
+
+// pane 의 에이전트 세션 — herdr 통합 훅이 알려 준 것(0.9.2+). Claude 는 `herdr integration install claude` 뒤 새로 시작한
+// 세션부터 알려 준다(시작·/resume·/clear·compact 때). 대화 기록 파일을 제목으로 추측하지 않고 바로 찾는 데 쓴다(chat.ts).
+const sessions = new Map<string, { agent: string; kind: string; value: string }>();
+export const sessionOf = (id: string) => sessions.get(id);
 
 export async function snapshot() {
   const s = JSON.parse((await sh('herdr', ['api', 'snapshot'])).stdout).result.snapshot as Raw;
@@ -80,12 +86,40 @@ export async function snapshot() {
     })),
   };
   noteAgents(snap.panes);
+  for (const p of s.panes) if (p.agent_session) sessions.set(p.pane_id, p.agent_session); else sessions.delete(p.pane_id);
   return snap;
 }
 
-// 바뀌었는지 볼 때 쓰는 값 — 출력마다 바뀌는 revision·제목(스피너)은 뺀다.
+// 바뀌었는지 볼 때 쓰는 값 — 출력마다 바뀌는 revision·제목(스피너)은 뺀다. 세션이 바뀌면(/clear·/resume) 대화를 다시 읽게 넣는다.
 export const signature = (s: Awaited<ReturnType<typeof snapshot>>) =>
-  JSON.stringify([s.workspaces, s.tabs, s.panes.map(p => [p.id, p.agent, p.name, p.status, p.cwd]), s.layouts]);
+  JSON.stringify([s.workspaces, s.tabs, s.panes.map(p => [p.id, p.agent, p.name, p.status, p.cwd, sessions.get(p.id)?.value]), s.layouts]);
+
+// herdr 이벤트 구독 — 바뀔 때만 changed 를 부른다(폴링 대신). 연결 하나를 열어 두므로 요청마다 100ms 지연과는 상관없다.
+// 구독은 지난 이벤트를 다시 주지 않는다(0.9.0) — 구독이 시작되면(첫 줄) 한 번 부르니 그때 스냅샷을 새로 뜬다.
+// 밀려서 events_lost 가 와도, 연결이 끊겨도(herdr 재시작) 같은 길이다. 줄 내용은 보지 않는다 — 무엇이든 오면 다시 본다.
+// 에이전트 상태 변화는 pane 마다 구독해야 해서, 돌려준 함수에 지금 에이전트 pane 목록을 넘기면 달라졌을 때 다시 구독한다.
+const WATCH = ['workspace.created', 'workspace.updated', 'workspace.renamed', 'workspace.moved', 'workspace.reordered', 'workspace.closed',
+  'worktree.created', 'worktree.removed', 'tab.created', 'tab.closed', 'tab.renamed', 'tab.moved',
+  'pane.created', 'pane.closed', 'pane.updated', 'pane.moved', 'pane.exited', 'pane.agent_detected', 'layout.updated'];
+export function watch(changed: () => void) {
+  let sock: ReturnType<typeof connect> | undefined, panes: string[] = [];
+  const open = () => {
+    const s = sock = connect(SOCKET);
+    s.write(`${JSON.stringify({ id: 'edith-watch', method: 'events.subscribe', params: { subscriptions: [
+      ...WATCH.map(type => ({ type })), ...panes.map(pane_id => ({ type: 'pane.agent_status_changed', pane_id }))] } })}\n`);
+    createInterface({ input: s }).on('line', changed);
+    s.on('error', () => undefined);
+    s.on('close', () => { if (sock === s) setTimeout(open, 1000); });
+  };
+  open();
+  return (ids: string[]) => {
+    if (ids.join() === panes.join()) return;
+    panes = ids;
+    const old = sock;
+    open();
+    old?.destroy();
+  };
+}
 
 // pane 터미널 흐름 — herdr terminal session 의 프레임(base64 ANSI)을 SSE 로 넘긴다. 첫 프레임은 화면 전체(full), 그 뒤는 바뀐 부분.
 // 보기(observe)는 여럿이 같이 붙어도 된다. 입력(control)은 pane 하나에 하나만 — 이미 있으면 herdr 가 closed 로 거절하고,

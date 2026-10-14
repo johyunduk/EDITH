@@ -6,7 +6,7 @@ herdr 로 띄운 Claude Code·Codex·셸 pane 을 브라우저 한 화면에서 
 
 ## 하는 일
 
-- **herdr 트리** — 워크스페이스 → 탭 → pane, 에이전트 상태(작업 중·승인 대기·끝남). 레포의 링크 워크트리는 그 레포 밑에 묶습니다. 끌어 놓기로 pane·워크스페이스를 옮기고, 우클릭으로 나누기·닫기·이름 바꾸기.
+- **herdr 트리** — 워크스페이스 → 탭 → pane, 에이전트 상태(작업 중·승인 대기·끝남). herdr 이벤트를 구독해 바뀌면 0.2초 안팎으로 화면에 옵니다. 레포의 링크 워크트리는 그 레포 밑에 묶습니다. 끌어 놓기로 pane·워크스페이스를 옮기고, 우클릭으로 나누기·닫기·이름 바꾸기.
 - **pane 보기** — 에이전트는 대화(세션 기록 JSONL 을 풀어서, 이전 대화 더 보기), 셸은 명령별 기록, 필요하면 실시간 터미널(누르면 입력). 탭 전체를 herdr 배치 그대로 칸으로 보고 칸 경계를 끌어 크기를 바꿉니다.
 - **답하기** — 프롬프트 칸(`/` 명령·스킬, `@` 파일 자동 완성), 승인·선택 질문은 버튼으로, 빠른 키, 파일 첨부(고르기·붙여넣기).
 - **알림** — 승인 대기가 되면 브라우저 알림·소리, 헤더 종에 내역.
@@ -19,7 +19,8 @@ herdr 로 띄운 Claude Code·Codex·셸 pane 을 브라우저 한 화면에서 
 
 - macOS(확인한 환경). Linux 는 확인하지 않았습니다.
 - Node 24 이상 — 서버는 빌드 없이 `node src/cli.ts` 로 돕니다(type stripping). 런타임 의존성은 없습니다.
-- [herdr](https://herdr.dev) 0.8 — `herdr` 명령과 소켓(`~/.config/herdr/herdr.sock`, 또는 `HERDR_SOCKET_PATH`).
+- [herdr](https://herdr.dev) 0.9.4(확인한 판) — `herdr` 명령과 소켓(`~/.config/herdr/herdr.sock`, 또는 `HERDR_SOCKET_PATH`).
+- 권장: herdr Claude 통합(`herdr integration install claude`). 세션이 시작·`/resume`·`/clear` 될 때 세션 ID 를 herdr 에 알려서, 대화 화면이 그 세션 기록을 바로 엽니다(통합 뒤 새로 시작한 세션부터). 없으면 창 제목으로 기록 파일을 추측합니다. Codex 도 herdr 가 세션을 알려 주면 같은 방식으로 엽니다.
 - 쓰는 만큼: Claude Code(`claude`), Codex CLI(`codex`), git, lsof.
 
 ## 설치·실행

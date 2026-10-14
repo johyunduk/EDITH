@@ -1,5 +1,5 @@
 // 대화 — Claude·Codex pane 의 세션 기록(JSONL)을 화면용 대화로 푼다. 터미널 대신 브라우저에서 읽고 스크롤하려고.
-// herdr(0.8.0)는 pane 의 세션 파일을 알려 주지 않는다.
+// herdr 통합 훅이 pane 의 세션을 알려 줬으면(0.9.2+, herdr.ts sessionOf) 그 파일을 바로 쓴다. 아니면 추측한다:
 // - Claude: pane 작업 폴더의 기록 중 제목(custom-title·ai-title)이 pane 창 제목과 같은 것. 없으면 같은 폴더의 다른 Claude pane 제목이
 //   아닌 것 중 가장 최근 것. 창 제목이 기본값(「Claude Code」)이면 아직 대화가 없는 새 세션이라 고르지 않는다.
 // - Codex: 창 제목 「스레드 이름 | 폴더」 의 이름으로 ~/.codex/session_index.jsonl 에서 스레드 ID 를 찾고(최근 것부터),
@@ -8,7 +8,7 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { agentSince, until } from './herdr.ts';
+import { agentSince, sessionOf, until } from './herdr.ts';
 import { sh } from './sh.ts';
 
 // at 은 그 항목이 나온 줄의 파일 안 바이트 위치 — 화면이 「이전 대화 더 보기」 로 그 앞을 달라고 할 때 쓴다.
@@ -184,23 +184,28 @@ function titleOf(file: string) {
   return custom || ai;
 }
 
-// 붙잡은 파일보다 나중에 만든, 제목이 같은 세션 파일 중 가장 새것.
+// 붙잡은 파일보다 나중에 쓰인, 제목이 같은 세션 파일 중 가장 최근 것. 만든 시각이 아니라 쓴 시각으로 본다 —
+// /clear 는 새 파일을, /resume 은 예전 파일(먼저 만든 것)을 이어 쓰는데, 어느 쪽이든 지금 쓰이는 파일이 이 pane 의 대화다.
+// ponytail: 떠난 세션 파일에 나중에 무언가 덧붙으면 그쪽으로 되돌아간다. herdr Claude 통합(세션 ID)이 있으면 이 길로 오지 않는다.
 export function newerSame(held: string, files: string[], title: string) {
-  const born = (f: string) => statSync(f).birthtimeMs, b = born(held);
-  return files.filter(f => f !== held && born(f) > b).sort((x, y) => born(y) - born(x)).find(f => titleOf(f) === title);
+  const at = (f: string) => statSync(f).mtimeMs, h = at(held);
+  return files.filter(f => f !== held && at(f) > h).sort((x, y) => at(y) - at(x)).find(f => titleOf(f) === title);
 }
 
 // pane → 세션 파일. 제목이 바뀌지 않는 동안은 다시 찾지 않는다(제목 찾기는 파일 전체를 읽는다).
 const picked = new Map<string, { title: string; file: string }>();
 function claudeFile(pane: string, cwd: string, title: string, others: string[]) {
+  const told = reported(pane, 'claude', cwd);
+  if (told) { picked.set(pane, { title, file: told }); return told; }
   if (!title || title === 'Claude Code') return null;
   const dir = transcriptDir(cwd);
   if (!existsSync(dir)) return null;
   const all = readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f));
   const hit = picked.get(pane);
   if (hit && hit.title === title && existsSync(hit.file)) {
-    // /clear 는 같은 제목(이름 붙인 세션)으로 새 세션 파일을 만든다 — 붙잡은 파일보다 나중에 만든 같은 제목 파일이 있으면 그쪽으로 옮긴다
-    const moved = newerSame(hit.file, all, title);
+    // 같은 제목(이름 붙인 세션)으로 다른 파일이 더 최근에 쓰였으면 그쪽으로 옮긴다(/clear·/resume). 다른 pane 이 붙잡은 파일은 빼고.
+    const taken = new Set([...picked].filter(([k]) => k !== pane).map(([, v]) => v.file));
+    const moved = newerSame(hit.file, all.filter(f => !taken.has(f)), title);
     if (!moved) return hit.file;
     picked.set(pane, { title, file: moved });
     return moved;
@@ -226,7 +231,27 @@ function metaCwd(file: string) {
     return typeof p.source === 'object' && p.source && 'subagent' in p.source ? '' : p.cwd ?? '';
   } catch { return ''; } finally { closeSync(fd); }
 }
+// herdr 가 알려 준 세션 → 기록 파일. 알려 준 게 없거나 파일이 아직 없으면(첫 메시지 전) null — 그때는 추측으로.
+function reported(pane: string, agent: string, cwd: string) {
+  const s = sessionOf(pane);
+  if (!s || s.agent !== agent) return null;
+  if (s.kind === 'path') return existsSync(s.value) ? s.value : null;
+  if (agent === 'codex') return rollouts().find(f => f.endsWith(`-${s.value}.jsonl`)) ?? null;
+  const here = join(transcriptDir(cwd), `${s.value}.jsonl`);
+  if (existsSync(here)) return here;
+  const root = join(homedir(), '.claude', 'projects');   // Claude 를 띄운 폴더와 pane 의 지금 폴더가 다르면(cd)
+  try { return readdirSync(root).map(d => join(root, d, `${s.value}.jsonl`)).find(f => existsSync(f)) ?? null; } catch { return null; }
+}
+// 최근 rollout — 날짜 폴더(YYYY/MM/DD)를 최근부터 30개. 파일 이름은 rollout-<시각>-<id>.jsonl
+function rollouts() {
+  const root = join(CODEX, 'sessions');
+  if (!existsSync(root)) return [];
+  const days = (d: string, depth: number): string[] => depth ? readdirSync(d).sort().reverse().flatMap(x => days(join(d, x), depth - 1)) : [d];
+  return days(root, 3).slice(0, 30).flatMap(d => readdirSync(d).map(f => join(d, f)));
+}
 function codexFile(pane: string, cwd: string, title: string) {
+  const told = reported(pane, 'codex', cwd);
+  if (told) { picked.set(pane, { title, file: told }); return told; }
   const hit = picked.get(pane);
   if (hit && hit.title === title && existsSync(hit.file)) return hit.file;
   const name = title.split(' | ')[0];
@@ -234,9 +259,7 @@ function codexFile(pane: string, cwd: string, title: string) {
   try {
     ids = readFileSync(join(CODEX, 'session_index.jsonl'), 'utf8').split('\n').flatMap(l => { try { const o = JSON.parse(l); return o.thread_name === name ? [o.id as string] : []; } catch { return []; } }).reverse();
   } catch { /* 색인 없음 */ }
-  // 날짜 폴더를 최근부터 훑는다 — rollout-<시각>-<id>.jsonl
-  const days = (d: string, depth: number): string[] => depth ? readdirSync(d).sort().reverse().flatMap(x => days(join(d, x), depth - 1)) : [d];
-  const files = existsSync(join(CODEX, 'sessions')) ? days(join(CODEX, 'sessions'), 3).slice(0, 30).flatMap(d => readdirSync(d).map(f => join(d, f))) : [];
+  const files = rollouts();
   const file = ids.map(id => files.find(f => f.endsWith(`${id}.jsonl`))).find(f => f && metaCwd(f) === cwd)
     ?? files.map(f => ({ f, m: statSync(f).mtimeMs })).sort((a, b) => b.m - a.m).slice(0, 40).find(x => metaCwd(x.f) === cwd)?.f;
   if (file) picked.set(pane, { title, file });

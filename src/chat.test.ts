@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeLine, newerSame, older } from './chat.ts';
@@ -31,14 +31,18 @@ test('새로 뜬 에이전트 — 콘솔이 켜질 때 이미 있던 pane 은 �
   assert.ok(agentSince('wT:p3'));
 });
 
-test('/clear 뒤 새 세션 — 붙잡은 파일보다 나중에 만든 같은 제목 파일로 옮기고, 다른 제목·옛 파일은 안 본다', async () => {
+test('/clear·/resume — 붙잡은 파일보다 나중에 쓰인 같은 제목 파일로 옮기고, 다른 제목 파일은 안 본다', () => {
   const dir = mkdtempSync(join(tmpdir(), 'edith-clear-'));
   try {
-    const t = (name: string) => `${JSON.stringify({ type: 'custom-title', customTitle: name })}\n`;
-    const put = async (f: string, name: string) => { writeFileSync(join(dir, f), t(name)); await new Promise(r => setTimeout(r, 20)); return join(dir, f); };
-    const old = await put('a.jsonl', 'Optimus Prime'), held = await put('b.jsonl', 'Optimus Prime');
-    const other = await put('c.jsonl', 'pr'), fresh = await put('d.jsonl', 'Optimus Prime');
-    assert.equal(newerSame(held, [old, held, other, fresh], 'Optimus Prime'), fresh);
-    assert.equal(newerSame(fresh, [old, held, other, fresh], 'Optimus Prime'), undefined);
+    const put = (f: string, name: string, sec: number) => {
+      const p = join(dir, f);
+      writeFileSync(p, `${JSON.stringify({ type: 'custom-title', customTitle: name })}\n`);
+      utimesSync(p, sec, sec);
+      return p;
+    };
+    // 예전 세션(먼저 만든 것)을 /resume 해서 지금 쓰는 경우 — 만든 순서와 상관없이 마지막에 쓴 파일
+    const resumed = put('a.jsonl', 'Optimus Prime', 300), held = put('b.jsonl', 'Optimus Prime', 200), other = put('c.jsonl', 'pr', 400);
+    assert.equal(newerSame(held, [resumed, held, other], 'Optimus Prime'), resumed);
+    assert.equal(newerSame(resumed, [resumed, held, other], 'Optimus Prime'), undefined);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
