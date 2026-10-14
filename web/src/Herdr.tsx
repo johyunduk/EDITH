@@ -584,12 +584,25 @@ type Item = { t: number; kind: 'user' | 'text' | 'tool' | 'out'; text: string; r
 // 지금 화면 아래쪽(기록에 아직 없는 화면) — 작업 중이면 진행 부분, 입력칸이 안 보이면 질문·메뉴. 대화 칸과 입력칸이 같이 쓴다.
 // raw 는 터미널 색 그대로(진행 부분 그리기), lines 는 색을 뺀 글(읽기·찾기).
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
+// 상태가 바뀌면(작업 중 → 끝남·승인 대기 등) 바로 다시 읽는다 — 상태는 herdr 이벤트로 곧바로 오는데, 주기 읽기(끝나면 5초)를
+// 기다리면 완료 알림 뒤 마지막 답이 늦게 뜬다. 기록 파일이 상태보다 조금 늦게 써질 수 있어 1초 뒤 한 번 더.
+function useRefetchOn(status: string | null, refetch: () => unknown) {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }   // 처음엔 어차피 읽는다
+    void refetch();
+    const t = setTimeout(() => void refetch(), 1000);
+    return () => clearTimeout(t);
+  }, [status]);   // eslint-disable-line react-hooks/exhaustive-deps -- refetch 는 바뀌지 않는다
+}
+
 function useScreen(p: HPane) {
   const agent = p.agent === 'claude' || p.agent === 'codex';
   const q = useQuery({
     queryKey: ['live', p.id], queryFn: () => get<{ lines: string[]; input: boolean }>(`/api/herdr/panes/${p.id}/live`),
     refetchInterval: p.status === 'working' ? 700 : p.status === 'blocked' ? 1000 : 2000, enabled: agent,
   });
+  useRefetchOn(p.status, q.refetch);
   const raw = q.data?.lines ?? [], lines = raw.map(l => l.replace(ANSI, '').trimEnd());
   const menu = q.data && !q.data.input ? parseMenu(lines) : null;
   return { raw, lines, input: q.data?.input ?? true, menu };
@@ -635,10 +648,11 @@ function parseMenu(lines: string[]): Menu | null {
 // 대화 — 서버가 끝쪽(최근)만 주고, 맨 위로 올리거나 「이전 대화 더 보기」 를 누르면 그 앞을 이어 받아 위에 붙인다(보던 자리는 그대로).
 type ChatPage = { file: string | null; items: Item[]; more: boolean };
 function Chat({ p }: { p: HPane }) {
-  const { data, error } = useQuery({
+  const { data, error, refetch } = useQuery({
     queryKey: ['chat', p.id], queryFn: () => get<ChatPage>(`/api/herdr/panes/${p.id}/chat`),
     refetchInterval: p.status === 'working' ? 1500 : 5000,
   });
+  useRefetchOn(p.status, refetch);
   const screen = useScreen(p);
   const box = useRef<HTMLDivElement>(null), stick = useRef(true), keep = useRef<number | null>(null);
   const [older, setOlder] = useState<Item[]>([]), [olderMore, setOlderMore] = useState<boolean | null>(null), [loading, setLoading] = useState(false);
