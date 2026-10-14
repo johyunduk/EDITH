@@ -11,6 +11,7 @@ npm test                    # node --test — src/*.test.ts
 npm run typecheck           # 서버(tsc) + 화면(web tsc)
 npm --prefix web run build  # 화면 빌드 → web/dist (edith 가 요청마다 디스크에서 읽으니 브라우저 새로 고침이면 반영)
 edith --no-open             # 서버 코드를 바꿨으면 껐다 켠다
+(cd plugins/rc-keepalive && claude plugin test)   # mod 를 고쳤으면
 ```
 
 바꾼 뒤에는 typecheck·test 를 통과시키고, 화면을 바꿨으면 build 까지 한다. 로직(분기·파싱·경로 판단)을 더하면 그 옆에 `*.test.ts` 로 확인 하나를 남긴다.
@@ -20,8 +21,8 @@ edith --no-open             # 서버 코드를 바꿨으면 껐다 켠다
 **보안 — 이 화면은 내 터미널에 키를 보낼 수 있다. 아래를 약하게 만드는 수정은 사용자가 위험을 알고 분명히 원할 때만 한다.**
 
 - 서버는 `127.0.0.1` 에만 뜬다(`src/server.ts` 의 `listen`). `0.0.0.0`·외부 공개로 바꾸지 않는다.
-- Host 머리가 `127.0.0.1:<포트>`·`localhost:<포트>` 가 아니면 거절한다(DNS rebinding).
-- 모든 `/api/` 는 열쇠 쿠키(`edith`)가 있어야 한다. 새 API 도 `/api/` 아래에 두면 이 검사를 그대로 탄다 — 검사 앞에 끼워 넣지 않는다.
+- Host 머리가 `127.0.0.1:<포트>`·`localhost:<포트>` 가 아니면 거절한다(DNS rebinding). 포트는 따지지 않는다 — 다른 기기가 SSH 터널로 연다(`src/machines.ts`).
+- 모든 `/api/` 는 열쇠 쿠키(`edith-<포트>`)가 있어야 한다. 새 API 도 `/api/` 아래에 두면 이 검사를 그대로 탄다 — 검사 앞에 끼워 넣지 않는다.
 - 쓰기는 같은 출처의 JSON `POST` 만 받는다(CSRF). CORS 머리를 달지 않는다. `x-frame-options: DENY`·`frame-ancestors 'none'` 을 지우지 않는다.
 - 파일을 읽어 주는 API 는 정해 둔 폴더 안만 준다(`realpath` 뒤 경로 확인 — `skillFile`·`taskOutput` 참고). 브라우저가 보낸 경로를 그대로 열지 않는다.
 - 프로세스를 띄울 때는 인자 배열로(`sh(cmd, args)`) — 셸 문자열로 이어 붙이지 않는다.

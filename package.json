@@ -14,7 +14,7 @@
   "scripts": {
     "start": "node src/cli.ts",
     "build": "npm --prefix web ci && npm --prefix web run build",
-    "test": "node --test",
+    "test": "node --test \"src/**/*.test.ts\"",
     "typecheck": "tsc && npm --prefix web run typecheck"
   },
   "devDependencies": {

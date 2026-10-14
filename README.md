@@ -45,7 +45,7 @@ herdr 서버가 꺼져 있으면 화면 없이 띄우고, 브라우저로 EDITH 
 edith                # herdr 확인(꺼져 있으면 띄움) → 화면 서버 → 브라우저
 edith --no-open      # 브라우저는 열지 않고 주소만 찍는다
 edith --port 4400    # 다른 포트(기본 4320)
-edith setup          # 설치 스크립트 다시 — 빠진 도구, herdr 통합·스킬, 화면 빌드
+edith setup          # 설치 스크립트 다시 — 빠진 도구, herdr 통합·스킬, 화면 빌드, Claude 플러그인
 ```
 
 - 이미 떠 있으면 새로 띄우지 않고 브라우저만 엽니다. 브라우저는 열쇠가 붙은 주소로 열리고, 열쇠는 쿠키로 30일 남습니다.
@@ -72,6 +72,7 @@ EDITH 는 받아서 마음대로 고쳐 쓰라고 만든 기본판입니다(MIT)
 - **변경** — pane 폴더의 git diff(커밋 안 한 것·브랜치 전체·커밋 하나), 파일별 AI 요약(`claude -p`, haiku).
 - **사용량** — 모델·컨텍스트 %, 5시간·7일 한도(「사용량 칩」).
 - **백그라운드 작업** — Claude 가 띄운 셸·에이전트와 그 출력.
+- **원격** — Claude pane 의 Remote Control 이 켜졌는지. 켜져 있으면 claude.ai 에서 그 세션을 여는 링크, 꺼져 있으면 「원격 켜기」. 함께 설치되는 Claude 플러그인 `rc-keepalive` 가 켜 두었던 세션이 끊기면 다시 켭니다(「Remote Control 지킴이」).
 - **스킬** — Claude·Codex 의 스킬·명령 목록과 서로 부르는 관계도.
 
 ## 설치 자세히
@@ -84,6 +85,7 @@ EDITH 는 받아서 마음대로 고쳐 쓰라고 만든 기본판입니다(MIT)
 4. herdr 스킬(`herdr --skill`) → `~/.agents/skills/herdr`(Codex), `~/.claude/skills/herdr`(Claude — 링크, Windows 는 복사본)
 5. Claude Code·herdr 가 깔린 `~/.local/bin` 이 PATH 에 없으면 셸 설정(`~/.zshrc` 등, Windows 는 사용자 PATH)에 넣음
 6. EDITH 를 `~/.edith`(또는 `EDITH_DIR`)에 받고 `npm install` → `npm run build` → `npm link`
+7. 그 체크아웃을 Claude 플러그인 마켓플레이스로 더하고(`claude plugin marketplace add <체크아웃>`) `rc-keepalive@edith` 설치
 
 `edith` 는 alias 가 아니라 `npm link` 가 npm 전역 bin(macOS·Linux 는 Homebrew·nvm 의 bin, Windows 는 `%APPDATA%\npm`)에 만든 명령입니다. 셸 설정 없이 새 터미널에서 바로 되고, nvm 으로 Node 판을 바꾸면 그 판에서 `edith setup` 을 한 번 돌립니다.
 
@@ -128,14 +130,48 @@ edith
   { "statusLine": { "type": "command", "command": "sh ~/.edith/extras/statusline.sh" } }
   ```
 
+## 다른 기기의 EDITH 열기
+
+EDITH 는 그 기기의 herdr 만 봅니다. 집에서 회사 PC 의 herdr·대화·Codex 를 보려면 집 EDITH 사이드 메뉴 아래의 **회사**(기기 이름)를 누릅니다 — 집 EDITH 가 SSH 터널을 열고 회사 EDITH 를 새 탭으로 엽니다. 회사 EDITH 는 그대로 `127.0.0.1` 에만 떠 있고, 밖으로 여는 포트는 없습니다.
+
+처음 한 번:
+
+1. **두 기기를 잇는다** — [Tailscale](https://tailscale.com)(개인 무료)을 두 기기에 깔고 같은 계정으로 로그인합니다. 회사 PC 에 이미 VPN 이 있으면 같이 쓸 수 있는지, 회사 규정에 맞는지 먼저 확인합니다. 집에서 회사 VPN 에 들어갈 수 있으면 그것도 됩니다.
+2. **회사 PC 에 SSH 를 켠다** — macOS: 시스템 설정 → 일반 → 공유 → 원격 로그인. Linux: `openssh-server`. (Windows 를 여는 쪽으로 쓰는 것은 아직 안 됩니다.)
+3. **집 PC 에서 비밀번호 없이 들어가게 한다** — `ssh-keygen -t ed25519`(키가 없으면) → `ssh-copy-id <사용자>@<회사 PC 의 Tailscale 이름>`. `~/.ssh/config` 에 이름을 붙여 두면 편합니다:
+   ```
+   Host work-mac
+     HostName <회사 PC 의 Tailscale 이름>
+     User <사용자>
+   ```
+   `ssh work-mac` 이 비밀번호 없이 들어가지면 됩니다.
+4. **집 PC 에 기기를 적는다** — `~/.config/edith/machines.json`:
+   ```json
+   { "회사": "work-mac" }
+   ```
+   회사 EDITH 가 다른 포트면 `{ "회사": { "ssh": "work-mac", "port": 4400 } }`. 집 쪽 포트는 적은 순서대로 4321, 4322 … 를 씁니다.
+5. **회사 PC 에서 EDITH 를 띄워 둔다** — `edith --no-open`(꺼져 있으면 「떠 있지 않다」 고 알려 줍니다).
+
+터널은 집 EDITH 가 꺼질 때 같이 닫힙니다. 회사 화면의 열쇠는 SSH 로 읽어 주소에 붙였다가 바로 지웁니다(처음 `edith` 가 여는 주소와 같은 방식).
+
+## Remote Control 지킴이
+
+Claude Code 의 Remote Control(`/rc`)을 켜 두면 다른 기기의 claude.ai/code·Claude 앱에서 그 세션을 이어 씁니다. 그런데 VPN·네트워크가 바뀌거나 오래 서버에 닿지 못하면 끊긴 채로 남습니다.
+[`plugins/rc-keepalive`](plugins/rc-keepalive) 는 이걸 다시 켜는 Claude Code mod 입니다(EDITH 가 꺼져 있어도 Claude 안에서 돕니다).
+
+- 1분마다 그 세션의 `~/.claude/sessions/<pid>.json` 의 `bridgeSessionId` 를 보고, 켜져 있던 세션이 두 번 연달아 꺼져 있고 일하는 중이 아니면 `/remote-control` 을 보냅니다.
+- 처음부터 안 켠 세션, `/rc` 패널에서 직접 끊은 세션, 같은 대화를 다른 터미널이 원격으로 쥔 세션은 두고, 30분에 세 번 다시 켜도 또 끊기면 멈추고 아래 줄에 알립니다.
+- Remote Control 이 들어간 알림은 `~/.claude/rc-keepalive.log` 에 남습니다.
+- 끄기: `claude plugin disable rc-keepalive@edith`. 레포에서 그대로 읽으니 고치면 다음 세션부터(또는 `/reload-plugins`) 반영됩니다. 확인은 `cd plugins/rc-keepalive && claude plugin test`.
+
 ## 보안
 
 이 화면은 내 터미널에 키를 보낼 수 있습니다. 열쇠를 가진 사람은 내 계정으로 명령을 돌릴 수 있다는 뜻입니다.
 
-- 서버는 `127.0.0.1` 에만 뜹니다. Host 머리가 `127.0.0.1:<포트>`·`localhost:<포트>` 가 아니면 거절합니다(DNS rebinding).
-- 모든 `/api` 는 열쇠 쿠키(`HttpOnly`, `SameSite=Strict`)가 있어야 합니다. 열쇠는 `~/.config/edith/console.key`(600)에 있고, 바꾸려면 지우고 다시 띄웁니다.
+- 서버는 `127.0.0.1` 에만 뜹니다. Host 머리가 `127.0.0.1:<포트>`·`localhost:<포트>` 가 아니면 거절합니다(DNS rebinding). 포트는 따지지 않습니다 — 다른 기기가 SSH 터널(다른 포트)로 열 수 있게.
+- 모든 `/api` 는 열쇠 쿠키(`edith-<포트>`, `HttpOnly`, `SameSite=Strict`)가 있어야 합니다. 쿠키는 포트마다 따로라 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 섞이지 않습니다. 열쇠는 `~/.config/edith/console.key`(600)에 있고, 바꾸려면 지우고 다시 띄웁니다.
 - 쓰기는 같은 출처에서 온 JSON `POST` 만 받습니다(CSRF). 화면은 다른 사이트의 틀에 들어가지 않습니다(`frame-ancestors 'none'`). CORS 머리는 달지 않습니다.
-- **포트를 밖으로 열지 마세요** — 터널·리버스 프록시·`0.0.0.0` 포워딩 금지. 원격에서 쓰려면 SSH 포트 포워딩(`ssh -L 4320:127.0.0.1:4320`)으로.
+- **포트를 밖으로 열지 마세요** — 터널·리버스 프록시·`0.0.0.0` 포워딩 금지. 다른 기기에서 쓰려면 「다른 기기의 EDITH 열기」(SSH 터널)로.
 - 화면이 읽는 것은 내 계정 파일입니다: herdr 상태, `~/.claude`·`~/.codex` 의 세션 기록·스킬, pane 폴더의 git. 밖으로 보내는 것은 AI 요약을 누를 때 `claude -p` 로 넘기는 diff 뿐입니다(도구·MCP·훅 끄고 실행).
 - 첨부한 파일은 `~/.local/share/edith/uploads`(700/600)에 남습니다. 지우지 않으니 가끔 비웁니다.
 
@@ -144,8 +180,10 @@ edith
 | 경로 | 내용 |
 |---|---|
 | `~/.config/edith/console.key` | 화면 열쇠 |
+| `~/.config/edith/machines.json` | 다른 기기 목록(이름 → SSH 대상) — 직접 만든다 |
 | `~/.local/share/edith/summaries.json` | AI 요약 기억(파일 diff 해시별, 최근 2000개) |
 | `~/.local/share/edith/uploads/` | 첨부 |
+| `~/.claude/rc-keepalive.log` | Remote Control 지킴이 기록(최근 200줄) |
 
 ## 개발
 

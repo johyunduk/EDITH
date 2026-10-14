@@ -233,14 +233,15 @@ function metaCwd(file: string) {
     return typeof p.source === 'object' && p.source && 'subagent' in p.source ? '' : p.cwd ?? '';
   } catch { return ''; } finally { closeSync(fd); }
 }
-// herdr 가 세션을 모르는 Claude pane(통합 설치 전에 시작한 것) — 그 pane 의 claude 프로세스가 쓰는 ~/.claude/sessions/<pid>.json 의
-// sessionId(/clear·/resume 을 따라 바뀐다). Claude Code 의 내부 파일이라(2.1.x 확인) 없거나 모양이 바뀌면 추측으로 넘어간다.
-// pid 는 pane 마다 기억한다 — 프로세스가 끝났으면(파일은 남는다) herdr 에 다시 묻는다.
+// pane 의 claude 프로세스가 쓰는 ~/.claude/sessions/<pid>.json — sessionId(/clear·/resume 을 따라 바뀐다), bridgeSessionId(Remote Control,
+// 꺼지면 null). Claude Code 의 내부 파일이라(2.1.x 확인) 없거나 모양이 바뀌면 undefined.
+// pid 는 pane 마다 기억한다 — 프로세스가 끝났으면 herdr 에 다시 묻는다.
+type LiveFile = { sessionId?: string; bridgeSessionId?: string | null };
 const pids = new Map<string, number>();
-function liveSession(pane: string) {
+function liveFile(pane: string) {
   const read = (pid: number) => {
     try { process.kill(pid, 0); } catch { return undefined; }
-    try { return JSON.parse(readFileSync(join(homedir(), '.claude', 'sessions', `${pid}.json`), 'utf8')).sessionId as string | undefined; } catch { return undefined; }
+    try { return JSON.parse(readFileSync(join(homedir(), '.claude', 'sessions', `${pid}.json`), 'utf8')) as LiveFile; } catch { return undefined; }
   };
   const cached = pids.get(pane), hit = cached ? read(cached) : undefined;
   if (hit) return hit;
@@ -251,6 +252,15 @@ function liveSession(pane: string) {
     pids.set(pane, pid);
     return read(pid);
   } catch { return undefined; }
+}
+// herdr 가 세션을 모르는 Claude pane(통합 설치 전에 시작한 것)의 세션
+const liveSession = (pane: string) => liveFile(pane)?.sessionId;
+
+// Remote Control — 켜져 있으면 claude.ai 에서 그 세션을 여는 주소, 꺼져 있으면 null, 모르면 undefined
+export function remoteControl(pane: string) {
+  const f = liveFile(pane);
+  if (!f) return undefined;
+  return { url: f.bridgeSessionId && /^[\w-]+$/.test(f.bridgeSessionId) ? `https://claude.ai/code/${f.bridgeSessionId}` : null };
 }
 
 // herdr 가 알려 준 세션(없으면 Claude 는 프로세스의 세션) → 기록 파일. 그래도 없거나 파일이 아직 없으면(첫 메시지 전) null — 그때는 추측으로.

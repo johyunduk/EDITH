@@ -1,0 +1,1 @@
+{ "name": "rc-keepalive", "version": "0.1.0", "description": "Remote Control 이 켜져 있던 세션이 끊기면 /remote-control 로 다시 켠다" }

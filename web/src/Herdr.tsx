@@ -38,15 +38,42 @@ export function HerdrPage({ pane, side = true }: { pane?: string; side?: boolean
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <MenuHost />
-      <aside className={`max-h-72 shrink-0 overflow-y-auto border-b bg-sidebar md:max-h-none md:w-80 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
-        <nav className="space-y-0.5 p-1.5">
+      <aside className={`flex max-h-72 shrink-0 flex-col overflow-y-auto border-b bg-sidebar md:max-h-none md:w-80 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
+        <nav className="flex-1 space-y-0.5 p-1.5">
           <NewWorkspace />
           <Tree data={data} sel={sel?.id} />
         </nav>
+        <OtherDevices />
       </aside>
       <main className="min-w-0 flex-1 overflow-auto p-4">
         {sel ? <PaneView p={sel} data={data} /> : <Empty>{pane ? `pane ${pane} 이 없다(닫혔을 수 있다)` : '왼쪽에서 pane 을 고른다'}</Empty>}
       </main>
+    </div>
+  );
+}
+
+// 다른 기기 — EDITH 는 이 기기의 herdr 만 본다. machines.json 에 둔 기기는 SSH 터널로 그 기기의 EDITH 를 새 탭으로 연다(서버 machines.ts). 없으면 안 보인다.
+function OtherDevices() {
+  const { data = [] } = useQuery({ queryKey: ['machines'], queryFn: () => get<string[]>('/api/machines'), staleTime: 60_000 });
+  const [busy, setBusy] = useState<string | null>(null);
+  const open = (name: string) => {
+    const w = window.open('', '_blank');   // 누른 순간 먼저 열어 둔다 — 터널을 기다린 뒤 열면 팝업 막힘에 걸린다
+    if (w) w.opener = null;
+    setBusy(name);
+    void post<{ url: string }>('/api/machines/open', { name })
+      .then(r => { if (w) w.location.href = r.url; }, (e: Error) => { w?.close(); toast(`${name} 을 열지 못했다 — ${e.message}`, 6000); })
+      .finally(() => setBusy(null));
+  };
+  if (!data.length) return null;
+  const row = 'flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-[0.8125rem] text-muted-foreground hover:bg-card hover:text-foreground';
+  return (
+    <div className="m-1.5 mt-0 shrink-0 border-t pt-1.5">
+      {data.map(n => (
+        <button key={n} onClick={() => open(n)} disabled={busy === n} title={`${n} 의 EDITH 를 SSH 터널로 새 탭에 연다`} className={`${row} disabled:opacity-60`}>
+          <Icon className="size-4">{REMOTE}</Icon><span className="truncate">{n}</span>
+          <span className="ml-auto text-xs text-muted-foreground/70">{busy === n ? '여는 중…' : 'EDITH ↗'}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -317,6 +344,32 @@ function Usage({ p, short }: { p: HPane; short?: boolean }) {
   );
 }
 
+// Remote Control — Claude pane 을 claude.ai·Claude 앱에서 이어 쓸 수 있게 켜 뒀는지(서버 chat.ts remoteControl). 켜져 있으면 claude.ai 에서
+// 그 세션을 여는 링크, 꺼져 있으면 「원격 켜기」 — /remote-control 을 보낸다. 켜진 세션에 보내면 상태 패널이 떠 입력을 막아서 꺼져 있을 때만 보인다.
+const REMOTE = <><path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8" /><path d="M10 19v-3.96 3.15" /><path d="M7 19h5" /><rect width="6" height="10" x="16" y="12" rx="2" /></>;   // lucide monitor-smartphone
+function Remote({ p }: { p: HPane }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['remote', p.id], enabled: p.agent === 'claude', refetchInterval: 15000,
+    queryFn: () => get<{ url: string | null } | null>(`/api/herdr/panes/${p.id}/remote`),
+  });
+  if (!data) return null;
+  const cls = 'flex h-7 items-center gap-1.5 rounded-md border bg-card px-2 text-xs font-semibold transition hover:bg-muted';
+  if (data.url) return (
+    <a href={data.url} target="_blank" rel="noopener noreferrer" title="Remote Control 켜짐 — claude.ai 에서 이 세션 열기" className={cls}>
+      <span className="size-1.5 rounded-full bg-emerald-500" /><Icon className="size-3.5">{REMOTE}</Icon>원격
+    </a>
+  );
+  const on = () => post(`/api/herdr/panes/${p.id}/prompt`, { text: '/remote-control' })
+    .then(() => setTimeout(() => void qc.invalidateQueries({ queryKey: ['remote', p.id] }), 2000), (e: Error) => toast(`켜지 못했다 — ${e.message}`, 4000));
+  return (
+    <button onClick={() => void on()} disabled={p.status === 'working'} title={p.status === 'working' ? '일이 끝나면 켤 수 있다' : 'Remote Control 켜기 — claude.ai·Claude 앱에서 이 세션을 이어 쓴다'}
+      className={`${cls} text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50`}>
+      <Icon className="size-3.5">{REMOTE}</Icon>원격 켜기
+    </button>
+  );
+}
+
 function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
   const ws = data.workspaces.find(w => w.workspace_id === p.workspace), tab = data.tabs.find(t => t.tab_id === p.tab);
   const lay = data.layouts.find(l => l.tab === p.tab), multi = (lay?.panes.length ?? 1) > 1;
@@ -344,7 +397,7 @@ function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
           {tab && (ws?.tab_count ?? 1) > 1 && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground" onContextMenu={e => ws && openMenu(e, tabMenu(ws, tab))}>탭 {tab.label}</span>}
           {p.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
           <span className="ml-auto flex items-center gap-1">
-            <BgTasks p={p} />
+            <BgTasks p={p} /><Remote p={p} />
             <button onClick={() => setDiffOn(v => !v)} title="이 pane 폴더(git)의 코드 변경"
               className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition ${diffOn ? 'border-primary bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'}`}>
               <Icon className="size-3.5">{GIT_COMPARE}</Icon>{diffOn ? '변경 닫기' : '변경'}

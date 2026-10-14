@@ -1,2 +1,3 @@
 node_modules/
 web/dist/
+plugins/*/.claude-plugin/types/

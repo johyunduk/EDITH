@@ -40,6 +40,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/complete.ts` | 입력칸 자동 완성(`/` 명령·스킬, `@` 파일), Claude 식 글을 Codex 식으로 바꾸기 |
 | `src/diff.ts` · `src/summary.ts` | git 변경(커밋 안 한 것·브랜치·커밋), 파일별 AI 요약(`claude -p`) |
 | `src/skills.ts` | 스킬·명령 목록과 서로 부르는 관계 |
+| `src/machines.ts` | 다른 기기의 EDITH — `machines.json`, SSH 터널, 그 기기의 열쇠 붙은 주소 |
 | `src/config.ts` · `src/sh.ts` | 경로(설정·데이터 폴더), 프로세스 실행 도우미 |
 | `web/src/App.tsx` | 머리줄·주소(#/herdr, #/skills)·승인 대기 알림 |
 | `web/src/Herdr.tsx` | herdr 화면 전부 — 사이드바 트리, pane 머리·본문(대화·셸 기록·터미널), 탭 배치, 입력칸 |
@@ -47,6 +48,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `web/src/api.ts` · `ui.tsx` · `Menu.tsx` · `copy.ts` | 서버 호출(`get`·`post`)·응답 타입, 작은 공용 조각, 우클릭 메뉴, 복사·알림 한 줄 |
 | `web/src/index.css` | 색·글꼴(밝은·어두운 화면 변수) |
 | `install.sh` · `install.ps1` | 설치 스크립트(macOS·Linux / Windows) |
+| `plugins/` · `.claude-plugin/marketplace.json` | Claude Code 플러그인(mod) — `rc-keepalive`(끊긴 Remote Control 다시 켜기). 레포가 마켓플레이스 `edith` |
 
 ## 흔한 수정
 
@@ -104,4 +106,4 @@ if (req.method === 'POST' && path === '/api/note') {
 
 ## 지켜야 할 보안
 
-이 화면은 내 터미널에 키를 보낼 수 있습니다. [`AGENTS.md`](../AGENTS.md) 「지켜야 하는 것」 의 규칙(127.0.0.1 에만, Host 확인, 열쇠 쿠키, 같은 출처 JSON POST, 파일은 정해 둔 폴더만)을 약하게 만드는 수정은 위험을 알고 할 때만 합니다. 다른 기기에서 보고 싶으면 서버를 밖으로 열지 말고 SSH 포트 포워딩(`ssh -L 4320:127.0.0.1:4320 <이 기기>`)을 씁니다.
+이 화면은 내 터미널에 키를 보낼 수 있습니다. [`AGENTS.md`](../AGENTS.md) 「지켜야 하는 것」 의 규칙(127.0.0.1 에만, Host 확인, 열쇠 쿠키, 같은 출처 JSON POST, 파일은 정해 둔 폴더만)을 약하게 만드는 수정은 위험을 알고 할 때만 합니다. 다른 기기에서 보고 싶으면 서버를 밖으로 열지 말고 SSH 터널(README 「다른 기기의 EDITH 열기」)을 씁니다.

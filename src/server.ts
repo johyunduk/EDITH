@@ -9,12 +9,13 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { CONFIG_DIR, DATA_DIR, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
-import { backgroundTasks, chat, checkAlive, codexUsage, taskOutput } from './chat.ts';
+import { backgroundTasks, chat, checkAlive, codexUsage, remoteControl, taskOutput } from './chat.ts';
 import { commands, findFiles } from './complete.ts';
 import { firstLine } from './sh.ts';
 import { branches, diff } from './diff.ts';
 import { summarize } from './summary.ts';
 import { skillFile, skills } from './skills.ts';
+import { machines, openMachine } from './machines.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -37,7 +38,11 @@ function watchHerdr() {
 
 const lastUsage = new Map<string, Usage>();
 
-const sameOrigin = (origin: string | undefined, port: number) => origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
+// Host 는 127.0.0.1·localhost 만 받는다(DNS rebinding — 남의 도메인 이름으로 이 서버를 부르지 못하게). 포트는 묻지 않는다:
+// 다른 기기가 이 EDITH 를 SSH 터널로 열면 그 기기의 다른 포트로 들어온다(machines.ts).
+export const hostPort = (host?: string) => host?.match(/^(?:127\.0\.0\.1|localhost):(\d{1,5})$/)?.[1] ?? null;
+// 쓰기는 지금 주소와 같은 출처에서 온 것만
+const sameOrigin = (origin: string | undefined, host: string) => origin === `http://${host}`;
 
 // 화면 열쇠 — 처음 serve 때 만들어 파일에 둔다. 바꾸려면 파일을 지우고 serve 를 다시 띄운다.
 export function consoleKey() {
@@ -49,7 +54,8 @@ export function consoleKey() {
   return key;
 }
 const same = (a: string | undefined, b: string) => !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-const cookieKey = (req: IncomingMessage) => req.headers.cookie?.match(/(?:^|;\s*)edith=([^;]+)/)?.[1];
+// 열쇠 쿠키는 포트마다 따로(edith-<포트>) — 같은 127.0.0.1 에 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 포트만 달리 뜨면 쿠키가 겹친다
+const cookieKey = (req: IncomingMessage, port: string) => req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)edith-${port}=([^;]+)`))?.[1];
 
 const body = (req: IncomingMessage, max = 1_000_000) => new Promise<unknown>((ok, no) => {
   let b = '';
@@ -84,18 +90,19 @@ export function serve(port: number) {
   const KEY = consoleKey();
   const server = createServer(async (req, res) => {
     res.setHeader('x-edith', '1');   // 이미 뜬 EDITH 인지 알아보는 표시(cli)
-    if (req.headers.host !== `127.0.0.1:${port}` && req.headers.host !== `localhost:${port}`) return reply(res, 403, 'host');
+    const host = req.headers.host ?? '', hp = hostPort(host);
+    if (!hp) return reply(res, 403, 'host');
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
     // 열쇠 붙은 주소로 열면 쿠키로 남기고 주소에서 열쇠를 지운다.
     if (url.searchParams.has('key')) {
       if (!same(url.searchParams.get('key') ?? '', KEY)) return reply(res, 403, '열쇠가 맞지 않다');
-      res.writeHead(302, { 'set-cookie': `edith=${KEY}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`, location: '/' });
+      res.writeHead(302, { 'set-cookie': `edith-${hp}=${KEY}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`, location: '/' });
       return res.end();
     }
-    const authed = same(cookieKey(req), KEY);
+    const authed = same(cookieKey(req, hp), KEY);
     if (path.startsWith('/api/') && !authed) return reply(res, 401, '열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다');
     // 쓰기는 이 화면에서 온 JSON POST 만 — 다른 사이트는 Origin 이 다르고, JSON 본문은 브라우저가 사전 확인 없이 못 보낸다.
-    if (req.method !== 'GET' && (req.method !== 'POST' || !sameOrigin(req.headers.origin, port) || !req.headers['content-type']?.startsWith('application/json')))
+    if (req.method !== 'GET' && (req.method !== 'POST' || !sameOrigin(req.headers.origin, host) || !req.headers['content-type']?.startsWith('application/json')))
       return reply(res, 403, '쓰기는 이 화면에서 온 요청만');
     const fail = (e: unknown) => reply(res, 409, firstLine(e));
     try {
@@ -112,12 +119,17 @@ export function serve(port: number) {
         const t = skillFile(url.searchParams.get('id') ?? '', url.searchParams.get('file') ?? '');
         return t === null ? reply(res, 404, '없음') : reply(res, 200, t);
       }
+      // 다른 기기의 EDITH(machines.json) — 이름 목록, 열기(SSH 터널을 열고 그 기기의 열쇠 붙은 주소)
+      if (path === '/api/machines') return reply(res, 200, machines().map(m => m.name));
+      if (path === '/api/machines/open' && req.method === 'POST')
+        return await openMachine(String((await body(req) as { name?: unknown }).name ?? '')).then(url => reply(res, 200, { url }), fail);
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());
-      const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks)$/);
+      const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);
       if (h?.[2] === 'stream' && req.method === 'GET')
         return await streamPane(req, res, h[1], { control: url.searchParams.get('mode') === 'control', takeover: url.searchParams.has('takeover') });
       if (h?.[2] === 'live' && req.method === 'GET') return reply(res, 200, await live(h[1]));
+      if (h?.[2] === 'remote' && req.method === 'GET') return reply(res, 200, remoteControl(h[1]) ?? null);
       if (h?.[2] === 'history' && req.method === 'GET') return reply(res, 200, await history(h[1]));
       if ((h?.[2] === 'commands' || h?.[2] === 'files') && req.method === 'GET') {
         const p = (await snapshot()).panes.find(p => p.id === h[1]);

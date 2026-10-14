@@ -85,6 +85,11 @@ function Main {
   Push-Location $dir
   try { Run npm @('install', '--no-audit', '--no-fund'); Run npm @('run', 'build'); Run npm @('link') } finally { Pop-Location }
 
+  # This repo is also a Claude plugin marketplace (.claude-plugin/marketplace.json), read in place from the checkout.
+  Step 'Claude plugin rc-keepalive (turns a dropped Remote Control back on)'
+  Run claude @('plugin', 'marketplace', 'add', $dir)
+  Run claude @('plugin', 'install', 'rc-keepalive@edith')
+
   Step 'Done. Open a new PowerShell window (it picks up the new PATH), then once:'
   Write-Host @'
   claude   # sign in

@@ -1,0 +1,7 @@
+{
+  "name": "edith",
+  "owner": { "name": "EDITH" },
+  "plugins": [
+    { "name": "rc-keepalive", "source": "./plugins/rc-keepalive", "description": "Remote Control 이 켜져 있던 Claude 세션이 끊기면 다시 켠다" }
+  ]
+}
