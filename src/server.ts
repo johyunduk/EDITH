@@ -40,6 +40,7 @@ function watchHerdr() {
 }
 
 const lastUsage = new Map<string, Usage>();
+const VERSION = (() => { try { return JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version as string; } catch { return ''; } })();
 // 이 기기 이름 — macOS 는 hostname 이 네트워크 이름(ip-192-168-…)일 때가 많아 「컴퓨터 이름」 을 쓴다
 const machineName = (() => {
   if (process.platform === 'darwin') try { return execFileSync('scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000 }).trim(); } catch { /* 아래로 */ }
@@ -163,7 +164,7 @@ export function serve(port: number) {
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());
       // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
-      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName });
+      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION });
       const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);
       if (h?.[2] === 'stream' && req.method === 'GET')
         return await streamPane(req, res, h[1], { control: url.searchParams.get('mode') === 'control', takeover: url.searchParams.has('takeover') });

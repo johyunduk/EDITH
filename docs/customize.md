@@ -102,7 +102,11 @@ if (req.method === 'POST' && path === '/api/note') {
 
 ### 색·글꼴·기본 포트
 
-색은 `web/src/index.css` 의 `:root`(밝은 화면)·`@media (prefers-color-scheme: dark)`(어두운 화면) 변수. 기본 포트 4320 은 `src/cli.ts`, 화면 개발 서버가 넘기는 곳은 `web/vite.config.ts` 의 `TARGET`.
+머리줄 오른쪽 끝의 테마 버튼(🎨 EDITH ▾)에서 **EDITH**(밝은 청록)와 **ULTRON**(어두운 붉은 신경망)을 전환한다. 기본은 EDITH 이며 OS 밝기 설정과 독립적이다. 선택은 브라우저의 `edith.theme`에 저장한다(저장이 막히면 현재 화면에서만 적용).
+
+앱 이름은 `web/src/theme.ts`의 `APP_NAME`에서 테마와 별도로 정한다. 선택지·밝기 모드는 `web/src/theme.ts`의 `THEMES`, 템플릿 기본값은 `DEFAULT_THEME`에서 바꾼다. 색·모서리·질감은 `web/src/index.css`의 `:root`(EDITH 기본값)와 `:root[data-theme="ultron"]`에서 정의한다. 예전 이름(daylight·neural)으로 저장된 값은 새 이름으로 이어 받는다. 새 테마는 `THEMES`에 항목을 추가하고 해당 `data-theme` CSS 변수를 정의하면 선택 목록에 나타난다. `dark:…` 스타일은 선택한 테마의 `dark` 값에 따라 적용된다. 상태 점·승인 카드·diff·코드 출력의 의미 색은 유지한다. 테마를 바꿔도 헤더·사이드바 하단·브라우저 제목은 EDITH를 유지하며 CLI 명령과 서버 설정 이름은 `edith`를 유지한다.
+
+기본 포트 4320 은 `src/cli.ts`, 화면 개발 서버가 넘기는 곳은 `web/vite.config.ts` 의 `TARGET`.
 
 ## 지켜야 할 보안
 

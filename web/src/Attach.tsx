@@ -37,7 +37,7 @@ export function Attach({ onPaths }: { onPaths: (paths: string[]) => void }) {
   return <>
     <input ref={input} type="file" multiple hidden onChange={e => void pick([...e.target.files ?? []])} />
     <button disabled={busy} onClick={() => input.current?.click()} title="파일 첨부 — 골라서 올리고 경로를 넣는다 · 입력칸에 붙여넣기(스크린샷)도 된다"
-      className={`flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition hover:bg-muted/60 hover:text-foreground disabled:opacity-50 ${busy ? 'animate-pulse text-primary' : ''}`}>
+      className={`flex size-8 shrink-0 items-center justify-center rounded-lg border text-muted-foreground/80 transition hover:bg-muted/60 hover:text-foreground disabled:opacity-50 ${busy ? 'animate-pulse text-primary' : ''}`}>
       <Icon>{CLIP}</Icon>
     </button>
   </>;

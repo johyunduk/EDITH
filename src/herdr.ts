@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { sh } from './sh.ts';
 import { toCodex } from './complete.ts';
+import { parseMenu, stillPicked } from '../web/src/screenMenu.ts';
 
 // herdr 소켓 — macOS·Linux 는 도메인 소켓, Windows 는 named pipe. herdr pane 안에서 띄우면 HERDR_SOCKET_PATH 가 있고,
 // 없으면 `herdr status server` 가 알려 주는 경로(socket: …). 둘 다 못 얻으면 Unix 기본 경로 — 그때는 기억하지 않고 다음에 다시 묻는다.
@@ -371,13 +372,21 @@ export async function start(id: string, kind: string) {
 }
 
 // 선택 질문에 답하기 — 번호를 누르면 그 선택지로 바로 답이 들어간다(Claude 질문·승인 화면 실측). 직접 입력 선택지는
-// 번호를 누른 뒤 글을 넣고 엔터.
+// 번호를 누른 뒤 글을 넣고 엔터. 번호로 고르기만 되는 화면(Codex 폴더 신뢰)은 잠깐 뒤에도 같은 메뉴가 그 번호에 커서를 둔 채면 엔터로 확정한다
+// (다음 질문이 1번에 커서를 두고 뜬 것에 엔터를 넣지 않게 — 누르기 전 메뉴와 같을 때만).
 export async function choose(id: string, n: unknown, text: unknown) {
   if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 9) throw new Error('선택지 번호가 아니다');
+  const screen = async () => (await live(id)).lines.map(l => l.replace(ANSI, ''));
+  const key = (lines: string[]) => JSON.stringify(parseMenu(lines)?.options.map(o => o.label) ?? null);
+  const before = typeof text === 'string' && text.trim() ? '' : key(await screen());
   await api('pane.send_keys', { pane_id: id, keys: [String(n)] });   // 글로 보내면 붙여넣기로 들어가 질문 화면이 무시한다 — 키로
   if (typeof text === 'string' && text.trim()) {
     await new Promise(r => setTimeout(r, 400));
     await api('pane.send_input', { pane_id: id, text, keys: ['enter'] });
+  } else {
+    await new Promise(r => setTimeout(r, 400));
+    const after = await screen();
+    if (stillPicked(after, n) && key(after) === before) await api('pane.send_keys', { pane_id: id, keys: ['enter'] });
   }
 }
 

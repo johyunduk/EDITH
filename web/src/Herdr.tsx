@@ -3,7 +3,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStor
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { get, post, useHerdr, type HerdrView, type HPane, type HSplit, type HTab, type HWorkspace } from './api.ts';
+import { get, post, useHerdr, useView, type HerdrView, type HPane, type HSplit, type HTab, type HWorkspace } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Empty, Icon, Md, TERMINAL, Tag } from './ui.tsx';
 import { MenuHost, openMenu, type MenuItem } from './Menu.tsx';
@@ -30,7 +30,7 @@ export function Kind({ agent }: { agent: string | null }) {
   return <span className="w-3.5 shrink-0 text-center font-mono text-[0.625rem] text-muted-foreground">{agent[0].toUpperCase()}</span>;
 }
 
-export function HerdrPage({ pane, side = true }: { pane?: string; side?: boolean }) {
+export function HerdrPage({ pane, side = true, brand = 'EDITH' }: { pane?: string; side?: boolean; brand?: string }) {
   const { data, error } = useHerdr();
   if (error && !data) return <div className="p-4"><Empty>herdr 에 닿지 않는다 — {String(error)}</Empty></div>;
   if (!data) return null;
@@ -38,12 +38,15 @@ export function HerdrPage({ pane, side = true }: { pane?: string; side?: boolean
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <MenuHost />
-      <aside className={`flex max-h-72 shrink-0 flex-col overflow-y-auto border-b bg-sidebar md:max-h-none md:w-80 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
-        <nav className="flex-1 space-y-0.5 p-1.5">
+      {/* 트리만 스크롤하고 아래(상태 표시·다른 기기·하단 줄)는 붙여 둔다 */}
+      <aside className={`workspace-sidebar flex max-h-72 shrink-0 flex-col overflow-hidden border-b bg-sidebar md:max-h-none md:w-80 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
+        <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1.5">
           <NewWorkspace />
           <Tree data={data} sel={sel?.id} />
         </nav>
+        <Legend panes={data.panes} />
         <OtherDevices />
+        <SideFooter brand={brand} />
       </aside>
       <main className="min-w-0 flex-1 overflow-auto p-4">
         {sel ? <PaneView p={sel} data={data} /> : <Empty>{pane ? `pane ${pane} 이 없다(닫혔을 수 있다)` : '왼쪽에서 pane 을 고른다'}</Empty>}
@@ -52,11 +55,33 @@ export function HerdrPage({ pane, side = true }: { pane?: string; side?: boolean
   );
 }
 
+// 상태 표시 — 모든 pane 의 작업 중·승인 대기·끝남 수
+function Legend({ panes }: { panes: HPane[] }) {
+  return (
+    <div className="m-1.5 mt-0 shrink-0 border-t px-2.5 pt-2 pb-1">
+      <div className="mb-0.5 text-[0.6875rem] font-semibold text-muted-foreground">상태 표시</div>
+      {(['working', 'blocked', 'done'] as const).map(s => (
+        <div key={s} className="flex h-6 items-center gap-2 text-[0.8125rem]">
+          <span className={`size-2.5 rounded-full ${DOT[s]}`} />{STATUS[s]}<span className="ml-auto text-muted-foreground tabular-nums">{panes.filter(p => p.status === s).length}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+function SideFooter({ brand }: { brand: string }) {
+  const v = useView().data?.version;
+  return (
+    <div className="mx-1.5 mb-1.5 flex shrink-0 items-center justify-between border-t px-2.5 pt-1.5 text-[0.625rem] font-semibold tracking-[0.12em] text-muted-foreground/70 uppercase">
+      <span>{brand}{v && ` v${v}`}</span><span>Local · Ready</span>
+    </div>
+  );
+}
+
 // 다른 기기 — EDITH 는 이 기기의 herdr 만 본다. machines.json 에 둔 기기는 SSH 터널로 그 기기의 EDITH 를 새 탭으로 연다(서버 machines.ts).
 // 「+ 다른 기기 잇기」 — Tailscale 기기를 고르고 그 기기 사용자 이름·비밀번호를 넣으면 SSH 키를 등록하고 목록에 더한다(비밀번호는 한 번 쓰고 버린다).
 function OtherDevices() {
   const { data = [] } = useQuery({ queryKey: ['machines'], queryFn: () => get<string[]>('/api/machines'), staleTime: 60_000 });
-  const [busy, setBusy] = useState<string | null>(null), [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null), [adding, setAdding] = useState(false), remote = useView().data?.remote;
   const open = (name: string) => {
     const w = window.open('', '_blank');   // 누른 순간 먼저 열어 둔다 — 터널을 기다린 뒤 열면 팝업 막힘에 걸린다
     if (w) w.opener = null;
@@ -65,9 +90,11 @@ function OtherDevices() {
       .then(r => { if (w) w.location.href = r.url; }, (e: Error) => { w?.close(); toast(`${name} 을 열지 못했다 — ${e.message}`, 6000); })
       .finally(() => setBusy(null));
   };
+  if (remote) return null;   // 원격 화면 안에서 또 다른 기기로 넘어가면 헷갈린다 — 이 기기 EDITH 에서만
   const row = 'flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-[0.8125rem] text-muted-foreground hover:bg-card hover:text-foreground';
   return (
     <div className="m-1.5 mt-0 shrink-0 border-t pt-1.5">
+      <div className="px-2.5 pb-0.5 text-[0.6875rem] font-semibold text-muted-foreground">다른 기기</div>
       {data.map(n => (
         <button key={n} onClick={() => open(n)} disabled={busy === n} title={`${n} 의 EDITH 를 SSH 터널로 새 탭에 연다`} className={`${row} disabled:opacity-60`}>
           <Icon className="size-4">{REMOTE}</Icon><span className="truncate">{n}</span>
@@ -317,7 +344,7 @@ function PaneRow({ p, on, depth, text }: { p: HPane; on: boolean; depth: number;
     <a href={`#/herdr/${p.id}`} title={`${p.agent ?? '셸'} · ${p.id} · ${p.cwd}`} draggable
       onDragStart={e => { e.dataTransfer.setData(DRAG_PANE, p.id); e.dataTransfer.effectAllowed = 'move'; }}
       onContextMenu={e => openMenu(e, menu(p))}
-      className={`mx-1 flex h-7 items-center gap-2 rounded-md border-l-2 pr-2 text-xs ${depth ? 'ml-5 pl-2' : 'ml-4 pl-2'} ${on ? 'border-primary bg-accent font-medium text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`}>
+      className={`mx-1 flex h-8 items-center gap-2 rounded-lg border pr-2 text-xs ${depth ? 'ml-5 pl-2' : 'ml-4 pl-2'} ${on ? 'border-primary/70 bg-accent font-medium text-accent-foreground shadow-sm' : 'border-transparent hover:bg-muted/70'}`}>
       <span className={`size-2 shrink-0 rounded-full ${DOT[p.status ?? ''] ?? 'bg-muted-foreground/25'} ${p.status === 'working' || p.status === 'blocked' ? 'animate-pulse' : ''}`} />
       <Kind agent={p.agent} />
       <span className={`truncate ${p.agent || on ? '' : 'text-muted-foreground'}`}>{text}</span>
@@ -361,6 +388,27 @@ function Usage({ p, short }: { p: HPane; short?: boolean }) {
     queryFn: () => get<{ model: string | null; effort: string | null; ctx: number | null; five: Lim | null; week: Lim | null } | null>(`/api/herdr/panes/${p.id}/usage`),
   });
   if (!u) return null;
+  // 넓은 곳(pane 머리)은 막대가 있는 카드 — 50% 넘으면 주황, 80% 넘으면 빨강
+  if (!short) {
+    const bar = (n: number) => n >= 80 ? 'bg-rose-500' : n >= 50 ? 'bg-amber-500' : 'bg-primary';
+    const card = (label: string, n: number | null | undefined, reset: string | null | undefined, what: string) => n == null ? null : (
+      <span key={label} title={`${what} ${n}%${reset ? ` · 다시 차기까지 ${reset}` : ''}`} className="flex min-w-24 flex-col justify-center gap-1 rounded-lg border bg-card px-2.5 py-1 shadow-xs">
+        <span className="flex items-baseline gap-2 whitespace-nowrap"><span className="text-muted-foreground">{label}</span><span className="ml-auto font-semibold text-foreground tabular-nums">{n}%</span></span>
+        <span className="block h-1 overflow-hidden rounded-full bg-muted"><span className={`block h-full rounded-full ${bar(n)}`} style={{ width: `${Math.min(100, n)}%` }} /></span>
+      </span>
+    );
+    return (
+      <span className="flex shrink-0 flex-wrap items-stretch gap-1.5 text-[0.6875rem] font-normal">
+        {u.model && (
+          <span title={`모델 ${u.model}${u.effort ? ` · 생각 강도 ${u.effort}` : ''}`} className="flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1 whitespace-nowrap shadow-xs">
+            <span className="text-muted-foreground">모델</span><span className="font-semibold text-foreground">{u.model}</span>
+            {u.effort && <span className="rounded bg-muted px-1 text-[0.625rem] leading-4 text-muted-foreground">{u.effort}</span>}
+          </span>
+        )}
+        {card('컨텍스트', u.ctx, null, '컨텍스트')}{card('5시간', u.five?.pct, u.five?.reset, '5시간 한도')}{card('7일', u.week?.pct, u.week?.reset, '7일 한도')}
+      </span>
+    );
+  }
   const tone = (n: number) => n >= 80 ? 'text-rose-600 dark:text-rose-400' : n >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400';
   const fit = (cls: string) => short ? `hidden ${cls}` : 'flex';
   const item = (label: string, n: number | null | undefined, reset: string | null | undefined, what: string, cls: string) => n == null ? null : (
@@ -447,11 +495,13 @@ function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
         <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground">
           <Kind agent={p.agent} /><span className="shrink-0 text-foreground">{paneText(p)}</span>
           <span className="shrink-0">{p.name && `· ${p.name} `}· {p.id}</span>{/* 종류(claude·codex)는 앞 아이콘이 보여 준다 */}
-          {/* 탭 전체 칸 보기면 칸마다 머리에 사용량이 있으니 여기서는 뺀다(중복) — 이 pane 만 볼 때만 여기 */}
-          {!(multi && mode === 'tab' && !diffOn) && <span className="ml-1.5"><Usage p={p} /></span>}
           <span className="ml-1.5 min-w-0 truncate font-mono text-xs" title={p.cwd}>{p.cwd.replace(/^\/(Users|home)\/[^/]+|^[A-Za-z]:\\Users\\[^\\]+/, '~')}</span>
           <button onClick={() => void copyText(p.cwd)} title="경로 복사" className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground"><Icon className="size-3.5">{COPY}</Icon></button>
-          {multi && !diffOn && <div className="ml-auto flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5">{pick('tab', `탭 전체 ${lay!.panes.length}칸`)}{pick('one', '이 pane 만')}</div>}
+          <span className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+            {/* 탭 전체 칸 보기면 칸마다 머리에 사용량이 있으니 여기서는 뺀다(중복) — 이 pane 만 볼 때만 여기 */}
+            {!(multi && mode === 'tab' && !diffOn) && <Usage p={p} />}
+            {multi && !diffOn && <div className="flex shrink-0 gap-0.5 rounded-lg bg-muted p-0.5">{pick('tab', `탭 전체 ${lay!.panes.length}칸`)}{pick('one', '이 pane 만')}</div>}
+          </span>
         </div>
       </div>
       <div className="min-h-80 flex-1">{diffOn ? <PaneDiff p={p} /> : multi && mode === 'tab' ? <TabLayout lay={lay!} data={data} sel={p.id} /> : <Body p={p} />}</div>
@@ -488,6 +538,11 @@ function Divider({ sp, tab, box }: { sp: HSplit; tab: string; box: React.RefObje
 
 // 배치 바꾸기 — 이 칸 옆에 새 칸(왼·오·위·아래), 닫기(한 번 더 눌러야 닫힌다 — 안에서 돌던 것이 끝난다).
 // herdr 배치를 바꾸므로 터미널 herdr 화면도 같이 바뀐다. 새 칸으로 옮겨 간다.
+// 칸 나누기 방향 화살표(lucide arrow-*)
+const SPLIT: Record<string, ReactNode> = {
+  left: <><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></>, right: <><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></>,
+  up: <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>, down: <><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></>,
+};
 function PaneActions({ p }: { p: HPane }) {
   const qc = useQueryClient();
   const [sure, setSure] = useState(false), [err, setErr] = useState('');
@@ -505,19 +560,24 @@ function PaneActions({ p }: { p: HPane }) {
       else if (next !== undefined) location.hash = next ? `#/herdr/${next}` : '#/herdr';
     } catch (e) { setErr(String(e)); }
   };
-  const b = (label: string, title: string, on: () => void, cls = '') =>
-    <button title={title} onClick={e => { e.preventDefault(); e.stopPropagation(); on(); }}
-      className={`rounded px-1 font-mono text-xs text-muted-foreground hover:bg-muted hover:text-foreground ${cls}`}>{label}</button>;
+  const b = (icon: ReactNode, title: string, on: () => void, cls = '') =>
+    <button title={title} aria-label={title} onClick={e => { e.preventDefault(); e.stopPropagation(); on(); }}
+      className={`flex h-full min-w-6 items-center justify-center rounded px-1 text-muted-foreground transition hover:bg-muted hover:text-foreground ${cls}`}>{icon}</button>;
+  const arrow = (d: string) => <Icon className="size-3.5">{SPLIT[d]}</Icon>;
   return (
-    <span className="inline-flex items-center gap-0.5">
+    <span className="inline-flex items-center gap-1">
       {err && <span className="mr-1 max-w-48 truncate text-xs text-destructive" title={err}>{err}</span>}
-      {b('←', '왼쪽에 새 칸', () => void act('split', { direction: 'left' }))}
-      {b('→', '오른쪽에 새 칸', () => void act('split', { direction: 'right' }))}
-      {b('↑', '위에 새 칸', () => void act('split', { direction: 'up' }))}
-      {b('↓', '아래에 새 칸', () => void act('split', { direction: 'down' }))}
-      {sure
-        ? b('닫기?', '한 번 더 누르면 닫는다 — 안에서 돌던 것이 끝난다', () => { setSure(false); void act('close', {}); }, 'text-destructive')
-        : b('×', '이 칸 닫기', () => { setSure(true); setTimeout(() => setSure(false), 3000); })}
+      {/* 그쪽에 새 칸 — 네 방향, 닫기는 선으로 떼어 둔다 */}
+      <span className="inline-flex h-7 items-center gap-px rounded-md border bg-card p-0.5 shadow-xs">
+        {b(arrow('left'), '왼쪽에 새 칸', () => void act('split', { direction: 'left' }))}
+        {b(arrow('right'), '오른쪽에 새 칸', () => void act('split', { direction: 'right' }))}
+        {b(arrow('up'), '위에 새 칸', () => void act('split', { direction: 'up' }))}
+        {b(arrow('down'), '아래에 새 칸', () => void act('split', { direction: 'down' }))}
+        <span className="mx-0.5 h-4 w-px bg-border" />
+        {sure
+          ? b(<span className="text-[0.6875rem] font-semibold">닫기?</span>, '한 번 더 누르면 닫는다 — 안에서 돌던 것이 끝난다', () => { setSure(false); void act('close', {}); }, 'text-destructive hover:text-destructive')
+          : b(<Icon className="size-3.5"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></Icon>, '이 칸 닫기', () => { setSure(true); setTimeout(() => setSure(false), 3000); }, 'hover:text-destructive')}
+      </span>
     </span>
   );
 }
@@ -533,13 +593,13 @@ function useRaw(id: string): [boolean, () => void] {
   return [raw, () => { if (!rawPanes.delete(id)) rawPanes.add(id); rawSubs.forEach(f => f()); }];
 }
 const hasView = (p: HPane) => (p.agent === 'claude' || p.agent === 'codex' || !p.agent) && !(!p.agent && fullScreen(p.title));
-function RawToggle({ p }: { p: HPane }) {
+function RawToggle({ p, small }: { p: HPane; small?: boolean }) {
   const [raw, toggle] = useRaw(p.id);
   if (!hasView(p)) return null;
   return (
-    <button onClick={e => { e.preventDefault(); e.stopPropagation(); toggle(); }} title="터미널 화면 그대로 보기"
-      className={`rounded-md px-1.5 py-0.5 text-[0.6875rem] font-medium ${raw ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-      {raw ? (p.agent ? '대화로' : '기록으로') : '원래 화면'}
+    <button onClick={e => { e.preventDefault(); e.stopPropagation(); toggle(); }} title={raw ? '대화·기록으로 돌아가기' : '터미널 화면 그대로 보기'}
+      className={`flex items-center gap-1.5 rounded-md border font-semibold shadow-xs transition ${small ? 'h-6 px-1.5 text-[0.6875rem]' : 'h-7 px-2 text-xs'} ${raw ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+      <Icon className="size-3.5">{TERMINAL}</Icon>{raw ? (p.agent ? '대화로' : '기록으로') : '원래 화면'}
     </button>
   );
 }
@@ -599,7 +659,7 @@ function TabLayout({ lay, data, sel }: { lay: HerdrView['layouts'][number]; data
                 <Kind agent={p.agent} /><span className="truncate">{paneText(p)}</span>
                 {p.status === 'blocked' && <span className="shrink-0 text-amber-600 dark:text-amber-400">승인 대기</span>}
                 <span className="ml-1.5"><Usage p={p} short /></span>
-                <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap" onClick={e => e.preventDefault()}><RawToggle p={p} /><PaneActions p={p} /></span>
+                <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap" onClick={e => e.preventDefault()}><RawToggle p={p} small /><PaneActions p={p} /></span>
               </a>
               <div className="min-h-0 flex-1 p-1.5"><Body p={p} /></div>
             </div>
@@ -803,9 +863,9 @@ const Avatar = ({ agent }: { agent: string | null }) =>
 // 새로 붙은 항목만 그린다 — 다시 받은 목록에서 바뀌지 않은 항목은 TanStack Query 가 같은 객체로 남겨 둔다.
 const ChatItem = memo(function ChatItem({ it, agent }: { it: Item; agent: string | null }) {
   if (it.kind === 'user') return (
-    <div className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap text-primary-foreground shadow-sm">{it.text}</div>
+    <div className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md border border-primary/20 bg-accent px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap text-foreground shadow-xs">{it.text}</div>
   );
-  if (it.kind === 'text') return <div className="flex gap-3"><Avatar agent={agent} /><div className="min-w-0 flex-1"><Md text={it.text} /></div></div>;
+  if (it.kind === 'text') return <div className="flex gap-3"><Avatar agent={agent} /><div className="min-w-0 flex-1"><div className="w-fit max-w-full rounded-2xl rounded-tl-md bg-muted/70 px-3.5 py-2.5"><Md text={it.text} /></div></div></div>;
   if (it.kind === 'out') return <div className="ml-9"><Ansi text={it.text} /></div>;
   const [name, ...rest] = it.text.split(' '), tone = TOOL.find(([re]) => re.test(name))?.[1] ?? 'text-muted-foreground';
   return (
@@ -851,10 +911,12 @@ function QuickKeys({ pane, blocked }: { pane: string; blocked: boolean }) {
 }
 
 // 프롬프트 — 에이전트는 agent prompt(붙여넣기·엔터를 herdr 가 맞춘다), 셸은 명령 실행. 한글 조합 중 엔터는 보내지 않는다.
+const SEND = <><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" /><path d="m21.854 2.147-10.94 10.939" /></>;   // lucide send
 // 에이전트가 질문·승인으로 답을 기다리면 입력칸 자리에 질문과 선택지 버튼을 띄운다. 번호를 보내면 그 선택지로 답이 들어간다.
 // 「직접 입력」 선택지(Type something 등)를 고르면 입력칸에 쓴 글이 그 답이 된다.
+// 여러 개 고르기는 누를 때마다 체크를 켜고 끄고, 「다음 →」(→ 키)로 다음 질문·제출 화면으로 넘어간다 — 제출 화면은 번호 메뉴라 「Submit answers」 를 누른다.
 function PromptBox({ p, label }: { p: HPane; label?: string }) {
-  const agent = !!p.agent, { menu } = useScreen(p);
+  const agent = !!p.agent, { menu } = useScreen(p), qc = useQueryClient();
   const [text, setText] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
   const ac = useComplete(p, text, caret);
@@ -862,6 +924,7 @@ function PromptBox({ p, label }: { p: HPane; label?: string }) {
     setBusy(true);
     try { await f(); setErr(''); } catch (e) { setErr(String(e)); }
     setBusy(false);
+    void qc.invalidateQueries({ queryKey: ['live', p.id] });   // 체크·다음 질문이 바로 보이게
   };
   const choose = (n: number, answer?: string) => run(async () => {
     await post(`/api/herdr/panes/${p.id}/choose`, { n, text: answer });
@@ -870,7 +933,7 @@ function PromptBox({ p, label }: { p: HPane; label?: string }) {
   // 선택지 누르기 — 번호 메뉴는 번호 키, 커서 메뉴(번호 없음)는 ↑↓ 로 그 줄까지 옮기고 Enter
   const key = (k: string) => post(`/api/herdr/panes/${p.id}/keys`, { key: k });
   const answer = (m: Menu, o: Menu['options'][number]) => {
-    if (m.cursor === undefined) return isFree(o.label) ? setTyped(o.n) : void choose(o.n);
+    if (m.cursor === undefined) return isFree(o.label) && !m.multi ? setTyped(o.n) : void choose(o.n);
     const d = o.n - 1 - m.cursor;
     void run(async () => { for (let i = 0; i < Math.abs(d); i++) await key(d > 0 ? 'down' : 'up'); await key('enter'); });
   };
@@ -905,21 +968,29 @@ function PromptBox({ p, label }: { p: HPane; label?: string }) {
     <div className="space-y-1">
       {menu && (
         <div className="space-y-2.5 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-amber-500/5 p-3.5 shadow-sm">
-          <div className="flex items-center gap-1.5 text-[0.6875rem] font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-400"><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다</div>
+          <div className="flex items-center gap-2 text-[0.75rem] font-semibold text-amber-700 dark:text-amber-400">
+            <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[0.75rem] font-bold text-white">!</span>답을 기다린다
+          </div>
+          {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
           {menu.question && <div className="text-[0.84375rem] font-semibold whitespace-pre-wrap">{menu.question}</div>}
-          <div className="grid gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {menu.options.map(o => (
               <button key={o.n} disabled={busy} onClick={() => answer(menu, o)}
-                className={`flex items-baseline gap-2.5 rounded-xl border bg-card px-3 py-2 text-left text-sm transition hover:border-primary/40 hover:bg-accent ${typed === o.n ? 'border-primary ring-2 ring-primary/30' : ''}`}>
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[0.6875rem] font-bold text-primary tabular-nums">{o.n}</span>
+                className={`flex min-w-0 grow basis-52 items-baseline gap-2.5 rounded-lg border bg-card px-3 py-2 text-left text-sm shadow-xs transition hover:border-primary/50 hover:bg-accent ${typed === o.n || o.checked ? 'border-primary ring-2 ring-primary/30' : ''}`}>
+                {o.checked === undefined
+                  ? <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[0.6875rem] font-bold text-primary tabular-nums">{o.n}</span>
+                  : <span className={`flex size-5 shrink-0 items-center justify-center rounded-md border text-[0.75rem] font-bold ${o.checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>{o.checked ? '✓' : ''}</span>}
                 <span className="font-medium">{o.label}</span>
                 {o.desc && <span className="truncate text-xs text-muted-foreground">{o.desc}</span>}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {typed !== null ? `아래 칸에 답을 쓰고 Enter — ${typed}번으로 들어간다` : '눌러서 고른다'}
-            <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-xs" disabled={busy}
+            {typed !== null ? `아래 칸에 답을 쓰고 Enter — ${typed}번으로 들어간다` : menu.multi ? '눌러서 체크 — 다 고르면 「다음」' : '눌러서 고른다'}
+            {menu.multi && (
+              <Button size="sm" className="ml-auto h-6 px-2.5 text-xs" disabled={busy} onClick={() => void run(() => key('right'))}>다음 →</Button>
+            )}
+            <Button size="sm" variant="outline" className={`${menu.multi ? '' : 'ml-auto '}h-6 px-2 text-xs`} disabled={busy}
               onClick={() => void run(() => post(`/api/herdr/panes/${p.id}/keys`, { key: 'esc' }))}>취소(Esc)</Button>
           </div>
         </div>
@@ -947,7 +1018,10 @@ function PromptBox({ p, label }: { p: HPane; label?: string }) {
           <span className="ml-auto hidden truncate pr-1 text-[0.6875rem] text-muted-foreground/70 sm:block">
             Enter {agent ? '보내기' : '실행'} · Shift+Enter 줄바꿈{agent && ' · / 명령 · @ 파일'}
           </span>
-          <Button size="sm" className="ml-auto h-8 shrink-0 rounded-lg px-3.5 sm:ml-1" onClick={submit} disabled={busy || !text.trim()}>{busy ? '보내는 중' : menu && typed !== null ? '답하기' : agent ? '보내기' : '실행'}</Button>
+          <Button size="sm" className="ml-auto size-9 shrink-0 rounded-lg p-0 shadow-sm sm:ml-1" onClick={submit} disabled={busy || !text.trim()}
+            title={busy ? '보내는 중' : menu && typed !== null ? '답하기' : agent ? '보내기' : '실행'}>
+            <Icon className={`size-4 ${busy ? 'animate-pulse' : ''}`}>{SEND}</Icon>
+          </Button>
         </div>
       </div>
       {err && <p className="text-xs text-destructive">{err}</p>}

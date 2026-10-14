@@ -1,59 +1,61 @@
 @import "tailwindcss";
 @import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 
-/* EDITH 테마 — 차가운 회색 바탕에 인디고 포인트. 어두운 화면은 OS 설정을 따른다.
-   코드·터미널 출력은 밝은 화면에서도 어두운 판(--code)에 그려 색이 잘 보이게 한다. */
-@custom-variant dark (@media (prefers-color-scheme: dark));
+/* 테마 선택이 OS 밝기보다 우선한다. 상태·코드 색은 각 테마에서도 의미를 유지한다. */
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  color-scheme: light;
   --radius: 0.625rem;
-  --background: oklch(0.985 0.004 270);
-  --foreground: oklch(0.24 0.025 270);
+  --background: oklch(0.985 0.005 215);
+  --foreground: oklch(0.26 0.03 240);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.24 0.025 270);
+  --card-foreground: oklch(0.26 0.03 240);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.24 0.025 270);
-  --primary: oklch(0.54 0.2 277);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.955 0.01 270);
-  --secondary-foreground: oklch(0.3 0.03 270);
-  --muted: oklch(0.955 0.008 270);
-  --muted-foreground: oklch(0.52 0.025 270);
-  --accent: oklch(0.95 0.025 277);
-  --accent-foreground: oklch(0.36 0.12 277);
+  --popover-foreground: oklch(0.26 0.03 240);
+  --primary: oklch(0.62 0.115 212);
+  --primary-foreground: oklch(0.995 0 0);
+  --secondary: oklch(0.96 0.01 220);
+  --secondary-foreground: oklch(0.32 0.03 235);
+  --muted: oklch(0.966 0.007 225);
+  --muted-foreground: oklch(0.54 0.025 238);
+  --accent: oklch(0.955 0.03 210);
+  --accent-foreground: oklch(0.42 0.09 215);
   --destructive: oklch(0.58 0.22 25);
-  --border: oklch(0.91 0.01 270);
-  --input: oklch(0.9 0.012 270);
-  --ring: oklch(0.6 0.17 277);
-  --sidebar: oklch(0.97 0.007 270);
-  --code: oklch(0.2 0.02 270);
-  --code-foreground: oklch(0.92 0.01 270);
+  --border: oklch(0.905 0.014 222);
+  --input: oklch(0.89 0.016 222);
+  --ring: oklch(0.66 0.11 212);
+  --sidebar: oklch(0.995 0.003 215);
+  --hud: oklch(0.72 0.1 212);
+  --code: oklch(0.2 0.02 240);
+  --code-foreground: oklch(0.92 0.01 240);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: oklch(0.165 0.014 270);
-    --foreground: oklch(0.93 0.008 270);
-    --card: oklch(0.2 0.016 270);
-    --card-foreground: oklch(0.93 0.008 270);
-    --popover: oklch(0.22 0.018 270);
-    --popover-foreground: oklch(0.93 0.008 270);
-    --primary: oklch(0.7 0.16 277);
-    --primary-foreground: oklch(0.18 0.03 277);
-    --secondary: oklch(0.25 0.018 270);
-    --secondary-foreground: oklch(0.9 0.01 270);
-    --muted: oklch(0.24 0.016 270);
-    --muted-foreground: oklch(0.68 0.02 270);
-    --accent: oklch(0.28 0.05 277);
-    --accent-foreground: oklch(0.86 0.08 277);
-    --destructive: oklch(0.68 0.19 22);
-    --border: oklch(1 0 0 / 9%);
-    --input: oklch(1 0 0 / 14%);
-    --ring: oklch(0.65 0.15 277);
-    --sidebar: oklch(0.185 0.015 270);
-    --code: oklch(0.13 0.012 270);
-    --code-foreground: oklch(0.9 0.01 270);
-  }
+:root[data-theme="ultron"] {
+  color-scheme: dark;
+  --radius: 0.375rem;
+  --background: #100e13;
+  --foreground: #eeeaf0;
+  --card: #1b181f;
+  --card-foreground: var(--foreground);
+  --popover: #242029;
+  --popover-foreground: var(--foreground);
+  --primary: #ef5266;
+  --primary-foreground: #180b10;
+  --secondary: #27222c;
+  --secondary-foreground: #e5dfe9;
+  --muted: #25212a;
+  --muted-foreground: #aaa1b2;
+  --accent: #35202a;
+  --accent-foreground: #ffbbc5;
+  --destructive: #ff806a;
+  --border: #3d333f;
+  --input: #574653;
+  --ring: #ef5266;
+  --sidebar: #141117;
+  --hud: #ee5268;
+  --code: #0c0a0f;
+  --code-foreground: #e7dfeb;
 }
 
 @theme inline {
@@ -97,6 +99,21 @@
   ::-webkit-scrollbar-track { background: transparent; }
 }
 
+/* 화면 네 모서리의 괄호 — AR 조준선 느낌. 클릭은 그대로 아래로 간다 */
+.hud-corners {
+  position: fixed; inset: 6px; pointer-events: none; z-index: 45;
+  --l: 18px; --w: 1.5px;
+  background:
+    linear-gradient(var(--hud), var(--hud)) top left / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top left / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top right / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top right / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom left / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom left / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom right / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom right / var(--w) var(--l) no-repeat;
+}
+
 /* 어두운 코드·출력 판 — 코드 블록, 도구 결과, 셸 출력, 진행 화면 */
 @utility code-panel { @apply overflow-x-auto rounded-lg bg-code px-3 py-2 font-mono text-xs leading-relaxed text-code-foreground; }
 
@@ -135,7 +152,7 @@
 .hljs-strong { font-weight: 700; }
 
 /* diff 본문(밝은 화면) — 밝은 판에 맞춘 문법 색(GitHub 계열). 어두운 화면은 위 색 그대로 */
-@media not (prefers-color-scheme: dark) {
+:root:not(.dark) {
   .diff-code .hljs-keyword, .diff-code .hljs-selector-tag, .diff-code .hljs-doctag { color: #cf222e; }
   .diff-code .hljs-string, .diff-code .hljs-regexp { color: #0a3069; }
   .diff-code .hljs-number, .diff-code .hljs-literal, .diff-code .hljs-symbol { color: #0550ae; }
@@ -146,3 +163,13 @@
   .diff-code .hljs-meta, .diff-code .hljs-tag { color: #6e7781; }
   .diff-code .hljs-name { color: #116329; }
 }
+
+/* ULTRON 의 신경망은 사이드바 아래에만 고정해 본문 읽기를 방해하지 않는다. */
+:root[data-theme="ultron"] .workspace-sidebar {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='350' viewBox='0 0 340 350'%3E%3Cg fill='none' stroke='%23ef5266' stroke-opacity='.15'%3E%3Cpath d='M0 280 70 205 148 245 220 150 340 210M0 180 70 205 115 120 220 150 280 65 340 90M25 350 70 205 190 330 220 150 340 310M0 280 148 245 190 330 340 310'/%3E%3C/g%3E%3Cg fill='%23ef5266' fill-opacity='.35'%3E%3Ccircle cx='70' cy='205' r='3'/%3E%3Ccircle cx='148' cy='245' r='2'/%3E%3Ccircle cx='220' cy='150' r='3'/%3E%3Ccircle cx='115' cy='120' r='2'/%3E%3Ccircle cx='190' cy='330' r='2'/%3E%3Ccircle cx='280' cy='65' r='2'/%3E%3C/g%3E%3C/svg%3E");
+  background-position: bottom center;
+  background-repeat: no-repeat;
+  background-size: 100% auto;
+}
+:root[data-theme="ultron"] .brand-mark { filter: drop-shadow(0 0 5px #ef526650); }
+:root[data-theme="ultron"] .hud-corners { filter: drop-shadow(0 0 4px #ef526640); }

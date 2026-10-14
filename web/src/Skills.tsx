@@ -3,7 +3,7 @@
 // 고른 게 없으면 전체 관계도. #/skills/@move 는 옮기기(내보내기·가져오기).
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { get, post } from './api.ts';
+import { get, post, useView } from './api.ts';
 import { base64 } from './Attach.tsx';
 import { copyText, toast } from './copy.ts';
 import { Md } from './ui.tsx';
@@ -253,7 +253,7 @@ function Move({ all }: { all: Skill[] }) {
   const [data, setData] = useState<string | null>(null), [pre, setPre] = useState<Preview | null>(null), [done, setDone] = useState<Done | null>(null);
   const [over, setOver] = useState(new Set<string>()), [inst, setInst] = useState(new Set<string>());
   const qc = useQueryClient();
-  const { data: view } = useQuery({ queryKey: ['view'], queryFn: () => get<{ remote: boolean; host: string }>('/api/view'), staleTime: Infinity });
+  const { data: view } = useView();
   const remote = !!view?.remote;
   const toggle = (set: Set<string>, k: string) => { const n = new Set(set); if (n.has(k)) n.delete(k); else n.add(k); return n; };
   const card = 'rounded-xl border bg-card p-4 space-y-3';
