@@ -236,13 +236,24 @@ function metaCwd(file: string) {
 // pane 의 claude 프로세스가 쓰는 ~/.claude/sessions/<pid>.json — sessionId(/clear·/resume 을 따라 바뀐다), bridgeSessionId(Remote Control,
 // 꺼지면 null). Claude Code 의 내부 파일이라(2.1.x 확인) 없거나 모양이 바뀌면 undefined.
 // pid 는 pane 마다 기억한다 — 프로세스가 끝났으면 herdr 에 다시 묻는다.
-type LiveFile = { sessionId?: string; bridgeSessionId?: string | null };
+// 대화를 백그라운드로 넘긴 pane(parkedJobId)은 그 대화가 데몬의 bg 세션(같은 jobId 의 파일)에서 이어진다 — 그 파일을 parked 로 준다.
+type LiveFile = { sessionId?: string; bridgeSessionId?: string | null; parkedJobId?: string; jobId?: string; parked?: boolean };
+const SESSIONS = join(homedir(), '.claude', 'sessions');
+const readLive = (pid: number) => {
+  try { process.kill(pid, 0); } catch { return undefined; }   // 끝난 프로세스의 파일은 남아 있을 수 있다
+  try { return JSON.parse(readFileSync(join(SESSIONS, `${pid}.json`), 'utf8')) as LiveFile; } catch { return undefined; }
+};
+export function follow(f: LiveFile | undefined, files: () => string[] = () => readdirSync(SESSIONS), read = readLive): LiveFile | undefined {
+  if (!f?.parkedJobId) return f;
+  for (const n of files()) {
+    const g = /^\d+\.json$/.test(n) ? read(Number(n.slice(0, -5))) : undefined;
+    if (g?.jobId === f.parkedJobId) return { ...g, parked: true };
+  }
+  return f;   // bg 세션이 끝났으면 원래 것
+}
 const pids = new Map<string, number>();
 function liveFile(pane: string) {
-  const read = (pid: number) => {
-    try { process.kill(pid, 0); } catch { return undefined; }
-    try { return JSON.parse(readFileSync(join(homedir(), '.claude', 'sessions', `${pid}.json`), 'utf8')) as LiveFile; } catch { return undefined; }
-  };
+  const read = (pid: number) => follow(readLive(pid));
   const cached = pids.get(pane), hit = cached ? read(cached) : undefined;
   if (hit) return hit;
   try {
@@ -253,9 +264,6 @@ function liveFile(pane: string) {
     return read(pid);
   } catch { return undefined; }
 }
-// herdr 가 세션을 모르는 Claude pane(통합 설치 전에 시작한 것)의 세션
-const liveSession = (pane: string) => liveFile(pane)?.sessionId;
-
 // Remote Control — 켜져 있으면 claude.ai 에서 그 세션을 여는 주소, 꺼져 있으면 null, 모르면 undefined
 export function remoteControl(pane: string) {
   const f = liveFile(pane);
@@ -263,10 +271,12 @@ export function remoteControl(pane: string) {
   return { url: f.bridgeSessionId && /^[\w-]+$/.test(f.bridgeSessionId) ? `https://claude.ai/code/${f.bridgeSessionId}` : null };
 }
 
-// herdr 가 알려 준 세션(없으면 Claude 는 프로세스의 세션) → 기록 파일. 그래도 없거나 파일이 아직 없으면(첫 메시지 전) null — 그때는 추측으로.
+// herdr 가 알려 준 세션(없으면 Claude 는 프로세스의 세션 — 통합 설치 전에 시작한 pane) → 기록 파일. 그래도 없거나 파일이 아직 없으면(첫 메시지 전) null — 그때는 추측으로.
+// 백그라운드로 넘긴 대화는 herdr 가 아는 처음 세션이 아니라 넘겨받은 bg 세션을 본다(처음 세션 기록은 넘긴 때에서 멈춘다).
 function reported(pane: string, agent: string, cwd: string) {
-  const told = sessionOf(pane), live = !told && agent === 'claude' ? liveSession(pane) : undefined;
-  const s = told?.agent === agent ? told : live ? { kind: 'id', value: live } : undefined;
+  const told = sessionOf(pane), f = agent === 'claude' ? liveFile(pane) : undefined;
+  const live = f?.sessionId && (f.parked || !told) ? f.sessionId : undefined;
+  const s = live ? { kind: 'id', value: live } : told?.agent === agent ? told : undefined;
   if (!s) return null;
   if (s.kind === 'path') return existsSync(s.value) ? s.value : null;
   if (agent === 'codex') return rollouts().find(f => f.endsWith(`-${s.value}.jsonl`)) ?? null;
