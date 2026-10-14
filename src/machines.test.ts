@@ -18,3 +18,12 @@ test('Host 머리 — 127.0.0.1·localhost 면 포트는 상관없이(SSH 터널
   assert.equal(hostPort('localhost:4320'), '4320');
   for (const h of ['evil.com:4320', '127.0.0.1', '127.0.0.1.evil.com:4320', undefined]) assert.equal(hostPort(h), null);
 });
+
+test('machines.json 에 넣기 — 새 기기는 문자열, 있던 기기는 자리·port 를 두고 대상만 바꾼다', async () => {
+  const { withMachine, parsePeers } = await import('./machines.ts');
+  assert.equal(withMachine('', '회사', 'me@work'), '{\n  "회사": "me@work"\n}\n');
+  const t = withMachine(JSON.stringify({ 집: 'a@home', 회사: { ssh: 'old@work', port: 4400 } }), '회사', 'me@work');
+  assert.deepEqual(JSON.parse(t), { 집: 'a@home', 회사: { ssh: 'me@work', port: 4400 } });
+  assert.deepEqual(parsePeers(JSON.stringify({ Peer: { k: { HostName: 'work-mac', DNSName: 'work-mac.tail1.ts.net.', OS: 'macOS', Online: true } } })),
+    [{ host: 'work-mac', dns: 'work-mac.tail1.ts.net', os: 'macOS', online: true }]);
+});

@@ -3,11 +3,14 @@
 // `edith` 하나로: 도구 확인 → herdr 서버가 꺼져 있으면 화면 없이 띄우기 → 화면 서버 → 브라우저. 이미 떠 있으면 브라우저만 연다.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { REPO } from './config.ts';
 
 const USAGE = `사용: edith [serve] [--port N] [--no-open]   herdr 확인·시작 → 화면 서버(127.0.0.1, 기본 4320) → 브라우저
-      edith setup                              설치 스크립트 다시 — 빠진 도구 설치, herdr 통합·스킬, 화면 빌드`;
+      edith setup                              설치 스크립트 다시 — 빠진 도구 설치, herdr 통합·스킬, 화면 빌드
+      edith connect [이름 user@host]           다른 기기 잇기 — SSH 키 등록·machines.json(인자 없으면 Tailscale 기기에서 고른다)`;
 
 const win = process.platform === 'win32';
 const fail = (m: string): never => { console.error(m); process.exit(1); };
@@ -64,9 +67,28 @@ function setup() {
   process.exit(spawnSync(cmd, args, { stdio: 'inherit' }).status ?? 1);
 }
 
+// 다른 기기 잇기 — 인자가 없으면 Tailscale 에 붙은 기기를 보여 주고 번호·그 기기 사용자 이름을 묻는다
+async function connect(args: string[]) {
+  const { connectMachine, tailscalePeers } = await import('./machines.ts');
+  let [name, target] = args;
+  if (!target) {
+    const peers = tailscalePeers() ?? [];
+    if (!peers.length) fail(`Tailscale 에 붙은 다른 기기가 없다(또는 Tailscale 이 없다) — edith connect <이름> <user@host>`);
+    peers.forEach((p, i) => console.log(`  ${i + 1}. ${p.host}  ${p.dns}  ${p.os}${p.online ? '' : '  (꺼짐)'}`));
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const peer = peers[Number(await rl.question('어느 기기? 번호: ')) - 1] ?? fail('번호가 맞지 않다');
+    const user = (await rl.question(`그 기기의 사용자 이름 [${userInfo().username}]: `)).trim() || userInfo().username;
+    name = (await rl.question(`EDITH 에 보일 이름 [${peer.host}]: `)).trim() || peer.host;
+    rl.close();
+    target = `${user}@${peer.dns}`;
+  }
+  await connectMachine(name, target, m => console.log(m)).catch((e: Error) => fail(e.message));
+}
+
 const argv = process.argv.slice(2);
 switch (argv[0] ?? 'serve') {
   case 'setup': setup(); break;
+  case 'connect': await connect(argv.slice(1)); break;
   case 'serve': await serve(argv.slice(1)); break;
   case '-h': case '--help': case 'help': console.log(USAGE); break;
   default: if (argv[0].startsWith('--')) await serve(argv); else { console.log(USAGE); process.exit(2); }
