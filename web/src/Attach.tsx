@@ -1,11 +1,12 @@
 // 📎 첨부 — 브라우저에서 고른 파일, 입력칸에 붙여넣은 파일(스크린샷 등)을 서버(/api/upload)에 올리고 그 경로를 받는다.
 // 에이전트는 그 경로로 파일을 읽는다(Claude 는 이미지도 본다). 스크린샷은 OS 캡처를 클립보드로 찍고 붙여넣는다.
 import { useRef, useState } from 'react';
-import { post } from './api.ts';
+import { post, useView } from './api.ts';
 import { toast } from './copy.ts';
 import { Icon } from './ui.tsx';
 
 const MAX = 15 * 1024 * 1024;   // 서버와 같은 상한
+const CAMERA = <><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /><circle cx="12" cy="13" r="3" /></>;   // lucide camera
 const CLIP = <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />;   // lucide paperclip
 
 export const base64 = (f: File) => new Promise<string>((ok, no) => {
@@ -26,19 +27,33 @@ export async function upload(files: File[]) {
 
 // 올리는 동안 버튼이 깜박이고, 실패는 잠깐 띄운다. 붙여넣기는 입력칸이 upload 를 직접 부른다.
 export function Attach({ onPaths }: { onPaths: (paths: string[]) => void }) {
-  const input = useRef<HTMLInputElement>(null), [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null), [busy, setBusy] = useState(''), view = useView().data;
   const pick = async (files: File[]) => {
     if (!files.length) return;
-    setBusy(true);
+    setBusy('files');
     try { onPaths(await upload(files)); } catch (e) { toast(`올리지 못했다 — ${e instanceof Error ? e.message : e}`, 6000); }
-    setBusy(false);
+    setBusy('');
     if (input.current) input.current.value = '';
   };
+  // 📸 — 이 기기(macOS)의 화면을 영역 골라 찍는다. 원격으로 보는 화면에서는 숨긴다(그 기기 화면이 찍혀서)
+  const shoot = () => {
+    setBusy('shot');
+    void post<{ path: string | null }>('/api/shot', {})
+      .then(r => { if (r.path) onPaths([r.path]); }, (e: Error) => toast(`찍지 못했다 — ${e.message}`, 6000))
+      .finally(() => setBusy(''));
+  };
+  const btn = 'flex size-8 shrink-0 items-center justify-center rounded-lg border text-muted-foreground/80 transition hover:bg-muted/60 hover:text-foreground disabled:opacity-50';
   return <>
     <input ref={input} type="file" multiple hidden onChange={e => void pick([...e.target.files ?? []])} />
-    <button disabled={busy} onClick={() => input.current?.click()} title="파일 첨부 — 골라서 올리고 경로를 넣는다 · 입력칸에 붙여넣기(스크린샷)도 된다"
-      className={`flex size-8 shrink-0 items-center justify-center rounded-lg border text-muted-foreground/80 transition hover:bg-muted/60 hover:text-foreground disabled:opacity-50 ${busy ? 'animate-pulse text-primary' : ''}`}>
+    <button disabled={!!busy} onClick={() => input.current?.click()} title="파일 첨부 — 골라서 올리고 경로를 넣는다 · 입력칸에 붙여넣기(스크린샷)도 된다"
+      className={`${btn} ${busy === 'files' ? 'animate-pulse text-primary' : ''}`}>
       <Icon>{CLIP}</Icon>
     </button>
+    {view?.shot && !view.remote && (
+      <button disabled={!!busy} onClick={shoot} title="스크린샷 — 영역을 골라 찍고(스페이스: 창, Esc: 취소) 경로를 넣는다"
+        className={`${btn} ${busy === 'shot' ? 'animate-pulse text-primary' : ''}`}>
+        <Icon>{CAMERA}</Icon>
+      </button>
+    )}
   </>;
 }

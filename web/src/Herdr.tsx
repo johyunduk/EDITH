@@ -278,19 +278,24 @@ function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrVie
   const tabs = data.tabs.filter(t => t.workspace_id === w.workspace_id).sort((a, b) => a.number - b.number);
   const panes = data.panes.filter(p => p.workspace === w.workspace_id);
   const kids = children?.length ?? 0;
-  const open = w.agent_status === 'working' || w.agent_status === 'blocked' || panes.some(p => p.id === sel)
+  const auto = w.agent_status === 'working' || w.agent_status === 'blocked' || panes.some(p => p.id === sel)
     || (kids > 0 && data.workspaces.some(c => c.worktree?.is_linked_worktree && c.worktree.repo_key === w.worktree?.repo_key
       && (c.agent_status === 'working' || c.agent_status === 'blocked' || data.panes.some(p => p.workspace === c.workspace_id && p.id === sel))));
+  // 직접 펼치거나 접은 것은 에이전트 상태가 바뀌어도 그대로 둔다. 접어 둔 것도 새로 일을 시작하거나 승인 대기가 되면 다시 펼친다.
+  const [pick, setPick] = useState<boolean | null>(null), [was, setWas] = useState(auto);
+  if (was !== auto) { setWas(auto); if (auto && pick === false) setPick(null); }
+  const open = depth > 0 || (pick ?? auto);
   const mine = panes.some(p => p.id === sel);
   return (
     // 펼친 워크스페이스는 카드로 묶고, 접힌 건 같은 높이의 한 줄. 하위(링크 워크트리)는 왼쪽 안내선 아래로 들인다.
     // 하위(링크 워크트리)는 처음부터 펼쳐 둔다. 위 워크스페이스를 펼치면 접어 둔 하위도 다시 다 펼친다(하나씩 누르지 않게).
-    <details open={depth > 0 || open} className={depth ? 'ml-4 border-l pl-1' : 'rounded-lg open:my-1.5 open:bg-card open:shadow-sm open:ring-1 open:ring-border'}
+    <details open={open} className={depth ? 'ml-4 border-l pl-1' : 'rounded-lg open:my-1.5 open:bg-card open:shadow-sm open:ring-1 open:ring-border'}
       onToggle={e => { if (e.target === e.currentTarget && e.currentTarget.open) e.currentTarget.querySelectorAll('details').forEach(d => { d.open = true; }); }}>
       <summary draggable onDragStart={e => { e.dataTransfer.setData(DRAG_WS, w.workspace_id); e.dataTransfer.effectAllowed = 'move'; }}
         onDragOver={e => { const k = carrying(e, DRAG_PANE) ? 'pane' : carrying(e, DRAG_WS) ? 'ws' : null; if (!k) return; e.preventDefault(); setOver(k); }}
         onDragLeave={() => setOver(null)}
         onContextMenu={e => openMenu(e, wsMenu(w))}
+        onClick={e => { if (depth) return; e.preventDefault(); setPick(!open); }}   // 맨 위 단은 React 가 쥔다 — 브라우저가 열고 닫게 두면 다음 상태 변화에 덮인다
         onDrop={e => {
           e.preventDefault(); setOver(null);
           const pane = e.dataTransfer.getData(DRAG_PANE), ws = e.dataTransfer.getData(DRAG_WS);

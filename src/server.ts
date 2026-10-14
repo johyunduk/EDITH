@@ -19,6 +19,7 @@ import { summarize } from './summary.ts';
 import { forgetSkills, skillFile, skills } from './skills.ts';
 import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
 import { connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
+import { canShoot, screenshot } from './screenshot.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -161,10 +162,15 @@ export function serve(port: number) {
           return reply(res, 200, { ...done, installed });
         } catch (e) { return fail(e); }
       }
+      // 📸 스크린샷 — 이 기기 화면에서 영역을 골라 찍는다. 다른 기기가 터널로 연 화면에서는 받지 않는다(그 기기 화면이 아니라 이 기기 화면이 찍혀서)
+      if (req.method === 'POST' && path === '/api/shot') {
+        if (hp !== String(port)) return reply(res, 403, '스크린샷은 이 기기 화면에서만 — 원격으로 보는 중');
+        return await screenshot().then(p => reply(res, 200, { path: p }), fail);
+      }
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());
       // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
-      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION });
+      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot });
       const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);
       if (h?.[2] === 'stream' && req.method === 'GET')
         return await streamPane(req, res, h[1], { control: url.searchParams.get('mode') === 'control', takeover: url.searchParams.has('takeover') });

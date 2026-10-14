@@ -31,7 +31,7 @@ export async function post<T = unknown>(path: string, body: unknown): Promise<T>
 
 export const useHerdr = () => useQuery({ queryKey: ['herdr'], queryFn: () => get<HerdrView>('/api/herdr') });
 // 이 화면을 어디서 보는지 — remote 면 다른 기기의 EDITH 를 SSH 터널로 보고 있다(host 는 그 기기 이름)
-export const useView = () => useQuery({ queryKey: ['view'], queryFn: () => get<{ remote: boolean; host: string; version?: string }>('/api/view'), staleTime: Infinity });
+export const useView = () => useQuery({ queryKey: ['view'], queryFn: () => get<{ remote: boolean; host: string; version?: string; shot?: boolean }>('/api/view'), staleTime: Infinity });
 
 export function useLive() {
   const qc = useQueryClient();
