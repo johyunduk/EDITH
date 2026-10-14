@@ -175,7 +175,8 @@ export async function prompt(id: string, text: string) {
   for (const t0 = Date.now(); ;) {
     try { return void await api('agent.prompt', params); }
     catch (e) {
-      if (!String(e).includes('agent_not_ready') || Date.now() - t0 > 20_000) throw e;
+      // 질문·승인 화면에서 막힌 것(blocked)은 기다려도 안 풀린다 — 바로 돌려준다
+      if (!String(e).includes('agent_not_ready') || /blocked/.test(String(e)) || Date.now() - t0 > 20_000) throw e;
       await ready(id).catch(() => undefined);
       await new Promise(r => setTimeout(r, 1000));
     }

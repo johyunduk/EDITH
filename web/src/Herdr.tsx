@@ -7,6 +7,7 @@ import { get, post, useHerdr, type HerdrView, type HPane, type HSplit, type HTab
 import { Button } from '@/components/ui/button';
 import { Empty, Icon, Md, TERMINAL, Tag } from './ui.tsx';
 import { MenuHost, openMenu, type MenuItem } from './Menu.tsx';
+import { isFree, parseMenu, type Menu } from './screenMenu.ts';
 import { Ansi } from './ansi.tsx';
 import { copyText, toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
@@ -622,29 +623,6 @@ function StopKey({ p }: { p: HPane }) {
   );
 }
 
-// 직접 써서 답하는 선택지(「Type something」 등) — 고르면 글을 받아야 한다
-const isFree = (l: string) => /type something|직접|other/i.test(l);
-
-// 질문·승인 화면 읽기 — 번호 선택지(「❯ 1. 빨강」)와 그 아래 들여 쓴 설명 줄, 선택지 앞의 질문 줄. 선택지가 둘 미만이면 질문이 아니다.
-type Menu = { question: string; options: { n: number; label: string; desc: string }[] };
-const OPT = /^\s*(?:[❯›>]\s*)?(\d{1,2})\.\s+(.+)$/;
-const RULE = /^\s*[─━▔-]{3,}/;
-const HINT = /Enter to (select|confirm)|Esc to cancel|↑\/↓|to navigate/;
-function parseMenu(lines: string[]): Menu | null {
-  const first = lines.findIndex(l => OPT.test(l));
-  if (first < 0) return null;
-  const options: Menu['options'] = [];
-  for (const l of lines.slice(first)) {
-    const m = l.match(OPT);
-    if (m) options.push({ n: Number(m[1]), label: m[2].trim(), desc: '' });
-    else if (l.trim() && !RULE.test(l) && !HINT.test(l) && options.length) options.at(-1)!.desc += `${options.at(-1)!.desc ? ' ' : ''}${l.trim()}`;
-  }
-  if (options.length < 2) return null;
-  const before = lines.slice(0, first), cut = before.findLastIndex(l => RULE.test(l));
-  const question = before.slice(cut + 1).filter(l => l.trim()).slice(-6).map(l => l.trim().replace(/^[☐☒✔]\s*/, '')).join('\n');   // 질문 머리표(☐ 색)의 상자는 뺀다
-  return { question, options };
-}
-
 // 대화 — 서버가 끝쪽(최근)만 주고, 맨 위로 올리거나 「이전 대화 더 보기」 를 누르면 그 앞을 이어 받아 위에 붙인다(보던 자리는 그대로).
 type ChatPage = { file: string | null; items: Item[]; more: boolean };
 function Chat({ p }: { p: HPane }) {
@@ -798,8 +776,17 @@ function PromptBox({ p, label }: { p: HPane; label?: string }) {
     await post(`/api/herdr/panes/${p.id}/choose`, { n, text: answer });
     setTyped(null); setText('');
   });
+  // 선택지 누르기 — 번호 메뉴는 번호 키, 커서 메뉴(번호 없음)는 ↑↓ 로 그 줄까지 옮기고 Enter
+  const key = (k: string) => post(`/api/herdr/panes/${p.id}/keys`, { key: k });
+  const answer = (m: Menu, o: Menu['options'][number]) => {
+    if (m.cursor === undefined) return isFree(o.label) ? setTyped(o.n) : void choose(o.n);
+    const d = o.n - 1 - m.cursor;
+    void run(async () => { for (let i = 0; i < Math.abs(d); i++) await key(d > 0 ? 'down' : 'up'); await key('enter'); });
+  };
   const submit = () => {
     if (!text.trim() || busy) return;
+    // 답을 기다리는 화면에 글을 프롬프트로 보내면 herdr 가 거절한다 — 보내지 않고 바로 알린다
+    if (menu && typed === null) { setErr('답을 기다리는 중 — 위 선택지를 먼저 고른다(취소는 Esc)'); return; }
     if (menu && typed !== null) void choose(typed, text);
     else void run(async () => { await post(`/api/herdr/panes/${p.id}/prompt`, { text }); setText(''); });
   };
@@ -831,7 +818,7 @@ function PromptBox({ p, label }: { p: HPane; label?: string }) {
           {menu.question && <div className="text-[0.84375rem] font-semibold whitespace-pre-wrap">{menu.question}</div>}
           <div className="grid gap-1.5">
             {menu.options.map(o => (
-              <button key={o.n} disabled={busy} onClick={() => isFree(o.label) ? setTyped(o.n) : void choose(o.n)}
+              <button key={o.n} disabled={busy} onClick={() => answer(menu, o)}
                 className={`flex items-baseline gap-2.5 rounded-xl border bg-card px-3 py-2 text-left text-sm transition hover:border-primary/40 hover:bg-accent ${typed === o.n ? 'border-primary ring-2 ring-primary/30' : ''}`}>
                 <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[0.6875rem] font-bold text-primary tabular-nums">{o.n}</span>
                 <span className="font-medium">{o.label}</span>
