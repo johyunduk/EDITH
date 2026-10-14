@@ -17,25 +17,62 @@ herdr 로 띄운 Claude Code·Codex·셸 pane 을 브라우저 한 화면에서 
 
 ## 필요한 것
 
-- macOS(확인한 환경). Linux 는 확인하지 않았습니다.
+- macOS(확인한 환경), Linux, Windows(네이티브 — WSL 없이). Linux·Windows 는 코드만 맞춰 두었고 아직 돌려 보지 않았습니다.
 - Node 24 이상 — 서버는 빌드 없이 `node src/cli.ts` 로 돕니다(type stripping). 런타임 의존성은 없습니다.
-- [herdr](https://herdr.dev) 0.9.4(확인한 판) — `herdr` 명령과 소켓(`~/.config/herdr/herdr.sock`, 또는 `HERDR_SOCKET_PATH`).
-- 권장: herdr Claude 통합(`herdr integration install claude`). 세션이 시작·`/resume`·`/clear` 될 때 세션 ID 를 herdr 에 알려서, 대화 화면이 그 세션 기록을 바로 엽니다(통합 뒤 새로 시작한 세션부터). 없으면 창 제목으로 기록 파일을 추측합니다. Codex 도 herdr 가 세션을 알려 주면 같은 방식으로 엽니다.
-- 쓰는 만큼: Claude Code(`claude`), Codex CLI(`codex`), git, lsof.
+- [herdr](https://herdr.dev) 0.9.4(확인한 판) — `herdr` 명령과 소켓(Windows 는 named pipe). 소켓은 `HERDR_SOCKET_PATH`(herdr pane 안에서 띄우면 있음), 없으면 `herdr status server` 가 알려 주는 경로를 씁니다.
+- 권장: herdr Claude 통합(`herdr integration install claude`). 세션이 시작·`/resume`·`/clear` 될 때 세션 ID 를 herdr 에 알려서, 대화 화면이 그 세션 기록을 바로 엽니다(통합 뒤 새로 시작한 세션부터). 통합이 없거나 그 전에 시작한 세션은 그 pane 의 `claude` 프로세스가 쓰는 `~/.claude/sessions/<pid>.json` 으로 찾고(Claude Code 내부 파일, 2.1.x 확인), 그것도 안 되면 창 제목으로 추측합니다. Codex 도 herdr 가 세션을 알려 주면 같은 방식으로 엽니다.
+- 쓰는 만큼: Claude Code(`claude`), Codex CLI(`codex`), git. `lsof` 가 있으면 끝 표시 없이 죽은 백그라운드 셸도 가립니다(Windows 는 없음 — 끝 표시로만).
 
 ## 설치·실행
 
+한 줄 설치 — 없는 것만 설치하고, 다시 돌려도 됩니다.
+
+macOS·Linux:
+
 ```sh
-git clone <this repo> edith && cd edith
+curl -fsSL https://raw.githubusercontent.com/johyunduk/EDITH/main/install.sh | bash
+```
+
+Windows(PowerShell, 관리자 아님):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/johyunduk/EDITH/main/install.ps1 | iex"
+```
+
+[`install.sh`](install.sh)·[`install.ps1`](install.ps1) 이 하는 일(sudo·관리자 권한은 쓰지 않습니다 — 먼저 읽어 보고 돌려도 됩니다):
+
+1. Node 24+ 확인(없으면 macOS·Linux 는 Homebrew, Windows 는 winget 으로 — 둘 다 없으면 안내만)
+2. herdr(Homebrew 또는 `https://herdr.dev/install.sh`·`.ps1`), Claude Code(`https://claude.ai/install.sh`·`.ps1`), Codex CLI(`npm i -g @openai/codex`) — 이미 있으면 건너뜀
+3. herdr 통합 `herdr integration install claude`·`codex`(`~/.claude`·`~/.codex` 에 세션을 알리는 훅)
+4. herdr 스킬(`herdr --skill`) → `~/.agents/skills/herdr`(Codex), `~/.claude/skills/herdr` 는 그 링크(Claude, Windows 는 복사본)
+5. EDITH 를 `~/.edith`(또는 `EDITH_DIR`)에 받고 `npm install` → `npm run build` → `npm link`
+
+끝나면 처음 한 번 `claude`·`codex` 로 로그인하고 `edith` 를 칩니다.
+
+손으로 설치:
+
+```sh
+git clone https://github.com/johyunduk/EDITH.git edith && cd edith
 npm install
 npm run build        # web/ 화면 빌드 → web/dist
 npm link             # edith 명령 (선택)
-edith serve          # 또는 npm start — http://127.0.0.1:4320/?key=… 가 찍힌다
+edith                # 또는 npm start
 ```
 
-찍힌 주소를 한 번 열면 열쇠가 브라우저 쿠키로 남고(30일) 그 뒤로는 `http://127.0.0.1:4320` 만 열면 됩니다. 포트는 `edith serve --port N`.
+## 쓰기
 
-화면 개발: `edith serve` 를 띄운 채 `npm --prefix web run dev`(Vite, `/api` 는 4320 으로 넘김).
+```sh
+edith                # herdr 서버 확인(꺼져 있으면 화면 없이 띄움) → 화면 서버 → 브라우저
+edith --no-open      # 브라우저는 열지 않고 주소만 찍는다
+edith --port 4400    # 다른 포트(기본 4320)
+edith setup          # 설치 스크립트 다시 — 빠진 도구, herdr 통합·스킬, 화면 빌드
+```
+
+- 이미 떠 있으면 새로 띄우지 않고 브라우저만 엽니다. 브라우저는 열쇠 붙은 주소로 열려 그대로 쿠키(30일)가 남습니다.
+- Ctrl+C 로 EDITH 를 꺼도 herdr 서버와 그 안의 pane 은 계속 돕니다. 터미널에서도 보려면 `herdr` 로 같은 서버에 붙습니다.
+- 업데이트: `git -C ~/.edith pull && edith setup`(설치 스크립트로 받았을 때. 직접 클론했으면 그 폴더에서).
+
+화면 개발: `edith --no-open` 을 띄운 채 `npm --prefix web run dev`(Vite, `/api` 는 4320 으로 넘김).
 
 ## 사용량 칩
 
@@ -46,7 +83,7 @@ edith serve          # 또는 npm start — http://127.0.0.1:4320/?key=… 가 �
   ✦ <모델> [<effort>]  ·  CONTEXT 45%  ·  DAILY 30% | 2h10m  ·  WEEKLY 12% | 3d4h
   ```
 
-  `extras/statusline.sh`(jq·bc 필요)가 이 꼴을 찍습니다. `~/.claude/settings.json` 에:
+  `extras/statusline.sh`(jq·bc 필요, Windows 는 Git Bash 의 sh 로)가 이 꼴을 찍습니다. `~/.claude/settings.json` 에:
 
   ```json
   { "statusLine": { "type": "command", "command": "sh /path/to/edith/extras/statusline.sh" } }

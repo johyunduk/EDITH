@@ -59,7 +59,7 @@ export default function App() {
         {perm === 'default' && (
           <button className="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted" onClick={() => void Notification.requestPermission().then(setPerm)}>승인 대기 알림 켜기</button>
         )}
-        {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — edith serve 가 보여 준 주소(…/?key=)로 한 번 연다</span>}
+        {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}
         <span className="ml-auto flex items-center gap-2"><AlertBell data={herdr.data} alerts={alerts} /></span>
       </header>
       {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : <HerdrPage pane={r.id} side={side} />}

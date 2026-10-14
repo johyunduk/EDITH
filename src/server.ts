@@ -40,7 +40,7 @@ const lastUsage = new Map<string, Usage>();
 const sameOrigin = (origin: string | undefined, port: number) => origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
 
 // 화면 열쇠 — 처음 serve 때 만들어 파일에 둔다. 바꾸려면 파일을 지우고 serve 를 다시 띄운다.
-function consoleKey() {
+export function consoleKey() {
   const file = join(CONFIG_DIR, 'console.key');
   try { return readFileSync(file, 'utf8').trim(); } catch { /* 처음 */ }
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
@@ -79,10 +79,11 @@ function upload(b: { name?: unknown; data?: unknown }) {
   return path;
 }
 
+// 화면 서버를 띄우고, 뜨면 열쇠 붙은 주소를 돌려준다. 포트가 차 있으면 그 오류(EADDRINUSE)로 끝난다 — cli 가 이미 뜬 EDITH 인지 본다.
 export function serve(port: number) {
   const KEY = consoleKey();
-  watchHerdr();
-  createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
+    res.setHeader('x-edith', '1');   // 이미 뜬 EDITH 인지 알아보는 표시(cli)
     if (req.headers.host !== `127.0.0.1:${port}` && req.headers.host !== `localhost:${port}`) return reply(res, 403, 'host');
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
     // 열쇠 붙은 주소로 열면 쿠키로 남기고 주소에서 열쇠를 지운다.
@@ -92,7 +93,7 @@ export function serve(port: number) {
       return res.end();
     }
     const authed = same(cookieKey(req), KEY);
-    if (path.startsWith('/api/') && !authed) return reply(res, 401, '열쇠 없음 — edith serve 가 보여 준 주소로 연다');
+    if (path.startsWith('/api/') && !authed) return reply(res, 401, '열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다');
     // 쓰기는 이 화면에서 온 JSON POST 만 — 다른 사이트는 Origin 이 다르고, JSON 본문은 브라우저가 사전 확인 없이 못 보낸다.
     if (req.method !== 'GET' && (req.method !== 'POST' || !sameOrigin(req.headers.origin, port) || !req.headers['content-type']?.startsWith('application/json')))
       return reply(res, 403, '쓰기는 이 화면에서 온 요청만');
@@ -214,5 +215,9 @@ export function serve(port: number) {
       res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'x-frame-options': 'DENY', 'content-security-policy': "frame-ancestors 'none'" });
       res.end(readFileSync(file));
     } catch (e) { reply(res, 500, firstLine(e)); }
-  }).listen(port, '127.0.0.1', () => console.log(`EDITH: http://127.0.0.1:${port}/?key=${KEY}  (한 번 열면 브라우저에 30일 남는다)`));
+  });
+  return new Promise<string>((ok, no) => {
+    server.once('error', no);
+    server.listen(port, '127.0.0.1', () => { watchHerdr(); ok(`http://127.0.0.1:${port}/?key=${KEY}`); });
+  });
 }

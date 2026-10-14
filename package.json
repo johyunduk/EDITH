@@ -12,7 +12,7 @@
     "edith": "src/cli.ts"
   },
   "scripts": {
-    "start": "node src/cli.ts serve",
+    "start": "node src/cli.ts",
     "build": "npm --prefix web ci && npm --prefix web run build",
     "test": "node --test",
     "typecheck": "tsc && npm --prefix web run typecheck"

@@ -1,4 +1,4 @@
-// 개발: npm --prefix web run dev — /api 는 `edith serve`(4320)로 넘긴다. 배포: build → web/dist 를 serve 가 준다.
+// 개발: npm --prefix web run dev — /api 는 `edith`(4320)로 넘긴다. 배포: build → web/dist 를 serve 가 준다.
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
