@@ -93,6 +93,7 @@ export function link(nodes: SkillNode[], text: (n: SkillNode) => string) {
 }
 
 let cache: { at: number; nodes: SkillNode[] } | null = null;
+export const forgetSkills = () => { cache = null; };   // 가져오기로 바뀌었을 때
 export function skills() {
   if (!cache || Date.now() - cache.at > 30_000) cache = { at: Date.now(), nodes: collect() };
   return cache.nodes;

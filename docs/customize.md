@@ -39,7 +39,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/chat.ts` | Claude·Codex 세션 기록(JSONL) → 대화 항목, 기록 파일 찾기, Codex 사용량, 백그라운드 작업 |
 | `src/complete.ts` | 입력칸 자동 완성(`/` 명령·스킬, `@` 파일), Claude 식 글을 Codex 식으로 바꾸기 |
 | `src/diff.ts` · `src/summary.ts` | git 변경(커밋 안 한 것·브랜치·커밋), 파일별 AI 요약(`claude -p`) |
-| `src/skills.ts` | 스킬·명령 목록과 서로 부르는 관계 |
+| `src/skills.ts` · `src/skillsMove.ts` | 스킬·명령 목록과 서로 부르는 관계, 스킬 옮기기(묶음 파일 내보내기·가져오기) |
 | `src/machines.ts` | 다른 기기의 EDITH — `machines.json`, SSH 터널, 그 기기의 열쇠 붙은 주소 |
 | `src/config.ts` · `src/sh.ts` | 경로(설정·데이터 폴더), 프로세스 실행 도우미 |
 | `web/src/App.tsx` | 머리줄·주소(#/herdr, #/skills)·승인 대기 알림 |

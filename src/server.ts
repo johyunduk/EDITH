@@ -7,14 +7,15 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname, join, resolve, sep } from 'node:path';
-import { CONFIG_DIR, DATA_DIR, REPO } from './config.ts';
+import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
 import { backgroundTasks, chat, checkAlive, codexUsage, remoteControl, taskOutput } from './chat.ts';
 import { commands, findFiles } from './complete.ts';
 import { firstLine } from './sh.ts';
 import { branches, diff } from './diff.ts';
 import { summarize } from './summary.ts';
-import { skillFile, skills } from './skills.ts';
+import { forgetSkills, skillFile, skills } from './skills.ts';
+import { apply, enabledPlugins, pack, preview, unitsAt, unpack } from './skillsMove.ts';
 import { machines, openMachine } from './machines.ts';
 
 const WEB = join(REPO, 'web', 'dist');
@@ -123,6 +124,25 @@ export function serve(port: number) {
       if (path === '/api/machines') return reply(res, 200, machines().map(m => m.name));
       if (path === '/api/machines/open' && req.method === 'POST')
         return await openMachine(String((await body(req) as { name?: unknown }).name ?? '')).then(url => reply(res, 200, { url }), fail);
+      // 스킬 옮기기 — 고른 스킬(내 것·공유만)을 묶음 파일로, 받은 묶음은 먼저 미리 보고(apply 없이) 고른 대로 홈에 쓴다
+      if (path === '/api/skills/export' && req.method === 'POST') {
+        const b = await body(req) as { ids?: unknown; plugins?: unknown }, ids = Array.isArray(b.ids) ? b.ids : [];
+        const nodes = skills().filter(n => ids.includes(n.id) && !n.source.startsWith('plugin:') && n.source !== 'system');
+        const buf = pack(HOME, unitsAt(HOME, nodes.map(n => n.path)), b.plugins ? enabledPlugins(HOME) : []);
+        res.writeHead(200, { 'content-type': 'application/gzip', 'content-disposition': `attachment; filename="edith-skills-${new Date().toISOString().slice(0, 10)}.json.gz"` });
+        return res.end(buf);
+      }
+      if (path === '/api/skills/import' && req.method === 'POST') {
+        const b = await body(req, 40 * 1024 * 1024) as { data?: unknown; apply?: unknown; overwrite?: unknown };
+        try {
+          if (typeof b.data !== 'string') throw new Error('파일이 없다');
+          const bundle = unpack(Buffer.from(b.data, 'base64'));
+          if (!b.apply) return reply(res, 200, preview(HOME, bundle));
+          const done = apply(HOME, bundle, Array.isArray(b.overwrite) ? b.overwrite.filter((u): u is string => typeof u === 'string') : []);
+          forgetSkills();
+          return reply(res, 200, done);
+        } catch (e) { return fail(e); }
+      }
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());
       const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);

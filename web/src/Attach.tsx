@@ -8,7 +8,7 @@ import { Icon } from './ui.tsx';
 const MAX = 15 * 1024 * 1024;   // 서버와 같은 상한
 const CLIP = <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />;   // lucide paperclip
 
-const base64 = (f: File) => new Promise<string>((ok, no) => {
+export const base64 = (f: File) => new Promise<string>((ok, no) => {
   const r = new FileReader();
   r.onload = () => ok(String(r.result).split(',')[1] ?? '');
   r.onerror = () => no(r.error);

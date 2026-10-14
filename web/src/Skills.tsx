@@ -1,10 +1,11 @@
 // 스킬 — Claude·Codex 스킬·명령 목록과 서로 부르는 관계(서버 skills.ts, 읽기만). 주소는 #/skills, #/skills/<id>.
 // 왼쪽 목록(찾기·범위), 오른쪽은 고른 스킬의 설명·관계 그림(부르는 곳 → 이 스킬 → 부르는 것)·md 본문.
-// 고른 게 없으면 전체 관계도.
+// 고른 게 없으면 전체 관계도. #/skills/@move 는 옮기기(내보내기·가져오기).
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { get } from './api.ts';
-import { copyText } from './copy.ts';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { get, post } from './api.ts';
+import { base64 } from './Attach.tsx';
+import { copyText, toast } from './copy.ts';
 import { Md } from './ui.tsx';
 import claudeIcon from './icons/claude.svg';
 import codexIcon from './icons/codex.svg';
@@ -44,7 +45,7 @@ export function SkillsPage({ id, side }: { id?: string; side: boolean }) {
   }, [data]);
   if (error && !data) return <p className="p-4 text-sm text-destructive">{String(error)}</p>;
   if (!data) return <p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>;
-  const sel = id ? by.get(id) : undefined;
+  const sel = id ? by.get(id) : undefined, moving = id === '@move';
   const shown = data.filter(s => inScope(s, scope) && (!q || `${s.name} ${s.desc}`.toLowerCase().includes(q.toLowerCase())));
   const groups: [string, Skill[]][] = [['Claude', shown.filter(s => src(s) === 'user' && s.agents.includes('claude'))],
     ['공유 (Claude·Codex)', shown.filter(s => src(s) === 'shared')],
@@ -59,8 +60,11 @@ export function SkillsPage({ id, side }: { id?: string; side: boolean }) {
             <button key={k} onClick={() => setScope(k)} className={`flex-1 rounded-md px-1.5 py-1 text-xs whitespace-nowrap ${scope === k ? 'bg-card font-semibold shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>{label}</button>
           ))}
         </div>
-        <button onClick={() => go('@graph')} className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] font-medium ${!sel ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/70'}`}>
+        <button onClick={() => go('@graph')} className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] font-medium ${!sel && !moving ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/70'}`}>
           <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="6" r="2.5" /><circle cx="19" cy="6" r="2.5" /><circle cx="12" cy="18" r="2.5" /><path d="M7 7.5 10.5 16M17 7.5 13.5 16M7.5 6h9" /></svg>전체 관계도
+        </button>
+        <button onClick={() => go('@move')} className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] font-medium ${moving ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/70'}`}>
+          <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="m8 11 4 4 4-4" /><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4" /></svg>옮기기 — 내보내기·가져오기
         </button>
         {groups.filter(([, l]) => l.length).map(([title, l]) => (
           <div key={title} className="pb-1.5">
@@ -83,7 +87,7 @@ export function SkillsPage({ id, side }: { id?: string; side: boolean }) {
         {!shown.length && <p className="p-3 text-sm text-muted-foreground">찾는 스킬이 없다</p>}
       </aside>
       <main className="min-w-0 flex-1 overflow-auto p-4">
-        {sel ? <Detail s={sel} by={by} usedBy={usedBy.get(sel.id) ?? []} /> : <Overview all={data} scope={scope} />}
+        {moving ? <Move all={data} /> : sel ? <Detail s={sel} by={by} usedBy={usedBy.get(sel.id) ?? []} /> : <Overview all={data} scope={scope} />}
       </main>
     </div>
   );
@@ -228,6 +232,101 @@ function Detail({ s, by, usedBy }: { s: Skill; by: Map<string, Skill>; usedBy: U
           {s.files.map(f => <button key={f} onClick={() => setFile(f)} className={`rounded-md px-2 py-0.5 font-mono text-xs ${f === cur ? 'bg-accent font-semibold text-accent-foreground' : 'text-muted-foreground hover:bg-muted'}`}>{f}</button>)}
         </div>
         <div className="px-4 py-3">{body.data ? <Md text={body.data.replace(/^---\n[\s\S]*?\n---\n/, '')} /> : <p className="text-sm text-muted-foreground">{body.error ? String(body.error) : '불러오는 중…'}</p>}</div>
+      </div>
+    </div>
+  );
+}
+
+// 옮기기 — 내 것·공유 스킬(명령·Codex 프롬프트 포함)을 묶음 파일로 내려받고, 다른 기기에서 받은 묶음은 미리 본 뒤 고른 대로 넣는다(서버 skillsMove.ts).
+// 이미 있는 것은 건너뛰고, 「덮어쓰기」 를 고른 것만 지우고 새로 쓴다. 플러그인은 파일 대신 다시 설치할 명령을 보여 준다.
+type Preview = { at: string; plugins: { id: string; add: string | null }[]; units: { unit: string; link: boolean; files: number; exists: boolean }[] };
+type Done = { added: string[]; replaced: string[]; skipped: string[] };
+function Move({ all }: { all: Skill[] }) {
+  const mine = all.filter(s => ['user', 'shared'].includes(src(s)));
+  const [pick, setPick] = useState(() => new Set(mine.map(s => s.id))), [plugins, setPlugins] = useState(true), [busy, setBusy] = useState(false);
+  const [data, setData] = useState<string | null>(null), [pre, setPre] = useState<Preview | null>(null), [over, setOver] = useState(new Set<string>()), [done, setDone] = useState<Done | null>(null);
+  const qc = useQueryClient();
+  const toggle = (set: Set<string>, k: string) => { const n = new Set(set); if (n.has(k)) n.delete(k); else n.add(k); return n; };
+  const card = 'rounded-xl border bg-card p-4 space-y-3';
+  const btn = 'rounded-md border bg-card px-2.5 py-1 text-sm hover:bg-muted disabled:opacity-50';
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch('/api/skills/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [...pick], plugins }) });
+      if (!r.ok) throw new Error(await r.text());
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await r.blob()), download: r.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] ?? 'edith-skills.json.gz' });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    } catch (e) { toast(`내보내지 못했다 — ${(e as Error).message}`, 5000); } finally { setBusy(false); }
+  };
+  const load = async (f?: File) => {
+    if (!f) return;
+    setPre(null); setDone(null); setOver(new Set());
+    try { const d = await base64(f); setPre(await post<Preview>('/api/skills/import', { data: d })); setData(d); }
+    catch (e) { toast(`읽지 못했다 — ${(e as Error).message}`, 5000); }
+  };
+  const run = async () => {
+    setBusy(true);
+    try { setDone(await post<Done>('/api/skills/import', { data, apply: true, overwrite: [...over] })); await qc.invalidateQueries({ queryKey: ['skills'] }); }
+    catch (e) { toast(`가져오지 못했다 — ${(e as Error).message}`, 5000); } finally { setBusy(false); }
+  };
+  const cmds = (pre?.plugins ?? []).flatMap(p => [...(p.add ? [`claude plugin marketplace add ${p.add}`] : []), `claude plugin install ${p.id}`]);
+  const doing = pre ? pre.units.filter(u => !u.exists || over.has(u.unit)).length : 0;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-bold tracking-tight">스킬 옮기기</h1>
+        <p className="mt-1 text-xs text-muted-foreground">이 기기의 내 스킬·명령·Codex 프롬프트를 파일 하나로 내려받아 다른 기기의 EDITH 에서 가져옵니다. 공유 스킬(~/.agents ↔ ~/.claude 링크)은 링크째 옮깁니다. 회사 스킬에는 회사 내용이 들어 있을 수 있으니 파일을 어디에 두는지 조심합니다.</p>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className={card}>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">내보내기</h2><span className="text-sm text-muted-foreground">{pick.size} / {mine.length}</span>
+            <button onClick={() => setPick(new Set(mine.map(s => s.id)))} className="ml-auto text-xs text-muted-foreground hover:text-foreground">모두</button>
+            <button onClick={() => setPick(new Set())} className="text-xs text-muted-foreground hover:text-foreground">없음</button>
+          </div>
+          <div className="max-h-96 overflow-y-auto rounded-md border">
+            {mine.map(s => (
+              <label key={s.id} className="flex cursor-pointer items-center gap-2 border-b px-2.5 py-1.5 last:border-b-0 hover:bg-muted/50">
+                <input type="checkbox" checked={pick.has(s.id)} onChange={() => setPick(p => toggle(p, s.id))} />
+                <Agents s={s} size="size-3" /><span className="truncate font-mono text-[0.78125rem]">{s.name}</span>
+                {s.kind !== 'skill' && <span className="text-[0.625rem] text-muted-foreground">{KIND[s.kind]}</span>}<Badge s={s} />
+              </label>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={plugins} onChange={e => setPlugins(e.target.checked)} />켜 둔 Claude 플러그인 목록도(다시 설치할 명령으로)</label>
+          <button onClick={() => void download()} disabled={busy || !pick.size} className={btn}>{busy && !pre ? '묶는 중…' : `내려받기 (${pick.size}개)`}</button>
+        </section>
+        <section className={card}>
+          <h2 className="font-semibold">가져오기</h2>
+          <input type="file" accept=".gz,application/gzip" onChange={e => void load(e.target.files?.[0])} className="block w-full text-sm file:mr-2 file:rounded-md file:border file:bg-card file:px-2.5 file:py-1" />
+          {pre && (
+            <>
+              <p className="text-xs text-muted-foreground">{pre.at.slice(0, 16).replace('T', ' ')} 에 묶은 것 · {pre.units.length}개. 이미 있는 것은 덮어쓰기를 고른 것만 바꿉니다.</p>
+              <div className="max-h-72 overflow-y-auto rounded-md border">
+                {pre.units.map(u => (
+                  <div key={u.unit} className="flex items-center gap-2 border-b px-2.5 py-1.5 text-sm last:border-b-0">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[0.78125rem]">~/{u.unit}</span>
+                    {u.link && <span className="text-[0.625rem] text-muted-foreground">링크</span>}
+                    {u.exists
+                      ? <label className="flex shrink-0 items-center gap-1 text-xs text-amber-700 dark:text-amber-300"><input type="checkbox" checked={over.has(u.unit)} onChange={() => setOver(o => toggle(o, u.unit))} />있음 — 덮어쓰기</label>
+                      : <span className="shrink-0 text-xs text-emerald-700 dark:text-emerald-300">새로</span>}
+                  </div>
+                ))}
+              </div>
+              {cmds.length > 0 && (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">플러그인 — 터미널에서<button onClick={() => void copyText(cmds.join('\n'))} className="ml-auto font-normal hover:text-foreground">명령 복사</button></div>
+                  <pre className="max-h-32 overflow-auto rounded-md bg-muted px-2.5 py-1.5 text-[0.71875rem]">{cmds.join('\n')}</pre>
+                </div>
+              )}
+              <button onClick={() => void run()} disabled={busy || !doing} className={btn}>{busy ? '넣는 중…' : `가져오기 (${doing}개)`}</button>
+            </>
+          )}
+          {done && <p className="text-sm">새로 {done.added.length} · 덮어씀 {done.replaced.length} · 건너뜀 {done.skipped.length}. Claude·Codex 는 새 세션부터 봅니다.</p>}
+        </section>
       </div>
     </div>
   );
