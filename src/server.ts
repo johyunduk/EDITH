@@ -20,6 +20,7 @@ import { forgetSkills, skillFile, skills } from './skills.ts';
 import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
 import { connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
 import { canShoot, screenshot } from './screenshot.ts';
+import { isToggle, setSetting, settings } from './settings.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -166,6 +167,13 @@ export function serve(port: number) {
       if (req.method === 'POST' && path === '/api/shot') {
         if (hp !== String(port)) return reply(res, 403, '스크린샷은 이 기기 화면에서만 — 원격으로 보는 중');
         return await screenshot().then(p => reply(res, 200, { path: p }), fail);
+      }
+      // 설정 — EDITH 가 까는 Claude 플러그인 켜고 끄기(이 화면을 연 기기의 Claude 에). 테마는 브라우저에 남아 서버가 모른다.
+      if (path === '/api/settings' && req.method === 'GET') return reply(res, 200, await settings());
+      if (path === '/api/settings' && req.method === 'POST') {
+        const b = await body(req) as { key?: unknown; on?: unknown };
+        if (typeof b.key !== 'string' || !isToggle(b.key) || typeof b.on !== 'boolean') return reply(res, 400, '{ key: 설정 이름, on: true·false }');
+        return await setSetting(b.key, b.on).then(v => reply(res, 200, v), fail);
       }
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());

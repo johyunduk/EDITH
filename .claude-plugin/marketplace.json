@@ -2,6 +2,8 @@
   "name": "edith",
   "owner": { "name": "EDITH" },
   "plugins": [
-    { "name": "rc-keepalive", "source": "./plugins/rc-keepalive", "description": "Remote Control 이 켜져 있던 Claude 세션이 끊기면 다시 켠다" }
+    { "name": "rc-keepalive", "source": "./plugins/rc-keepalive", "description": "Remote Control 이 켜져 있던 Claude 세션이 끊기면 다시 켠다" },
+    { "name": "commit-guard", "source": "./plugins/commit-guard", "description": "git commit·push 를 실행 전에 매번 사람에게 묻는다(auto 모드 포함)" },
+    { "name": "peer-message", "source": "./plugins/peer-message", "description": "Claude 세션끼리 주고받는 말은 herdr 대신 SendMessage 로 보내게 한다" }
   ]
 }

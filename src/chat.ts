@@ -14,7 +14,8 @@ import { agentSince, sessionOf, until } from './herdr.ts';
 import { sh } from './sh.ts';
 
 // at 은 그 항목이 나온 줄의 파일 안 바이트 위치 — 화면이 「이전 대화 더 보기」 로 그 앞을 달라고 할 때 쓴다.
-export type Item = { t: number; kind: 'user' | 'text' | 'tool' | 'out'; text: string; id?: string; result?: string; error?: boolean; at?: number };
+// peer 는 다른 Claude 세션이 SendMessage 로 보낸 말(from 은 그 세션 이름)
+export type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; id?: string; result?: string; error?: boolean; at?: number };
 type Block = { type?: string; text?: string; name?: string; id?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown; is_error?: boolean };
 
 const TAIL = 4 * 1024 * 1024, KEEP = 600, FILES = 8;
@@ -25,9 +26,11 @@ const resultText = (c: unknown): string => typeof c === 'string' ? c
 
 // Claude 기록 한 줄 → 화면 항목. 도구 결과는 앞의 도구 호출 항목에 붙인다(byId).
 export function claudeLine(items: Item[], byId: Map<string, Item>, line: string) {
-  let o: { type?: string; isMeta?: boolean; timestamp?: string; message?: { content?: string | Block[] } };
+  let o: { type?: string; isMeta?: boolean; timestamp?: string; message?: { content?: string | Block[] }; origin?: { kind?: string; name?: string; from?: string; body?: unknown } };
   try { o = JSON.parse(line); } catch { return; }
   const t = Date.parse(o.timestamp ?? '') || 0, c = o.message?.content;
+  // 다른 Claude 세션이 보낸 말 — 기록엔 안내문으로 감싼 isMeta 줄로 남고, origin 에 보낸 세션 이름과 본문이 있다
+  if (o.type === 'user' && o.origin?.kind === 'peer' && typeof o.origin.body === 'string') { items.push({ t, kind: 'peer', text: o.origin.body, from: o.origin.name, id: o.origin.from }); return; }
   if (o.type === 'user' && !o.isMeta) {
     if (typeof c === 'string') { local(items, t, c); return; }
     for (const b of c ?? []) {
@@ -42,8 +45,11 @@ export function claudeLine(items: Item[], byId: Map<string, Item>, line: string)
     if (b.type === 'text' && b.text) items.push({ t, kind: 'text', text: b.text });
     if (b.type === 'tool_use') {
       // 선택 질문은 질문 글로 — 답은 결과(User has answered…)에 붙는다
+      // 다른 세션에 보낸 말은 받는 이와 본문으로 — 받은 말에 답하면 받는 이가 주소(uds:…)라 그 말을 보낸 세션 이름으로 바꿔 보인다
       const qs = b.name === 'AskUserQuestion' ? (b.input?.questions as { question?: string }[] | undefined)?.map(q => q.question).join(' / ') : undefined;
-      const it: Item = { t, kind: 'tool', text: qs ? `질문 · ${cut(qs, 300)}` : `${b.name} ${cut(arg(b.input), 300)}`, id: b.id };
+      const peer = String(b.input?.to ?? ''), who = items.findLast(i => i.kind === 'peer' && i.id === peer)?.from ?? peer;
+      const to = b.name === 'SendMessage' && typeof b.input?.message === 'string' ? `SendMessage → ${who} · ${cut(b.input.message, 300)}` : undefined;
+      const it: Item = { t, kind: 'tool', text: qs ? `질문 · ${cut(qs, 300)}` : to ?? `${b.name} ${cut(arg(b.input), 300)}`, id: b.id };
       items.push(it);
       if (b.id) byId.set(b.id, it);
     }

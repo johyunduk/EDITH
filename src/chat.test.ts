@@ -54,3 +54,12 @@ test('백그라운드로 넘긴 대화 — parkedJobId 와 같은 jobId 의 bg �
   assert.deepEqual(follow({ sessionId: 'old', parkedJobId: 'gone' }, names, read), { sessionId: 'old', parkedJobId: 'gone' });
   assert.deepEqual(follow({ sessionId: 'plain' }, names, read), { sessionId: 'plain' });
 });
+
+test('다른 Claude 세션과 주고받은 말 — 받은 것은 보낸 이와 본문만(안내문 빼고), 보낸 것은 받는 이와 본문으로', () => {
+  const items: Parameters<typeof claudeLine>[0] = [], byId = new Map();
+  claudeLine(items, byId, JSON.stringify({ type: 'user', isMeta: true, timestamp: '2026-10-15T00:00:00Z', origin: { kind: 'peer', name: 'peer-a', from: 'uds:/tmp/a.sock', body: '안녕' },
+    message: { content: 'Another Claude session sent a message:\n<cross-session-message from-name="peer-a">\n안녕\n</cross-session-message>\n\nThis came from another Claude session …' } }));
+  claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'SendMessage', input: { to: 'uds:/tmp/a.sock', message: '받았어' } }] } }));
+  claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't2', name: 'SendMessage', input: { to: 'peer-c', message: '봐 줘' } }] } }));
+  assert.deepEqual(items.map(i => [i.kind, i.text, i.from]), [['peer', '안녕', 'peer-a'], ['tool', 'SendMessage → peer-a · 받았어', undefined], ['tool', 'SendMessage → peer-c · 봐 줘', undefined]]);
+});

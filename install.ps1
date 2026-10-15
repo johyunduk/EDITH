@@ -86,9 +86,11 @@ function Main {
   try { Run npm @('install', '--no-audit', '--no-fund'); Run npm @('run', 'build'); Run npm @('link') } finally { Pop-Location }
 
   # This repo is also a Claude plugin marketplace (.claude-plugin/marketplace.json), read in place from the checkout.
-  Step 'Claude plugin rc-keepalive (turns a dropped Remote Control back on)'
+  Step 'Claude plugins rc-keepalive (turns a dropped Remote Control back on) commit-guard (asks before git commit/push) and peer-message (Claude-to-Claude via SendMessage); turn the last two off in EDITH settings'
   Run claude @('plugin', 'marketplace', 'add', $dir)
   Run claude @('plugin', 'install', 'rc-keepalive@edith')
+  Run claude @('plugin', 'install', 'commit-guard@edith')
+  Run claude @('plugin', 'install', 'peer-message@edith')
 
   Step 'Done. Open a new PowerShell window (it picks up the new PATH), then once:'
   Write-Host @'

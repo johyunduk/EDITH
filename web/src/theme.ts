@@ -2,9 +2,10 @@
 export const APP_NAME = 'EDITH';
 
 // 색·질감은 index.css에 둬 화면 컴포넌트를 복사하지 않는다.
+// desc·swatch(바탕·카드·강조색)는 설정 화면의 고르기 칸에만 쓴다 — 고르기 전 테마는 CSS 변수로 그릴 수 없어서
 export const THEMES = {
-  edith: { label: 'EDITH', dark: false },
-  ultron: { label: 'ULTRON', dark: true },
+  edith: { label: 'EDITH', dark: false, desc: '밝은 화면 · 청록', swatch: ['oklch(0.985 0.005 215)', 'oklch(1 0 0)', 'oklch(0.62 0.115 212)'] },
+  ultron: { label: 'ULTRON', dark: true, desc: '어두운 화면 · 붉은 빛', swatch: ['#100e13', '#1b181f', '#ef5266'] },
 } as const;
 export type Theme = keyof typeof THEMES;
 export const DEFAULT_THEME: Theme = 'edith';

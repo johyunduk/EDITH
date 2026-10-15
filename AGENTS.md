@@ -11,7 +11,7 @@ npm test                    # node --test — src/*.test.ts
 npm run typecheck           # 서버(tsc) + 화면(web tsc)
 npm --prefix web run build  # 화면 빌드 → web/dist (edith 가 요청마다 디스크에서 읽으니 브라우저 새로 고침이면 반영)
 edith --no-open             # 서버 코드를 바꿨으면 껐다 켠다
-(cd plugins/rc-keepalive && claude plugin test)   # mod 를 고쳤으면
+(cd plugins/<mod> && claude plugin test)          # mod(plugins/rc-keepalive·commit-guard·peer-message)를 고쳤으면
 ```
 
 바꾼 뒤에는 typecheck·test 를 통과시키고, 화면을 바꿨으면 build 까지 한다. 로직(분기·파싱·경로 판단)을 더하면 그 옆에 `*.test.ts` 로 확인 하나를 남긴다.

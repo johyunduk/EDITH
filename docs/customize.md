@@ -40,15 +40,16 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/complete.ts` | 입력칸 자동 완성(`/` 명령·스킬, `@` 파일), Claude 식 글을 Codex 식으로 바꾸기 |
 | `src/diff.ts` · `src/summary.ts` | git 변경(커밋 안 한 것·브랜치·커밋), 파일별 AI 요약(`claude -p`) |
 | `src/skills.ts` · `src/skillsMove.ts` | 스킬·명령 목록과 서로 부르는 관계, 스킬 옮기기(묶음 파일 내보내기·가져오기) |
+| `src/settings.ts` | 설정 화면의 플러그인 켜짐(`claude plugin configure <플러그인>@edith`) — 켜고 끌 플러그인은 `PLUGINS` |
 | `src/machines.ts` | 다른 기기의 EDITH — `machines.json`, SSH 터널, 그 기기의 열쇠 붙은 주소 |
 | `src/config.ts` · `src/sh.ts` | 경로(설정·데이터 폴더), 프로세스 실행 도우미 |
 | `web/src/App.tsx` | 머리줄·주소(#/herdr, #/skills)·승인 대기 알림 |
 | `web/src/Herdr.tsx` | herdr 화면 전부 — 사이드바 트리, pane 머리·본문(대화·셸 기록·터미널), 탭 배치, 입력칸 |
-| `web/src/Diff.tsx` · `Tasks.tsx` · `Alerts.tsx` · `Skills.tsx` | 변경 보기, 백그라운드 작업, 알림함, 스킬 화면 |
+| `web/src/Diff.tsx` · `Tasks.tsx` · `Alerts.tsx` · `Skills.tsx` · `Settings.tsx` | 변경 보기, 백그라운드 작업, 알림함, 스킬 화면, 설정 화면 |
 | `web/src/api.ts` · `ui.tsx` · `Menu.tsx` · `copy.ts` | 서버 호출(`get`·`post`)·응답 타입, 작은 공용 조각, 우클릭 메뉴, 복사·알림 한 줄 |
 | `web/src/index.css` | 색·글꼴(밝은·어두운 화면 변수) |
 | `install.sh` · `install.ps1` | 설치 스크립트(macOS·Linux / Windows) |
-| `plugins/` · `.claude-plugin/marketplace.json` | Claude Code 플러그인(mod) — `rc-keepalive`(끊긴 Remote Control 다시 켜기). 레포가 마켓플레이스 `edith` |
+| `plugins/` · `.claude-plugin/marketplace.json` | Claude Code 플러그인(mod) — `rc-keepalive`(끊긴 Remote Control 다시 켜기), `commit-guard`(git commit·push 전에 묻기), `peer-message`(Claude 끼리는 SendMessage). 레포가 마켓플레이스 `edith` |
 
 ## 흔한 수정
 
@@ -102,9 +103,9 @@ if (req.method === 'POST' && path === '/api/note') {
 
 ### 색·글꼴·기본 포트
 
-머리줄 오른쪽 끝의 테마 버튼(🎨 EDITH ▾)에서 **EDITH**(밝은 청록)와 **ULTRON**(어두운 붉은 신경망)을 전환한다. 기본은 EDITH 이며 OS 밝기 설정과 독립적이다. 선택은 브라우저의 `edith.theme`에 저장한다(저장이 막히면 현재 화면에서만 적용).
+「설정」 화면(`web/src/Settings.tsx`)에서 **EDITH**(밝은 청록)와 **ULTRON**(어두운 붉은 신경망)을 전환한다. 기본은 EDITH 이며 OS 밝기 설정과 독립적이다. 선택은 브라우저의 `edith.theme`에 저장한다(저장이 막히면 현재 화면에서만 적용).
 
-앱 이름은 `web/src/theme.ts`의 `APP_NAME`에서 테마와 별도로 정한다. 선택지·밝기 모드는 `web/src/theme.ts`의 `THEMES`, 템플릿 기본값은 `DEFAULT_THEME`에서 바꾼다. 색·모서리·질감은 `web/src/index.css`의 `:root`(EDITH 기본값)와 `:root[data-theme="ultron"]`에서 정의한다. 예전 이름(daylight·neural)으로 저장된 값은 새 이름으로 이어 받는다. 새 테마는 `THEMES`에 항목을 추가하고 해당 `data-theme` CSS 변수를 정의하면 선택 목록에 나타난다. `dark:…` 스타일은 선택한 테마의 `dark` 값에 따라 적용된다. 상태 점·승인 카드·diff·코드 출력의 의미 색은 유지한다. 테마를 바꿔도 헤더·사이드바 하단·브라우저 제목은 EDITH를 유지하며 CLI 명령과 서버 설정 이름은 `edith`를 유지한다.
+앱 이름은 `web/src/theme.ts`의 `APP_NAME`에서 테마와 별도로 정한다. 선택지·밝기 모드는 `web/src/theme.ts`의 `THEMES`, 템플릿 기본값은 `DEFAULT_THEME`에서 바꾼다. 색·모서리·질감은 `web/src/index.css`의 `:root`(EDITH 기본값)와 `:root[data-theme="ultron"]`에서 정의한다. 예전 이름(daylight·neural)으로 저장된 값은 새 이름으로 이어 받는다. 새 테마는 `THEMES`에 항목(설정 화면 고르기 칸의 `desc`·`swatch` 포함)을 추가하고 해당 `data-theme` CSS 변수를 정의하면 선택 목록에 나타난다. `dark:…` 스타일은 선택한 테마의 `dark` 값에 따라 적용된다. 상태 점·승인 카드·diff·코드 출력의 의미 색은 유지한다. 테마를 바꿔도 헤더·사이드바 하단·브라우저 제목은 EDITH를 유지하며 CLI 명령과 서버 설정 이름은 `edith`를 유지한다.
 
 기본 포트 4320 은 `src/cli.ts`, 화면 개발 서버가 넘기는 곳은 `web/vite.config.ts` 의 `TARGET`.
 

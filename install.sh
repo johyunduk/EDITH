@@ -76,9 +76,11 @@ main() {
   (cd "$dir" && run npm install --no-audit --no-fund && run npm run build && run npm link)
 
   # 이 레포는 Claude 플러그인 마켓플레이스이기도 하다(.claude-plugin/marketplace.json). 체크아웃에서 그대로 읽어서 레포를 고치면 다음 세션부터 반영된다.
-  step "Claude 플러그인 rc-keepalive — 끊긴 Remote Control 을 다시 켠다"
+  step "Claude 플러그인 rc-keepalive(끊긴 Remote Control 다시 켜기)·commit-guard(git commit·push 전에 묻기)·peer-message(Claude 끼리는 SendMessage) — 뒤의 둘은 EDITH 설정에서 끈다"
   run claude plugin marketplace add "$dir"
   run claude plugin install rc-keepalive@edith
+  run claude plugin install commit-guard@edith
+  run claude plugin install peer-message@edith
 
   step "끝 — 새 터미널을 열고(PATH·nvm 이 새 터미널부터 잡힌다) 처음 한 번"
   cat <<EOF

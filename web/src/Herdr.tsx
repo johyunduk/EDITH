@@ -736,7 +736,7 @@ function Out({ lines }: { lines: string[] }) {
   );
 }
 
-type Item = { t: number; kind: 'user' | 'text' | 'tool' | 'out'; text: string; result?: string; error?: boolean; at?: number };
+type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; result?: string; error?: boolean; at?: number };
 
 // 지금 화면 아래쪽(기록에 아직 없는 화면) — 작업 중이면 진행 부분, 입력칸이 안 보이면 질문·메뉴. 대화 칸과 입력칸이 같이 쓴다.
 // raw 는 터미널 색 그대로(진행 부분 그리기), lines 는 색을 뺀 글(읽기·찾기).
@@ -869,6 +869,12 @@ const Avatar = ({ agent }: { agent: string | null }) =>
 const ChatItem = memo(function ChatItem({ it, agent }: { it: Item; agent: string | null }) {
   if (it.kind === 'user') return (
     <div className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md border border-primary/20 bg-accent px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap text-foreground shadow-xs">{it.text}</div>
+  );
+  // 다른 Claude 세션이 SendMessage 로 보낸 말 — 사람 입력(오른쪽)과 헷갈리지 않게 왼쪽에 점선 말풍선과 보낸 세션 이름으로
+  if (it.kind === 'peer') return (
+    <div className="ml-9 w-fit max-w-[82%] rounded-2xl rounded-tl-md border border-dashed border-primary/40 bg-card px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap">
+      <div className="mb-0.5 text-[0.6875rem] font-semibold text-primary">{it.from ?? '다른 Claude 세션'} 에게서 받은 메시지</div>{it.text}
+    </div>
   );
   if (it.kind === 'text') return <div className="flex gap-3"><Avatar agent={agent} /><div className="min-w-0 flex-1"><div className="w-fit max-w-full rounded-2xl rounded-tl-md bg-muted/70 px-3.5 py-2.5"><Md text={it.text} /></div></div></div>;
   if (it.kind === 'out') return <div className="ml-9"><Ansi text={it.text} /></div>;

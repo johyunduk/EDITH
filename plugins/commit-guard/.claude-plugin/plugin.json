@@ -1,0 +1,13 @@
+{
+  "name": "commit-guard",
+  "version": "0.2.0",
+  "description": "git commit·push 는 모드(auto 포함)와 허용 규칙에 상관없이 매번 사람에게 묻고, 허락할 때만 실행한다",
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "커밋·push 전에 묻기",
+      "description": "켜면 git commit·push 를 실행하기 전에 매번 묻는다. 끄면 Claude Code 의 보통 권한 확인대로 실행한다.",
+      "default": true
+    }
+  }
+}

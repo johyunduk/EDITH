@@ -1,22 +1,23 @@
-// EDITH 화면 — 위에서 「herdr」·「스킬」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>. 오른쪽 위 종은 알림함.
+// EDITH 화면 — 위에서 「herdr」·「스킬」·「설정」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>, #/settings. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useHerdr, useLive, useView, type HerdrView } from './api.ts';
 import { HerdrPage } from './Herdr.tsx';
 import { AlertBell, useAlerts } from './Alerts.tsx';
 import { SkillsPage } from './Skills.tsx';
+import { SettingsPage } from './Settings.tsx';
 import { copyOnSelect } from './copy.ts';
-import { DropdownMenu } from 'radix-ui';
 import { Icon, TERMINAL } from './ui.tsx';
-import { APP_NAME, THEMES, applyTheme, parseTheme, readTheme } from './theme.ts';
+import { APP_NAME, applyTheme, readTheme } from './theme.ts';
 
-// 육각형 로고(lucide hexagon + 안쪽 꼭짓점 선)·스킬 탭 아이콘(lucide layout-grid)
+// 육각형 로고(lucide hexagon + 안쪽 꼭짓점 선)·스킬 탭 아이콘(lucide layout-grid)·설정 탭 아이콘(lucide settings)
 const HEX = <><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></>;
-const PALETTE = <><circle cx="13.5" cy="6.5" r=".5" fill="currentColor" /><circle cx="17.5" cy="10.5" r=".5" fill="currentColor" /><circle cx="8.5" cy="7.5" r=".5" fill="currentColor" /><circle cx="6.5" cy="12.5" r=".5" fill="currentColor" /><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" /></>;   // lucide palette
+const GEAR = <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></>;
 const GRID = <><rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" /></>;
 
 const route = () => {
   const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/);
+  if (h.startsWith('#/settings')) return { view: 'settings' as const, id: undefined };
   return skill ? { view: 'skills' as const, id: skill[1] } : { view: 'herdr' as const, id: h.match(/^#\/herdr\/(.+)/)?.[1] };
 };
 
@@ -68,6 +69,7 @@ export default function App() {
         <nav className="-my-px flex self-stretch">
           <a href="#/herdr" className={nav(r.view === 'herdr')}><Icon className="size-4">{TERMINAL}</Icon>herdr</a>
           <a href="#/skills" className={nav(r.view === 'skills')}><Icon className="size-4">{GRID}</Icon>스킬</a>
+          <a href="#/settings" className={nav(r.view === 'settings')}><Icon className="size-4">{GEAR}</Icon>설정</a>
         </nav>
         {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}
         <span className="ml-auto flex items-center gap-2 py-1">
@@ -84,29 +86,9 @@ export default function App() {
               {remote ? 'Remote' : 'Local'}
             </span>
           )}
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button aria-label="테마 선택" title={`화면 테마: ${THEMES[theme].label}`}
-                className="flex h-8 items-center gap-1.5 rounded-lg border bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-xs hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-                <Icon className="size-3.5">{PALETTE}</Icon>{THEMES[theme].label}<Icon className="size-3 opacity-60"><path d="m6 9 6 6 6-6" /></Icon>
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content align="end" sideOffset={8} className="z-50 min-w-48 rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-lg">
-                <DropdownMenu.Label className="px-3 py-2 text-xs text-muted-foreground">화면 테마</DropdownMenu.Label>
-                <DropdownMenu.RadioGroup value={theme} onValueChange={value => setTheme(parseTheme(value))}>
-                  {Object.entries(THEMES).map(([id, preset]) => (
-                    <DropdownMenu.RadioItem key={id} value={id} className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground">
-                      {preset.label}<span className="ml-auto w-4"><DropdownMenu.ItemIndicator>✓</DropdownMenu.ItemIndicator></span>
-                    </DropdownMenu.RadioItem>
-                  ))}
-                </DropdownMenu.RadioGroup>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
         </span>
       </header>
-      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
+      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
 }
