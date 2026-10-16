@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkAlive, claudeLine, follow, newerSame, older, taskLine, windows } from './chat.ts';
+import { checkAlive, claudeLine, follow, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
 import { agentSince, noteAgents } from './herdr.ts';
 
 test('이전 대화 — 4MB 보다 긴 줄을 사이에 두고도 순서·바이트 위치를 지켜 거꾸로 모은다', () => {
@@ -88,4 +88,9 @@ test('백그라운드 에이전트 — 끝남 알림이 queued_command 첨부로
   const t = c.tasks.get('a2');
   assert.equal((await checkAlive([t], t.t + 1))[0].status, '끝남');
   assert.equal((await checkAlive([t], t.t - 1))[0].status, '실행 중');
+});
+
+test('Codex 프로세스가 연 세션 기록 — lsof -Fn 출력에서 rollout 파일만', () => {
+  const out = ['p12014', 'fcwd', 'n/Users/me/proj', 'f23', 'n/Users/me/.codex/sessions/2026/10/15/rollout-2026-10-15T00-13-52-abc.jsonl', 'f24', 'n/Users/me/.codex/log/codex-tui.log', 'f25', 'n/Users/me/.codex/sessions/2026/10/16/rollout-x.jsonl.lock'].join('\n');
+  assert.deepEqual(rolloutsIn(out), ['/Users/me/.codex/sessions/2026/10/15/rollout-2026-10-15T00-13-52-abc.jsonl']);
 });

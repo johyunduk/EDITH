@@ -306,7 +306,26 @@ function rollouts() {
 }
 // Windows 는 경로 대소문자·구분자가 달라도 같은 폴더다
 const samePath = (a: string, b: string) => process.platform === 'win32' ? !!a && resolve(a).toLowerCase() === resolve(b).toLowerCase() : a === b;
+// pane 의 codex 프로세스가 열어 둔 세션 기록 — 제목·폴더 추측보다 정확하다. herdr 가 세션을 되살릴 때 Guardian 하위 대화를
+// 이어 열면 그 기록이 대화다(추측 경로는 하위 대화를 뺀다). lsof 가 없으면(Windows 등) null — 추측으로. 10초 기억한다.
+export const rolloutsIn = (lsof: string) => lsof.split('\n').filter(l => /^n.*[\\/]sessions[\\/].*rollout-[^\\/]*\.jsonl$/.test(l)).map(l => l.slice(1));
+const opened = new Map<string, { at: number; file: string | null }>();
+function codexOpen(pane: string) {
+  const c = opened.get(pane);
+  if (c && Date.now() - c.at < 10_000) return c.file;
+  let file: string | null = null;
+  try {
+    const info = JSON.parse(execFileSync('herdr', ['pane', 'process-info', '--pane', pane], { encoding: 'utf8', timeout: 3000 })).result.process_info as { foreground_processes: { argv0: string; pid: number }[] };
+    const pid = info.foreground_processes.find(p => p.argv0 === 'codex')?.pid;
+    const files = pid ? rolloutsIn(execFileSync('lsof', ['-Fn', '-p', String(pid)], { encoding: 'utf8', timeout: 3000 })) : [];
+    file = files.find(f => metaCwd(f)) ?? files[0] ?? null;   // 하위 대화를 함께 열고 있으면 본 대화 먼저
+  } catch { /* herdr·lsof 없음 */ }
+  opened.set(pane, { at: Date.now(), file });
+  return file;
+}
 function codexFile(pane: string, cwd: string, title: string) {
+  const own = codexOpen(pane);
+  if (own) { picked.set(pane, { title, file: own }); return own; }
   const told = reported(pane, 'codex', cwd);
   if (told) { picked.set(pane, { title, file: told }); return told; }
   const hit = picked.get(pane);
