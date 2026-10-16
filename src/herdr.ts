@@ -115,7 +115,8 @@ export function watch(changed: () => void) {
     const s = sock = connect(socket());
     s.write(`${JSON.stringify({ id: 'edith-watch', method: 'events.subscribe', params: { subscriptions: [
       ...WATCH.map(type => ({ type })), ...panes.map(pane_id => ({ type: 'pane.agent_status_changed', pane_id }))] } })}\n`);
-    createInterface({ input: s }).on('line', changed);
+    // herdr 가 꺼져 있으면 소켓 오류를 readline 도 다시 낸다 — 둘 다 받아야 서버가 죽지 않고 1초 뒤 다시 붙는다
+    createInterface({ input: s }).on('line', changed).on('error', () => undefined);
     s.on('error', () => undefined);
     s.on('close', () => { if (sock === s) setTimeout(open, 1000); });
   };
