@@ -11,7 +11,7 @@ import { hostname, userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
-import { backgroundTasks, chat, checkAlive, codexUsage, remoteControl, taskOutput } from './chat.ts';
+import { backgroundTasks, chat, checkAlive, claudeStarted, codexUsage, remoteControl, taskOutput } from './chat.ts';
 import { commands, findFiles } from './complete.ts';
 import { firstLine } from './sh.ts';
 import { branches, diff } from './diff.ts';
@@ -218,7 +218,7 @@ export function serve(port: number) {
         if (!p) return reply(res, 404, 'pane 없음');
         if (p.agent !== 'claude') return reply(res, 200, []);
         const others = snap.panes.filter(x => x.agent === p.agent && x.cwd === p.cwd && x.id !== p.id).map(x => x.title), task = url.searchParams.get('task');
-        if (!task) return reply(res, 200, await checkAlive(backgroundTasks(p.id, p.cwd, p.title, others)));
+        if (!task) return reply(res, 200, await checkAlive(backgroundTasks(p.id, p.cwd, p.title, others), claudeStarted(p.id)));
         const out = taskOutput(p.id, p.cwd, p.title, others, task);
         return out === null ? reply(res, 404, '작업 없음') : reply(res, 200, out);
       }

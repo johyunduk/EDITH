@@ -243,7 +243,7 @@ function metaCwd(file: string) {
 // 꺼지면 null). Claude Code 의 내부 파일이라(2.1.x 확인) 없거나 모양이 바뀌면 undefined.
 // pid 는 pane 마다 기억한다 — 프로세스가 끝났으면 herdr 에 다시 묻는다.
 // 대화를 백그라운드로 넘긴 pane(parkedJobId)은 그 대화가 데몬의 bg 세션(같은 jobId 의 파일)에서 이어진다 — 그 파일을 parked 로 준다.
-type LiveFile = { sessionId?: string; bridgeSessionId?: string | null; parkedJobId?: string; jobId?: string; parked?: boolean };
+type LiveFile = { sessionId?: string; bridgeSessionId?: string | null; parkedJobId?: string; jobId?: string; parked?: boolean; startedAt?: number };
 const SESSIONS = join(homedir(), '.claude', 'sessions');
 const readLive = (pid: number) => {
   try { process.kill(pid, 0); } catch { return undefined; }   // 끝난 프로세스의 파일은 남아 있을 수 있다
@@ -269,6 +269,12 @@ function liveFile(pane: string) {
     pids.set(pane, pid);
     return read(pid);
   } catch { return undefined; }
+}
+// 그 pane 의 claude 프로세스가 뜬 시각 — 그 전에 띄운 백그라운드 작업은 이전 프로세스와 함께 끝났다(checkAlive)
+export function claudeStarted(pane: string) {
+  liveFile(pane);   // pid 를 찾아 둔다
+  const pid = pids.get(pane);
+  return pid ? readLive(pid)?.startedAt : undefined;
 }
 // Remote Control — 켜져 있으면 claude.ai 에서 그 세션을 여는 주소, 꺼져 있으면 null, 모르면 undefined
 export function remoteControl(pane: string) {
@@ -339,6 +345,13 @@ function lastTokens(file: string) {
   return tokens || turn ? { tokens, turn } : null;
 }
 const turns = new Map<string, { model?: string; effort?: string }>();
+// 5시간·7일 창은 길이(window_minutes)로 고른다 — 요금제에 따라 7일 창 하나만 primary 로 오고 secondary 는 null 이다.
+// 자리(primary = 5시간)로 치는 것은 길이가 없는 기록뿐
+export function windows(r: Tokens['rate_limits']) {
+  const ws = [r?.primary, r?.secondary];
+  const pick = (min: number, i: number) => ws.find(w => w?.window_minutes === min) ?? (ws[i]?.window_minutes === undefined ? ws[i] : null);
+  return { five: pick(300, 0), week: pick(10080, 1) };
+}
 const latestRollout = () => {
   const root = join(CODEX, 'sessions');
   if (!existsSync(root)) return null;
@@ -349,14 +362,14 @@ export function codexUsage(pane: string, cwd: string, title: string) {
   const file = codexFile(pane, cwd, title), latest = latestRollout();
   const mine = file ? lastTokens(file) : null, own = mine?.tokens, acct = (latest && latest !== file ? lastTokens(latest)?.tokens : null) ?? own;
   if (!mine && !acct) return null;
-  const ws = [acct?.rate_limits?.primary, acct?.rate_limits?.secondary];
+  const { five, week } = windows(acct?.rate_limits);
   const lim = (w: Win | undefined, day: boolean) => !w ? null : w.resets_at && w.resets_at * 1000 <= Date.now() ? { pct: 0, reset: null }
     : { pct: Math.round(w.used_percent), reset: w.resets_at ? until(w.resets_at * 1000, day) : null };
   const u = own?.info?.last_token_usage, cw = own?.info?.model_context_window;
   return {
     model: mine?.turn?.model ?? null, effort: mine?.turn?.effort ?? null,
     ctx: u && cw ? Math.round(u.total_tokens / cw * 100) : null,
-    five: lim(ws.find(w => w?.window_minutes === 300) ?? ws[0], false), week: lim(ws.find(w => w?.window_minutes === 10080) ?? ws[1], true),
+    five: lim(five, false), week: lim(week, true),
   };
 }
 
@@ -377,11 +390,13 @@ export type Task = { id: string; kind: '셸' | '에이전트'; label: string; co
 type TaskCache = { size: number; rest: string; tasks: Map<string, Task>; pending: Map<string, Omit<Task, 'id' | 'path' | 'status'>> };
 const taskCaches = new Map<string, TaskCache>();
 const xml = (s: string, tag: string) => s.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim();
-function taskLine(c: TaskCache, line: string) {
+export function taskLine(c: TaskCache, line: string) {
   if (!line.includes('run_in_background') && !line.includes('task-notification') && !line.includes('in background') && !line.includes('TaskStop') && !line.includes('agentId')) return;
-  let o: { type?: string; timestamp?: string; message?: { content?: unknown } };
+  let o: { type?: string; timestamp?: string; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } };
   try { o = JSON.parse(line); } catch { return; }
-  const t = Date.parse(o.timestamp ?? '') || 0, content = o.message?.content;
+  // 끝남 알림은 user 메시지가 아니라 queued_command 첨부로 남기도 한다
+  const queued = o.type === 'attachment' && o.attachment?.type === 'queued_command';
+  const t = Date.parse(o.timestamp ?? '') || 0, content = queued ? o.attachment!.prompt : o.message?.content;
   const blocks = (Array.isArray(content) ? content : [{ type: 'text', text: content }]) as { type?: string; text?: string; name?: string; id?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown }[];
   for (const b of blocks) {
     if (o.type === 'assistant' && b.type === 'tool_use' && b.input?.run_in_background && b.id) {
@@ -402,7 +417,7 @@ function taskLine(c: TaskCache, line: string) {
       }
     }
     const text = typeof b.text === 'string' ? b.text : '';
-    if (o.type === 'user' && text.includes('<task-notification>')) {
+    if ((o.type === 'user' || queued) && text.includes('<task-notification>')) {
       const id = xml(text, 'task-id'), task = id ? c.tasks.get(id) : undefined;
       if (task) {
         const st = xml(text, 'status') ?? '';
@@ -440,8 +455,10 @@ export function backgroundTasks(pane: string, cwd: string, title: string, others
 
 // 셸이 아직 사는지 — 그 출력 파일을 열고 있는 프로세스가 있으면 산 것(lsof). 끝 표시 없이 죽은 셸(세션이 꺼짐 등)을 가린다.
 // 출력 없이 조용히 도는 dev 서버도 파일은 열고 있어서 살아 있는 것으로 나온다.
-export async function checkAlive<T extends { kind: string; status: string; path: string }>(tasks: T[]) {
+// since(지금 claude 가 뜬 시각) 전에 띄운 작업은 그 프로세스와 함께 끝났다.
+export async function checkAlive<T extends { kind: string; status: string; path: string; t: number }>(tasks: T[], since?: number) {
   return Promise.all(tasks.map(async t => {
+    if (since && t.status === '실행 중' && t.t < since) return { ...t, status: '끝남' };
     if (t.kind !== '셸' || t.status !== '실행 중' || !t.path) return t;
     // lsof 가 없으면(Windows, 일부 Linux) 확인을 건너뛴다 — 끝 표시·알림으로만 가린다
     const r = await sh('lsof', ['-t', '--', t.path], { ok: true, timeoutMs: 5000 }).catch(() => null);

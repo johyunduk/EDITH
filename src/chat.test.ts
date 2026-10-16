@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeLine, follow, newerSame, older } from './chat.ts';
+import { checkAlive, claudeLine, follow, newerSame, older, taskLine, windows } from './chat.ts';
 import { agentSince, noteAgents } from './herdr.ts';
 
 test('이전 대화 — 4MB 보다 긴 줄을 사이에 두고도 순서·바이트 위치를 지켜 거꾸로 모은다', () => {
@@ -62,4 +62,30 @@ test('다른 Claude 세션과 주고받은 말 — 받은 것은 보낸 이와 �
   claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'SendMessage', input: { to: 'uds:/tmp/a.sock', message: '받았어' } }] } }));
   claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't2', name: 'SendMessage', input: { to: 'peer-c', message: '봐 줘' } }] } }));
   assert.deepEqual(items.map(i => [i.kind, i.text, i.from]), [['peer', '안녕', 'peer-a'], ['tool', 'SendMessage → peer-a · 받았어', undefined], ['tool', 'SendMessage → peer-c · 봐 줘', undefined]]);
+});
+
+test('Codex 한도 창 — 길이로 고르고, 7일 창 하나만 오면 5시간은 없다', () => {
+  const day = { used_percent: 1, window_minutes: 10080 }, five = { used_percent: 30, window_minutes: 300 };
+  assert.deepEqual(windows({ primary: day, secondary: null }), { five: null, week: day });
+  assert.deepEqual(windows({ primary: five, secondary: day }), { five, week: day });
+  assert.deepEqual(windows({ primary: day, secondary: five }), { five, week: day });
+  const old = { used_percent: 5 };   // 길이 없는 옛 기록 — 자리로
+  assert.deepEqual(windows({ primary: old, secondary: old }), { five: old, week: old });
+});
+
+test('백그라운드 에이전트 — 끝남 알림이 queued_command 첨부로 와도 끝남, claude 가 뜨기 전에 띄운 것도 끝남', async () => {
+  const c = { size: 0, rest: '', tasks: new Map(), pending: new Map() };
+  const line = (o: object) => taskLine(c, JSON.stringify({ timestamp: '2026-10-12T03:58:37Z', ...o }));
+  const start = (id: string, tu: string) => {
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: tu, name: 'Agent', input: { description: '그림', run_in_background: true } }] } });
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: tu, content: `Async agent launched successfully. agentId: ${id} (internal ID)` }] } });
+  };
+  start('a1', 'tu1');
+  assert.equal(c.tasks.get('a1')?.status, '실행 중');
+  line({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>' } });
+  assert.equal(c.tasks.get('a1')?.status, '끝남');
+  start('a2', 'tu2');
+  const t = c.tasks.get('a2');
+  assert.equal((await checkAlive([t], t.t + 1))[0].status, '끝남');
+  assert.equal((await checkAlive([t], t.t - 1))[0].status, '실행 중');
 });
