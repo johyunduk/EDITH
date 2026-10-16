@@ -10,7 +10,7 @@ EDITH 는 herdr 의 Claude Code·Codex·셸 pane 을 브라우저에서 보고 �
 npm test                    # node --test — src/*.test.ts
 npm run typecheck           # 서버(tsc) + 화면(web tsc)
 npm --prefix web run build  # 화면 빌드 → web/dist (edith 가 요청마다 디스크에서 읽으니 브라우저 새로 고침이면 반영)
-edith --no-open             # 서버 코드를 바꿨으면 껐다 켠다
+edith --no-open             # 서버 코드를 바꿨으면 다시 켠다 — 화면 머리줄 「새 코드 · 다시 켜기」, 또는 Ctrl+C 뒤 다시
 (cd plugins/<mod> && claude plugin test)          # mod(plugins/rc-keepalive·commit-guard·peer-message)를 고쳤으면
 ```
 

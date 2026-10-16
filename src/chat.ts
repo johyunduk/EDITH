@@ -404,7 +404,8 @@ export function chat(pane: string, agent: string, cwd: string, title: string, ot
 
 // 백그라운드 작업 — Claude 가 run_in_background 로 띄운 셸·에이전트. 세션 기록에서 띄운 명령·작업 id·출력 파일·끝남 알림(task-notification)을 모은다.
 // 출력은 Claude 가 /tmp/claude-<uid>/… /tasks/<id>.output 에 쓴다. 기록은 늘어난 만큼만 더 읽는다(파일마다 기억).
-// ponytail: 끝남 알림 없이 세션이 꺼지면 「실행 중」 으로 남는다 — 화면이 마지막 출력 시각을 같이 보여 준다.
+// ponytail: 끝남 알림 없이 끝난 에이전트 작업은 그 pane 의 claude 가 다시 뜨기 전까지 「실행 중」 으로 남는다(셸은 checkAlive 가 lsof 로 가린다 —
+// lsof 가 없으면 끝 표시로만). 화면이 마지막 출력 시각을 같이 보여 준다.
 export type Task = { id: string; kind: '셸' | '에이전트'; label: string; command: string; path: string; status: string; t: number };
 type TaskCache = { size: number; rest: string; tasks: Map<string, Task>; pending: Map<string, Omit<Task, 'id' | 'path' | 'status'>> };
 const taskCaches = new Map<string, TaskCache>();

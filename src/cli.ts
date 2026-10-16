@@ -10,6 +10,7 @@ import { REPO } from './config.ts';
 
 const USAGE = `사용: edith [serve] [--port N] [--no-open]   herdr 확인·시작 → 화면 서버(127.0.0.1, 기본 4320) → 브라우저
       edith --no-herdr                         herdr 를 확인·시작하지 않고 화면만 — 다른 기기의 EDITH 를 열 때(이 기기 herdr 없이)
+      edith update [--port N]                  받기(git pull)·화면 빌드 → 떠 있는 EDITH 를 새 코드로 다시 켜기
       edith setup                              설치 스크립트 다시 — 빠진 도구 설치, herdr 통합·스킬, 화면 빌드
       edith connect [이름 user@host]           다른 기기 잇기 — SSH 키 등록·machines.json(인자 없으면 Tailscale 기기에서 고른다)`;
 
@@ -71,6 +72,23 @@ function setup() {
   process.exit(spawnSync(cmd, args, { stdio: 'inherit' }).status ?? 1);
 }
 
+// 업데이트 — 받기(git pull) → 화면 빌드 → 떠 있는 EDITH 를 새 코드로 다시 켠다(/api/restart).
+// 설치 단계(도구·herdr 통합·플러그인)가 바뀌었으면 edith setup. npm 은 Windows 에서 npm.cmd 라 셸로 띄운다(인자는 고정 글자뿐).
+async function update(args: string[]) {
+  const i = args.indexOf('--port'), port = i >= 0 ? Number(args[i + 1]) : 4320;
+  const run = (cmd: string, a: string[], why: string) => {
+    console.log(`$ ${cmd} ${a.join(' ')}`);
+    if (spawnSync(cmd, a, { cwd: REPO, stdio: 'inherit', shell: win }).status !== 0) fail(why);
+  };
+  if (existsSync(join(REPO, '.git'))) run('git', ['pull', '--ff-only'], '받지 못했다 — 이 폴더에서 고친 것이 있으면 커밋한 뒤 git pull 로 합친다');
+  run('npm', ['run', 'build'], '화면 빌드가 실패했다');
+  if (!(await isEdith(port))) return console.log('끝 — edith 로 켠다');
+  const { consoleKey } = await import('./server.ts'), origin = `http://127.0.0.1:${port}`;
+  const r = await fetch(`${origin}/api/restart`, { method: 'POST', headers: { origin, 'content-type': 'application/json', cookie: `edith-${port}=${consoleKey()}` }, body: '{}' }).catch(() => null);
+  console.log(r?.ok ? `끝 — ${port} 의 EDITH 를 새 코드로 다시 켰다(그 터미널에서 그대로 돈다)`
+    : `끝 — 떠 있는 EDITH 를 다시 켜지 못했다(${r ? await r.text() : '닿지 않음'}) — 그 터미널에서 Ctrl+C 뒤 edith`);
+}
+
 // 다른 기기 잇기 — 인자가 없으면 Tailscale 에 붙은 기기를 보여 주고 번호·그 기기 사용자 이름을 묻는다
 async function connect(args: string[]) {
   const { connectMachine, tailscalePeers } = await import('./machines.ts');
@@ -92,6 +110,7 @@ async function connect(args: string[]) {
 const argv = process.argv.slice(2);
 switch (argv[0] ?? 'serve') {
   case 'setup': setup(); break;
+  case 'update': await update(argv.slice(1)); break;
   case 'connect': await connect(argv.slice(1)); break;
   case 'serve': await serve(argv.slice(1)); break;
   case '-h': case '--help': case 'help': console.log(USAGE); break;

@@ -5,7 +5,7 @@
 // 그래서 API 는 열쇠(내 계정만 읽는 파일, 600)를 쿠키로 실어야 쓴다. 막는 범위가 herdr 소켓(600)과 같아진다.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, extname, join, resolve, sep } from 'node:path';
 import { hostname, userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -18,7 +18,7 @@ import { branches, diff } from './diff.ts';
 import { summarize } from './summary.ts';
 import { forgetSkills, skillFile, skills } from './skills.ts';
 import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
-import { connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
+import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
 import { canShoot, screenshot } from './screenshot.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
 
@@ -49,6 +49,20 @@ const machineName = (() => {
   return hostname().split('.')[0];
 })();
 
+// 서버 코드가 뜬 뒤 바뀌었는지(git pull·고침) — 바뀌었으면 화면이 「다시 켜기」 를 보인다. 화면(web/dist)은 요청마다 읽어서 새로 고침이면 된다.
+const BOOT = Date.now(), SRC = join(REPO, 'src');
+const stale = () => readdirSync(SRC).some(f => f.endsWith('.ts') && !f.endsWith('.test.ts') && statSync(join(SRC, f)).mtimeMs > BOOT);
+const webBuilt = () => { try { return statSync(join(WEB, 'index.html')).mtimeMs; } catch { return 0; } };
+// 다시 켜기 — 같은 프로세스·같은 터미널에서 새 코드로 다시 뜬다(execve). 브라우저는 다시 열지 않는다.
+// 터널은 먼저 끈다(exit 를 거치지 않는다) — 다른 기기를 다시 열면 새로 연다.
+const canRestart = typeof process.execve === 'function';   // Windows 에는 없다 — 터미널에서 Ctrl+C 뒤 edith
+function restart() {
+  closeTunnels();
+  const args = process.argv.slice(1);
+  if (!args.includes('--no-open')) args.push('--no-open');
+  process.execve!(process.execPath, [process.execPath, ...process.execArgv, ...args]);
+}
+
 // Host 는 127.0.0.1·localhost 만 받는다(DNS rebinding — 남의 도메인 이름으로 이 서버를 부르지 못하게). 포트는 묻지 않는다:
 // 다른 기기가 이 EDITH 를 SSH 터널로 열면 그 기기의 다른 포트로 들어온다(machines.ts).
 export const hostPort = (host?: string) => host?.match(/^(?:127\.0\.0\.1|localhost):(\d{1,5})$/)?.[1] ?? null;
@@ -66,7 +80,16 @@ export function consoleKey() {
 }
 const same = (a: string | undefined, b: string) => !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 // 열쇠 쿠키는 포트마다 따로(edith-<포트>) — 같은 127.0.0.1 에 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 포트만 달리 뜨면 쿠키가 겹친다
-const cookieKey = (req: IncomingMessage, port: string) => req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)edith-${port}=([^;]+)`))?.[1];
+const cookieKey = (req: Pick<IncomingMessage, 'headers'>, port: string) => req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)edith-${port}=([^;]+)`))?.[1];
+
+// 열쇠·출처 검사(Host 는 그 앞에서 본다) — /api/ 는 그 포트의 열쇠 쿠키, 쓰기는 이 화면에서 온 JSON POST 만
+// (다른 사이트는 Origin 이 다르고, JSON 본문은 브라우저가 사전 확인 없이 못 보낸다). 막으면 [코드, 사유], 통과면 null.
+export function refuse(req: Pick<IncomingMessage, 'method' | 'headers'>, path: string, hp: string, key: string): [number, string] | null {
+  if (path.startsWith('/api/') && !same(cookieKey(req, hp), key)) return [401, '열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다'];
+  if (req.method !== 'GET' && (req.method !== 'POST' || !sameOrigin(req.headers.origin, req.headers.host ?? '') || !req.headers['content-type']?.startsWith('application/json')))
+    return [403, '쓰기는 이 화면에서 온 요청만'];
+  return null;
+}
 
 const body = (req: IncomingMessage, max = 1_000_000) => new Promise<unknown>((ok, no) => {
   let b = '';
@@ -82,8 +105,11 @@ const reply = (res: ServerResponse, code: number, body: unknown) => {
 
 // 첨부 — 화면이 올린 파일(base64)을 내 데이터 폴더에 두고 그 경로를 돌려준다. 에이전트가 그 경로로 읽는다.
 // 이름은 글자·숫자·.-_ 만 남기고 앞에 시각·난수를 붙여 겹치지 않게 한다.
-// ponytail: 올린 파일은 지우지 않는다 — 쌓이면 ~/.local/share/edith/uploads 를 비운다.
-const UPLOAD_MAX = 15 * 1024 * 1024;
+// 7일 지난 첨부는 올릴 때 지운다 — 에이전트는 받자마자 읽는다. 지난 대화를 이어 가다 그 파일이 다시 필요하면 다시 올린다.
+const UPLOAD_MAX = 15 * 1024 * 1024, UPLOAD_KEEP = 7 * 86_400_000;
+export function prune(dir: string, keep: number, now = Date.now()) {
+  for (const f of readdirSync(dir)) try { if (now - statSync(join(dir, f)).mtimeMs > keep) unlinkSync(join(dir, f)); } catch { /* 그새 지워짐 */ }
+}
 function upload(b: { name?: unknown; data?: unknown }) {
   if (typeof b.data !== 'string') throw new Error('파일이 없다');
   const buf = Buffer.from(b.data, 'base64');
@@ -91,6 +117,7 @@ function upload(b: { name?: unknown; data?: unknown }) {
   const name = (typeof b.name === 'string' ? basename(b.name) : '').replace(/[^\p{L}\p{N}._-]+/gu, '_').replace(/^\.+/, '').slice(-80) || 'file';
   const dir = join(DATA_DIR, 'uploads');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  prune(dir, UPLOAD_KEEP);
   const path = join(dir, `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}-${name}`);
   writeFileSync(path, buf, { mode: 0o600, flag: 'wx' });
   return path;
@@ -101,7 +128,7 @@ export function serve(port: number) {
   const KEY = consoleKey();
   const server = createServer(async (req, res) => {
     res.setHeader('x-edith', '1');   // 이미 뜬 EDITH 인지 알아보는 표시(cli)
-    const host = req.headers.host ?? '', hp = hostPort(host);
+    const hp = hostPort(req.headers.host);
     if (!hp) return reply(res, 403, 'host');
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
     // 열쇠 붙은 주소로 열면 쿠키로 남기고 주소에서 열쇠를 지운다.
@@ -110,11 +137,8 @@ export function serve(port: number) {
       res.writeHead(302, { 'set-cookie': `edith-${hp}=${KEY}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`, location: '/' });
       return res.end();
     }
-    const authed = same(cookieKey(req, hp), KEY);
-    if (path.startsWith('/api/') && !authed) return reply(res, 401, '열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다');
-    // 쓰기는 이 화면에서 온 JSON POST 만 — 다른 사이트는 Origin 이 다르고, JSON 본문은 브라우저가 사전 확인 없이 못 보낸다.
-    if (req.method !== 'GET' && (req.method !== 'POST' || !sameOrigin(req.headers.origin, host) || !req.headers['content-type']?.startsWith('application/json')))
-      return reply(res, 403, '쓰기는 이 화면에서 온 요청만');
+    const no = refuse(req, path, hp, KEY);
+    if (no) return reply(res, ...no);
     const fail = (e: unknown) => reply(res, 409, firstLine(e));
     try {
       if (path === '/api/events') {
@@ -178,7 +202,13 @@ export function serve(port: number) {
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await snapshot());
       // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
-      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot });
+      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot, stale: stale(), web: webBuilt(), restart: canRestart });
+      if (req.method === 'POST' && path === '/api/restart') {
+        if (!canRestart) return reply(res, 409, '여기서는 다시 켤 수 없다 — 터미널에서 Ctrl+C 뒤 edith');
+        reply(res, 200, { ok: true });
+        setTimeout(restart, 200);   // 답이 나간 뒤
+        return;
+      }
       const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);
       if (h?.[2] === 'stream' && req.method === 'GET')
         return await streamPane(req, res, h[1], { control: url.searchParams.get('mode') === 'control', takeover: url.searchParams.has('takeover') });

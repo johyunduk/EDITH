@@ -27,3 +27,12 @@ test('machines.json 에 넣기 — 새 기기는 문자열, 있던 기기는 자
   assert.deepEqual(parsePeers(JSON.stringify({ Peer: { k: { HostName: 'work-mac', DNSName: 'work-mac.tail1.ts.net.', OS: 'macOS', Online: true } } })),
     [{ host: 'work-mac', dns: 'work-mac.tail1.ts.net', os: 'macOS', online: true }]);
 });
+
+test('다른 기기 열기 실패 사유 — 키 거절·호스트 키 바뀜·닿지 않음(시간 넘김은 오류 글이 비어 있다)', async () => {
+  const { keyWhy } = await import('./machines.ts');
+  assert.match(keyWhy('me@m2: Permission denied (publickey,password).'), /SSH 키로 들어가지 못한다/);
+  assert.match(keyWhy('Host key verification failed.'), /호스트 키가 바뀌었다/);
+  assert.match(keyWhy('ssh: connect to host m2 port 22: Operation timed out'), /닿지 않는다/);
+  assert.match(keyWhy(''), /닿지 않는다/);
+  assert.match(keyWhy('ssh: connect to host m2 port 22: Connection refused'), /원격 로그인/);
+});

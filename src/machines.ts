@@ -4,7 +4,7 @@
 // SSH 는 비밀번호 없이(키) 들어가져야 한다(BatchMode). 그 기기의 화면 열쇠를 SSH 로 읽어 열쇠 붙은 주소를 만든다 — 그 기기에 EDITH 가 떠 있어야 한다.
 // 이 기기 쪽 포트는 목록 순서대로 4321, 4322 … 로 고정(열쇠 쿠키가 포트마다 따로라 기기마다 같은 포트여야 다시 열쇠를 안 받는다).
 // `edith connect` 가 키 등록·machines.json 을 대신 한다(connectMachine).
-// ponytail: kill -9 로 끄면 ssh 터널이 남는다. 키 등록은 그 기기가 macOS·Linux 일 때만(Windows 는 authorized_keys 자리가 달라 손으로).
+// ponytail: kill -9 로 끄면 ssh 터널이 남는다(다음에 열 때 그 기기로 가는 터널이면 그대로 쓴다). 키 등록은 그 기기가 macOS·Linux 일 때만(Windows 는 authorized_keys 자리가 달라 손으로).
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -42,12 +42,12 @@ export function withMachine(text: string, name: string, ssh: string) {
 
 // EDITH 가 꺼지면 터널도 끈다 — kill(SIGTERM)·터미널 닫힘(SIGHUP)은 기본으로 exit 를 거치지 않아 첫 터널 때 잡아 둔다
 const tunnels = new Map<string, ChildProcess>();
-const closeAll = () => { for (const t of tunnels.values()) t.kill(); };
+export const closeTunnels = () => { for (const t of tunnels.values()) t.kill(); tunnels.clear(); };
 let hooked = false;
 const hook = () => {
   if (hooked) return;
   hooked = true;
-  process.on('exit', closeAll);
+  process.on('exit', closeTunnels);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.once(sig, () => process.exit(0));
 };
 const alive = (p?: ChildProcess) => !!p && p.exitCode === null && p.signalCode === null;
@@ -58,22 +58,33 @@ const listening = (port: number) => new Promise<boolean>(ok => {
 const SSH = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'];
 
 // 그 기기의 화면 열쇠 — macOS·Linux 는 cat, Windows(OpenSSH 기본 셸 cmd)는 type. 홈 폴더에서 시작한다.
-async function remoteKey(target: string) {
+// 못 읽으면 왜인지 — ssh 가 못 들어간 것(255·시간 넘김)과 들어갔는데 열쇠가 없는 것을 가른다.
+async function remoteKey(target: string): Promise<{ key: string } | { err: string }> {
   for (const cmd of [['cat', '.config/edith/console.key'], ['type', '.config\\edith\\console.key']]) {
-    const k = (await sh('ssh', [...SSH, target, ...cmd], { timeoutMs: 20_000, ok: true }).catch(() => null))?.stdout.trim() ?? '';
-    if (/^[\w-]{16,}$/.test(k)) return k;
+    const r = await sh('ssh', [...SSH, target, ...cmd], { timeoutMs: 20_000, ok: true }).catch((e: Error) => ({ code: -1, stdout: '', stderr: e.message }));
+    const k = r.stdout.trim();
+    if (/^[\w-]{16,}$/.test(k)) return { key: k };
+    if (r.code === 255 || r.code === -1) return { err: keyWhy(r.stderr) };
   }
-  return null;
+  return { err: '그 기기에 EDITH 열쇠가 없다 — 그 기기에서 edith 를 한 번 띄운다' };
 }
+// 키로 들어갈 때(BatchMode)의 ssh 오류 → 사유. 시간을 넘겨 끊긴 것은 오류 글이 비어 있다.
+export const keyWhy = (err: string) => /Permission denied/i.test(err) ? '이 기기 SSH 키로 들어가지 못한다 — 「다른 기기 잇기」(edith connect)로 다시 잇는다'
+  : /Host key verification failed|IDENTIFICATION HAS CHANGED/i.test(err) ? '그 기기의 호스트 키가 바뀌었다 — ssh-keygen -R <주소> 뒤 다시 연다'
+  : why(err.trim() || 'timed out');
+// 그 포트 너머가 그 기기 EDITH 인지 — 그 기기 열쇠가 통하면 그 기기다(열쇠는 기기마다 따로 만든다)
+const reaches = (port: number, key: string) => fetch(`http://127.0.0.1:${port}/api/view`, { headers: { cookie: `edith-${port}=${key}` } }).then(r => r.ok, () => false);
 
 // 터널을 열고(이미 열려 있으면 그대로) 그 기기 EDITH 의 열쇠 붙은 주소를 준다
 export async function openMachine(name: string) {
   const m = machines().find(m => m.name === name);
   if (!m) throw new Error('machines.json 에 없는 기기');
-  const key = await remoteKey(m.ssh);
-  if (!key) throw new Error(`${m.ssh} 에 SSH 로 들어가지 못했거나 그 기기에 EDITH 열쇠가 없다(그 기기에서 edith 를 한 번 띄운다)`);
-  if (!alive(tunnels.get(name))) {
-    if (await listening(m.local)) throw new Error(`${m.local} 포트를 다른 프로그램이 쓴다`);
+  const got = await remoteKey(m.ssh);
+  if ('err' in got) throw new Error(`${m.ssh} — ${got.err}`);
+  const { key } = got;
+  // 지난 EDITH 가 남긴 그 기기 터널(kill -9 등)이 포트를 쥐고 있으면 그대로 쓴다
+  if (!alive(tunnels.get(name)) && !(await reaches(m.local, key))) {
+    if (await listening(m.local)) throw new Error(`${m.local} 포트를 다른 프로그램이 쓴다(지난 EDITH 가 남긴 터널이면 그 기기 EDITH 가 꺼져 있다)`);
     hook();
     const p = spawn('ssh', [...SSH, '-N', '-o', 'ExitOnForwardFailure=yes', '-L', `${m.local}:127.0.0.1:${m.port}`, m.ssh], { stdio: 'ignore' });
     tunnels.set(name, p);
@@ -128,7 +139,7 @@ export async function connectMachine(name: string, target: string, log: (m: stri
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(FILE, withMachine(existsSync(FILE) ? readFileSync(FILE, 'utf8') : '', name, target));
   log(`machines.json 에 「${name}」 → ${target}`);
-  log(await remoteKey(target) ? '그 기기 EDITH 열쇠도 읽힌다 — EDITH 사이드 메뉴 아래에서 열면 된다(그 기기에서 edith 가 떠 있어야)'
+  log('key' in await remoteKey(target) ? '그 기기 EDITH 열쇠도 읽힌다 — EDITH 사이드 메뉴 아래에서 열면 된다(그 기기에서 edith 가 떠 있어야)'
     : '그 기기에 EDITH 열쇠가 아직 없다 — 그 기기에서 edith 를 한 번 띄운다');
 }
 

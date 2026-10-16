@@ -1,12 +1,12 @@
 // EDITH 화면 — 위에서 「herdr」·「스킬」·「설정」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>, #/settings. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useHerdr, useLive, useView, type HerdrView } from './api.ts';
+import { get, post, useHerdr, useLive, useView, type HerdrView, type View } from './api.ts';
 import { HerdrPage } from './Herdr.tsx';
 import { AlertBell, useAlerts } from './Alerts.tsx';
 import { SkillsPage } from './Skills.tsx';
 import { SettingsPage } from './Settings.tsx';
-import { copyOnSelect } from './copy.ts';
+import { copyOnSelect, toast } from './copy.ts';
 import { Icon, TERMINAL } from './ui.tsx';
 import { APP_NAME, applyTheme, readTheme } from './theme.ts';
 
@@ -73,6 +73,7 @@ export default function App() {
         </nav>
         {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}
         <span className="ml-auto flex items-center gap-2 py-1">
+          {view && <Fresh view={view} />}
           {perm === 'default' && (
             <button title="승인 대기가 되면 브라우저 알림·소리로 알린다" onClick={() => void Notification.requestPermission().then(setPerm)}
               className="flex h-8 items-center rounded-lg border border-dashed px-2.5 text-xs text-muted-foreground transition hover:border-solid hover:bg-muted hover:text-foreground">알림 켜기</button>
@@ -91,6 +92,33 @@ export default function App() {
       {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
+}
+
+// 새 코드 — 서버 코드가 바뀌었으면(받기·고침) 「다시 켜기」: 같은 터미널에서 새 코드로 다시 뜬다(herdr·pane 은 그대로).
+// 화면만 새로 빌드됐으면 「새로 고침」. 원격으로 보는 중이면 그 기기 EDITH 를 다시 켠다.
+function Fresh({ view }: { view: View }) {
+  const first = useRef(view.web), [busy, setBusy] = useState(false);
+  const restart = async () => {
+    setBusy(true);
+    try {
+      await post('/api/restart', {});
+      // 이전 서버는 곧 끊긴다 — 새 서버가 답하면(stale 아님) 새로 고친다
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        if ((await get<View>('/api/view').catch(() => null))?.stale === false) return location.reload();
+      }
+      throw new Error('20초 안에 다시 뜨지 않았다 — EDITH 를 띄운 터미널을 본다');
+    } catch (e) { toast(`다시 켜지 못했다 — ${(e as Error).message}`, 7000); setBusy(false); }
+  };
+  const cls = 'flex h-8 items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 text-xs font-semibold text-primary transition hover:bg-primary/20 disabled:opacity-60';
+  const where = view.remote ? `${view.host} 의 EDITH` : '이 EDITH';
+  if (view.stale) return view.restart
+    ? <button onClick={() => void restart()} disabled={busy} title={`서버 코드가 바뀌었다 — ${where} 를 새 코드로 다시 켠다. herdr 와 pane 은 그대로 돈다`} className={cls}>
+        <span className="size-1.5 animate-pulse rounded-full bg-primary" />{busy ? '다시 켜는 중…' : '새 코드 · 다시 켜기'}</button>
+    : <span title={`서버 코드가 바뀌었다 — ${where} 를 띄운 터미널에서 Ctrl+C 뒤 edith`} className={cls}>새 코드 · 터미널에서 다시 켜기</span>;
+  if (first.current !== undefined && view.web !== first.current)
+    return <button onClick={() => location.reload()} title="화면이 새로 빌드됐다 — 새로 고쳐 새 화면으로" className={cls}>새 화면 · 새로 고침</button>;
+  return null;
 }
 
 // 승인 대기 알림 — 어느 pane 이든 새로 승인 대기가 되면 브라우저 알림·짧은 소리, 탭 제목에 수. 목록은 2초마다 갱신된다.

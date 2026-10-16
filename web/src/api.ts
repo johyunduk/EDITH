@@ -31,7 +31,9 @@ export async function post<T = unknown>(path: string, body: unknown): Promise<T>
 
 export const useHerdr = () => useQuery({ queryKey: ['herdr'], queryFn: () => get<HerdrView>('/api/herdr') });
 // 이 화면을 어디서 보는지 — remote 면 다른 기기의 EDITH 를 SSH 터널로 보고 있다(host 는 그 기기 이름)
-export const useView = () => useQuery({ queryKey: ['view'], queryFn: () => get<{ remote: boolean; host: string; version?: string; shot?: boolean }>('/api/view'), staleTime: Infinity });
+// stale 은 서버 코드가 뜬 뒤 바뀜(다시 켜기), web 은 화면 빌드 시각(바뀌면 새로 고침), restart 는 화면에서 다시 켤 수 있는지 — 30초마다 다시 본다
+export type View = { remote: boolean; host: string; version?: string; shot?: boolean; stale?: boolean; web?: number; restart?: boolean };
+export const useView = () => useQuery({ queryKey: ['view'], queryFn: () => get<View>('/api/view'), staleTime: Infinity, refetchInterval: 30_000 });
 
 export function useLive() {
   const qc = useQueryClient();

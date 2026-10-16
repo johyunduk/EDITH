@@ -3,7 +3,7 @@
 // 화면이 열려 있는 동안 바뀐 것만 잡힌다 — 닫혀 있던 사이에 그렇게 된 pane 은 다음에 열 때 그 시각으로 들어온다.
 import { useEffect, useRef, useState } from 'react';
 import type { HerdrView } from './api.ts';
-import { Kind, paneText } from './Herdr.tsx';
+import { Kind, paneText } from './herdrUi.tsx';
 
 type Alert = { id: string; pane: string; kind: 'blocked' | 'done'; ws: string; text: string; agent: string | null; at: number; read: boolean };
 const KEY = 'edith.alerts';

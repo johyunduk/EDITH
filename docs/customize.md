@@ -1,6 +1,6 @@
 # EDITH 고치기
 
-EDITH 는 받아서 자기 것으로 고쳐 쓰라고 만든 기본판입니다. 서버는 Node 내장 모듈만 쓰는 약 1,600줄, 화면은 React 한 벌이라 처음부터 끝까지 읽을 수 있는 크기입니다.
+EDITH 는 받아서 자기 것으로 고쳐 쓰라고 만든 기본판입니다. 서버는 Node 내장 모듈만 쓰는 약 2,200줄, 화면은 React 한 벌이라 처음부터 끝까지 읽을 수 있는 크기입니다.
 가장 쉬운 방법은 쓰고 있는 Claude Code·Codex 에게 시키는 것입니다 — 레포의 [`AGENTS.md`](../AGENTS.md)(Claude 는 `CLAUDE.md` 가 그것을 불러온다)에 구조·확인 명령·지켜야 할 보안 규칙이 있습니다.
 
 ```
@@ -26,15 +26,15 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 
 - **화면(`web/`)** — `edith --no-open` 을 띄운 채 `npm --prefix web run dev` 를 돌리고 찍힌 주소(Vite, 기본 5173)를 연다. 고치는 대로 바로 바뀐다. `/api` 는 4320 의 EDITH 로 넘어가고, 열쇠 쿠키는 포트를 가리지 않아 그대로 쓰인다.
   다 고쳤으면 `npm --prefix web run build` — 평소 `edith` 는 `web/dist` 를 준다(브라우저 새로 고침이면 반영).
-- **서버(`src/`)** — 고친 뒤 `edith` 를 껐다 켠다(Ctrl+C → `edith`). herdr 와 pane 은 그대로 돈다.
+- **서버(`src/`)** — 고치면 화면 머리줄에 **새 코드 · 다시 켜기** 가 뜬다(30초 안) — 누르면 같은 터미널에서 새 코드로 다시 뜬다. Ctrl+C → `edith` 도 된다. herdr 와 pane 은 그대로 돈다.
 - **확인** — `npm test`, `npm run typecheck`.
 
 ## 구조 지도
 
 | 파일 | 하는 일 |
 |---|---|
-| `src/cli.ts` | `edith` 명령 — 도구 확인, herdr 서버 시작, 화면 서버, 브라우저, `edith setup` |
-| `src/server.ts` | HTTP 서버 — 보안 검사(Host·열쇠·출처), `/api/*` 길 나누기, `web/dist` 주기, SSE(`/api/events`) |
+| `src/cli.ts` | `edith` 명령 — 도구 확인, herdr 서버 시작, 화면 서버, 브라우저, `edith update`·`setup`·`connect` |
+| `src/server.ts` | HTTP 서버 — 보안 검사(Host·열쇠·출처 — `refuse`), `/api/*` 길 나누기, `web/dist` 주기, SSE(`/api/events`), 다시 켜기(`/api/restart`) |
 | `src/herdr.ts` | herdr — 스냅샷, 이벤트 구독, 터미널 흐름(보기·입력), 프롬프트·키, 나누기·옮기기·닫기, 셸 기록, 상태줄 사용량 |
 | `src/chat.ts` | Claude·Codex 세션 기록(JSONL) → 대화 항목, 기록 파일 찾기, Codex 사용량, 백그라운드 작업 |
 | `src/complete.ts` | 입력칸 자동 완성(`/` 명령·스킬, `@` 파일), Claude 식 글을 Codex 식으로 바꾸기 |
@@ -43,8 +43,13 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/settings.ts` | 설정 화면의 플러그인 켜짐(`claude plugin configure <플러그인>@edith`) — 켜고 끌 플러그인은 `PLUGINS` |
 | `src/machines.ts` | 다른 기기의 EDITH — `machines.json`, SSH 터널, 그 기기의 열쇠 붙은 주소 |
 | `src/config.ts` · `src/sh.ts` | 경로(설정·데이터 폴더), 프로세스 실행 도우미 |
-| `web/src/App.tsx` | 머리줄·주소(#/herdr, #/skills)·승인 대기 알림 |
-| `web/src/Herdr.tsx` | herdr 화면 전부 — 사이드바 트리, pane 머리·본문(대화·셸 기록·터미널), 탭 배치, 입력칸 |
+| `web/src/App.tsx` | 머리줄·주소(#/herdr, #/skills)·승인 대기 알림·새 코드 알림(다시 켜기) |
+| `web/src/Herdr.tsx` | herdr 화면 틀 — 왼쪽 사이드바, 오른쪽 고른 pane |
+| `web/src/Side.tsx` | 사이드바 — 새 워크스페이스, 워크스페이스·탭·pane 트리(끌어 놓기), 상태 표시, 다른 기기 |
+| `web/src/PaneView.tsx` | pane 화면 — 머리(브랜치·사용량·원격·변경·칸 버튼), 본문 고르기, 탭 전체 칸 배치 |
+| `web/src/Chat.tsx` · `ShellLog.tsx` · `Term.tsx` | 본문 — 에이전트 대화, 셸 기록, 터미널(xterm.js)·빠른 키 |
+| `web/src/Prompt.tsx` | 입력칸 — 보내기, 질문 선택지, 자동 완성, 첨부, 쓰다 만 글 |
+| `web/src/herdrUi.tsx` | herdr 화면이 같이 쓰는 조각 — 상태 글·점, 에이전트 아이콘, pane 이름, 끌어 놓기, 우클릭 메뉴 |
 | `web/src/Diff.tsx` · `Tasks.tsx` · `Alerts.tsx` · `Skills.tsx` · `Settings.tsx` | 변경 보기, 백그라운드 작업, 알림함, 스킬 화면, 설정 화면 |
 | `web/src/api.ts` · `ui.tsx` · `Menu.tsx` · `copy.ts` | 서버 호출(`get`·`post`)·응답 타입, 작은 공용 조각, 우클릭 메뉴, 복사·알림 한 줄 |
 | `web/src/index.css` | 색·글꼴(밝은·어두운 화면 변수) |
@@ -55,7 +60,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 
 ### pane 머리에 버튼 달기 — 프롬프트 보내기
 
-`web/src/Herdr.tsx` 의 `PaneView` 머리줄 `<span className="ml-auto flex items-center gap-1">` 안(`<BgTasks p={p} />` 옆)에:
+`web/src/PaneView.tsx` 의 `PaneView` 머리줄 `<span className="ml-auto flex items-center gap-1">` 안(`<BgTasks p={p} />` 옆)에:
 
 ```tsx
 <button onClick={() => void post(`/api/herdr/panes/${p.id}/prompt`, { text: '/review' })}
@@ -66,7 +71,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 
 ### 우클릭 메뉴에 항목 넣기
 
-같은 파일 `usePaneMenu` 가 돌려주는 목록에 `{ label: '테스트 돌리기', run: call('prompt', { text: 'npm test' }) }` 를 넣는다. `'-'` 는 구분선, `danger`·`confirm` 은 빨간색·두 번 눌러야 실행.
+`web/src/herdrUi.tsx` 의 `usePaneMenu` 가 돌려주는 목록에 `{ label: '테스트 돌리기', run: call('prompt', { text: 'npm test' }) }` 를 넣는다. `'-'` 는 구분선, `danger`·`confirm` 은 빨간색·두 번 눌러야 실행.
 
 ### API 하나 더하기
 
