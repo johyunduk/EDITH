@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { get, post, useHerdr, useView, type HerdrView, type HPane, type HSplit, type HTab, type HWorkspace } from './api.ts';
 import { Button } from '@/components/ui/button';
-import { Empty, Icon, Md, TERMINAL, Tag } from './ui.tsx';
+import { COPY, Empty, Icon, Md, TERMINAL, Tag } from './ui.tsx';
 import { MenuHost, openMenu, type MenuItem } from './Menu.tsx';
 import { isFree, parseMenu, type Menu } from './screenMenu.ts';
 import { Ansi } from './ansi.tsx';
@@ -361,7 +361,6 @@ function PaneRow({ p, on, depth, text }: { p: HPane; on: boolean; depth: number;
 // 브랜치 — 이 pane 폴더의 브랜치. 링크 워크트리면 그 워크트리 브랜치와 원본 레포(메인 체크아웃) 브랜치도.
 // pane 이 워크트리 밖 폴더에 있으면 그 폴더 브랜치를 따로 보인다. 10초마다 다시 읽는다.
 type Br = { root: string; branch: string };
-const COPY = <><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></>;   // lucide copy
 const BRANCH = <><line x1="6" x2="6" y1="3" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></>;   // lucide git-branch
 function Branches({ p }: { p: HPane }) {
   const { data: b } = useQuery({
@@ -510,7 +509,7 @@ function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
         </div>
       </div>
       <div className="min-h-80 flex-1">{diffOn ? <PaneDiff p={p} /> : multi && mode === 'tab' ? <TabLayout lay={lay!} data={data} sel={p.id} /> : <Body p={p} />}</div>
-      <PromptBox p={p} label={multi && mode === 'tab' ? paneText(p) : undefined} />
+      <PromptBox key={p.id} p={p} label={multi && mode === 'tab' ? paneText(p) : undefined} />
     </div>
   );
 }
@@ -926,11 +925,14 @@ const SEND = <><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 
 // 에이전트가 질문·승인으로 답을 기다리면 입력칸 자리에 질문과 선택지 버튼을 띄운다. 번호를 보내면 그 선택지로 답이 들어간다.
 // 「직접 입력」 선택지(Type something 등)를 고르면 입력칸에 쓴 글이 그 답이 된다.
 // 여러 개 고르기는 누를 때마다 체크를 켜고 끄고, 「다음 →」(→ 키)로 다음 질문·제출 화면으로 넘어간다 — 제출 화면은 번호 메뉴라 「Submit answers」 를 누른다.
+// 쓰다 만 글은 pane 마다 따로 둔다 — 다른 pane 으로 갔다 와도 그 pane 글만 남는다(브라우저 탭을 닫으면 사라짐)
+const drafts = new Map<string, string>();
 function PromptBox({ p, label }: { p: HPane; label?: string }) {
   const agent = !!p.agent, { menu } = useScreen(p), qc = useQueryClient();
-  const [text, setText] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
+  const [text, setText] = useState(() => drafts.get(p.id) ?? ''), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
   const ac = useComplete(p, text, caret);
+  useEffect(() => { if (text) drafts.set(p.id, text); else drafts.delete(p.id); }, [p.id, text]);
   const run = async (f: () => Promise<unknown>) => {
     setBusy(true);
     try { await f(); setErr(''); } catch (e) { setErr(String(e)); }
