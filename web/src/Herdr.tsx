@@ -32,24 +32,24 @@ export function Kind({ agent }: { agent: string | null }) {
 
 export function HerdrPage({ pane, side = true, brand = 'EDITH' }: { pane?: string; side?: boolean; brand?: string }) {
   const { data, error } = useHerdr();
-  if (error && !data) return <div className="p-4"><Empty>herdr 에 닿지 않는다 — {String(error)}</Empty></div>;
-  if (!data) return null;
-  const sel = data.panes.find(p => p.id === pane);
+  if (!data && !error) return null;
+  // herdr 에 닿지 않아도(edith --no-herdr 등) 사이드 메뉴의 「다른 기기」 는 쓸 수 있게 둔다
+  const sel = data?.panes.find(p => p.id === pane);
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <MenuHost />
       {/* 트리만 스크롤하고 아래(상태 표시·다른 기기·하단 줄)는 붙여 둔다 */}
       <aside className={`workspace-sidebar flex max-h-72 shrink-0 flex-col overflow-hidden border-b bg-sidebar md:max-h-none md:w-80 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
         <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1.5">
-          <NewWorkspace />
-          <Tree data={data} sel={sel?.id} />
+          {data && <><NewWorkspace /><Tree data={data} sel={sel?.id} /></>}
         </nav>
-        <Legend panes={data.panes} />
+        {data && <Legend panes={data.panes} />}
         <OtherDevices />
-        <SideFooter brand={brand} />
+        <SideFooter brand={brand} ready={!!data} />
       </aside>
       <main className="min-w-0 flex-1 overflow-auto p-4">
-        {sel ? <PaneView p={sel} data={data} /> : <Empty>{pane ? `pane ${pane} 이 없다(닫혔을 수 있다)` : '왼쪽에서 pane 을 고른다'}</Empty>}
+        {!data ? <Empty>이 기기 herdr 에 닿지 않는다 — {String(error)}. 다른 기기의 EDITH 는 왼쪽 아래 「다른 기기」 에서 연다.</Empty>
+          : sel ? <PaneView p={sel} data={data} /> : <Empty>{pane ? `pane ${pane} 이 없다(닫혔을 수 있다)` : '왼쪽에서 pane 을 고른다'}</Empty>}
       </main>
     </div>
   );
@@ -68,11 +68,11 @@ function Legend({ panes }: { panes: HPane[] }) {
     </div>
   );
 }
-function SideFooter({ brand }: { brand: string }) {
+function SideFooter({ brand, ready }: { brand: string; ready: boolean }) {
   const v = useView().data?.version;
   return (
     <div className="mx-1.5 mb-1.5 flex shrink-0 items-center justify-between border-t px-2.5 pt-1.5 text-[0.625rem] font-semibold tracking-[0.12em] text-muted-foreground/70 uppercase">
-      <span>{brand}{v && ` v${v}`}</span><span>Local · Ready</span>
+      <span>{brand}{v && ` v${v}`}</span><span>{ready ? 'Local · Ready' : 'Local · herdr 꺼짐'}</span>
     </div>
   );
 }

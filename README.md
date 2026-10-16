@@ -44,6 +44,7 @@ herdr 서버가 꺼져 있으면 화면 없이 띄우고, 브라우저로 EDITH 
 ```sh
 edith                # herdr 확인(꺼져 있으면 띄움) → 화면 서버 → 브라우저
 edith --no-open      # 브라우저는 열지 않고 주소만 찍는다
+edith --no-herdr     # 이 기기 herdr 는 띄우지 않고 화면만 — 다른 기기의 EDITH 를 열 때
 edith --port 4400    # 다른 포트(기본 4320)
 edith setup          # 설치 스크립트 다시 — 빠진 도구, herdr 통합·스킬, 화면 빌드, Claude 플러그인
 edith connect        # 다른 기기 잇기 — SSH 키 등록·machines.json(「다른 기기의 EDITH 열기」)
@@ -145,6 +146,8 @@ EDITH 는 그 기기의 herdr 만 봅니다. 집에서 회사 PC 의 herdr·대�
    - `~/.config/edith/machines.json` 에 `{ "회사": "<사용자>@<회사 PC 의 Tailscale 이름>" }` 을 적고, 회사 EDITH 열쇠가 읽히는지 봅니다.
    - Tailscale 없이(회사 VPN 등) 잇는다면 `edith connect 회사 <사용자>@<주소>`. 회사 EDITH 가 다른 포트면 machines.json 에서 `{ "회사": { "ssh": "…", "port": 4400 } }`. 집 쪽 포트는 적은 순서대로 4321, 4322 … 를 씁니다.
 4. **회사 PC 에서 EDITH 를 띄워 둔다** — `edith --no-open`(꺼져 있으면 「떠 있지 않다」 고 알려 줍니다).
+
+집 쪽은 그 기기를 열기만 할 거라면 `edith --no-herdr` 로 띄워도 됩니다 — 집 herdr 를 띄우지 않고, 사이드 메뉴의 「다른 기기」 만 씁니다.
 
 터널은 집 EDITH 가 꺼질 때 같이 닫힙니다. 회사 화면의 열쇠는 SSH 로 읽어 주소에 붙였다가 바로 지웁니다(처음 `edith` 가 여는 주소와 같은 방식).
 

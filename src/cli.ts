@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline/promises';
 import { REPO } from './config.ts';
 
 const USAGE = `사용: edith [serve] [--port N] [--no-open]   herdr 확인·시작 → 화면 서버(127.0.0.1, 기본 4320) → 브라우저
+      edith --no-herdr                         herdr 를 확인·시작하지 않고 화면만 — 다른 기기의 EDITH 를 열 때(이 기기 herdr 없이)
       edith setup                              설치 스크립트 다시 — 빠진 도구 설치, herdr 통합·스킬, 화면 빌드
       edith connect [이름 user@host]           다른 기기 잇기 — SSH 키 등록·machines.json(인자 없으면 Tailscale 기기에서 고른다)`;
 
@@ -40,12 +41,15 @@ function openBrowser(url: string) {
 const isEdith = (port: number) => fetch(`http://127.0.0.1:${port}/`).then(r => r.headers.get('x-edith') === '1', () => false);
 
 async function serve(args: string[]) {
-  const i = args.indexOf('--port'), port = i >= 0 ? Number(args[i + 1]) : 4320, open = !args.includes('--no-open');
+  const i = args.indexOf('--port'), port = i >= 0 ? Number(args[i + 1]) : 4320, open = !args.includes('--no-open'), herdr = !args.includes('--no-herdr');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) fail('--port 는 1~65535');
   if (!existsSync(join(REPO, 'web', 'dist', 'index.html'))) fail(`화면이 아직 빌드되지 않았다 — edith setup(클론한 직후면 ${join(REPO, win ? 'install.ps1' : 'install.sh')})`);
-  if (!onPath('herdr')) fail('herdr 가 없다 — edith setup 으로 설치한다');
-  for (const a of ['claude', 'codex']) if (!onPath(a)) console.log(`${a} 가 없다 — 쓰려면 edith setup`);
-  await ensureHerdr();
+  // --no-herdr: 이 기기 herdr 는 건드리지 않는다 — 화면은 「다른 기기」 로 다른 기기의 EDITH 를 여는 데 쓴다(herdr 가 뜨면 그대로 보인다)
+  if (herdr) {
+    if (!onPath('herdr')) fail('herdr 가 없다 — edith setup 으로 설치한다(다른 기기만 열려면 edith --no-herdr)');
+    for (const a of ['claude', 'codex']) if (!onPath(a)) console.log(`${a} 가 없다 — 쓰려면 edith setup`);
+    await ensureHerdr();
+  }
   const server = await import('./server.ts');
   const url = await server.serve(port).catch(async (e: NodeJS.ErrnoException) => {
     if (e.code !== 'EADDRINUSE') throw e;
