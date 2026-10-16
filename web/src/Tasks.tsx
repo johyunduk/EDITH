@@ -1,9 +1,9 @@
 // 백그라운드 작업 — Claude pane 이 run_in_background 로 띄운 셸·에이전트 중 지금 살아 있는 것만(서버 chat.ts backgroundTasks).
 // 살아 있는 게 있을 때만 pane 머리에 버튼이 생기고, 누르면 목록, 작업을 누르면 그 출력 끝(터미널 색 그대로, 2초마다 다시 읽음).
-// 끝난 것은 세션 기록에 남아 있어도 보이지 않는다.
+// 끝난 것은 세션 기록에 남아 있어도 보이지 않는다. 「끄기」는 바로 죽이지 않고 그 Claude 에게 묻는다(AskStop).
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { get, type HPane } from './api.ts';
+import { get, post, type HPane } from './api.ts';
 import { Ansi } from './ansi.tsx';
 import { Icon } from './ui.tsx';
 
@@ -39,7 +39,8 @@ export function BgTasks({ p }: { p: HPane }) {
           <div className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">이 세션이 백그라운드로 띄워 지금 돌고 있는 것 · 누르면 출력 끝</div>
           {alive.map(t => (
             <div key={t.id} className="rounded-lg">
-              <button onClick={() => setPick(x => x === t.id ? null : t.id)} className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted ${pick === t.id ? 'bg-muted' : ''}`}>
+              <div className="flex items-start gap-1">
+              <button onClick={() => setPick(x => x === t.id ? null : t.id)} className={`flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted ${pick === t.id ? 'bg-muted' : ''}`}>
                 <span className="mt-0.5 shrink-0 rounded bg-muted px-1 text-[0.625rem] leading-4 text-muted-foreground">{t.kind}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[0.8125rem] font-medium">{t.label}</span>
@@ -52,12 +53,31 @@ export function BgTasks({ p }: { p: HPane }) {
                   <span className="text-[0.625rem] text-muted-foreground/70">{t.outAt ? `출력 ${ago(t.outAt)}` : '출력 없음'}</span>
                 </span>
               </button>
+              <AskStop p={p} t={t} />
+              </div>
               {pick === t.id && <TaskOut p={p} t={t} />}
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// 끄기 — 그 Claude 에게 프롬프트로 묻는다. 아직 필요하면 이유를 말하고, 아니면 TaskStop 으로 끈다. 일하는 중이면 다음 차례에 읽는다.
+function AskStop({ p, t }: { p: HPane; t: Task }) {
+  const [st, setSt] = useState<'' | '묻는 중' | '물어봄'>(''), [err, setErr] = useState('');
+  const ask = () => {
+    setSt('묻는 중'); setErr('');
+    const label = t.label.replace(/\s+/g, ' ').slice(0, 80);
+    post(`/api/herdr/panes/${p.id}/prompt`, { text: `EDITH 에서 백그라운드 ${t.kind} 작업을 끄자는 요청이 왔다: ${t.id} «${label}». 지금 하는 일에 아직 필요하면 끄지 말고 이유를 한 줄로 알려 줘. 필요 없으면 TaskStop 으로 끄고 끈 것을 한 줄로 알려 줘.` })
+      .then(() => setSt('물어봄'), e => { setSt(''); setErr(String(e)); });
+  };
+  return (
+    <button onClick={ask} disabled={!!st} title={err || '이 Claude 에게 꺼도 되는지 묻고, 괜찮으면 끄게 한다'}
+      className={`mt-1 shrink-0 rounded-md border bg-card px-2 py-1 text-[0.6875rem] font-semibold transition enabled:hover:border-rose-500/50 enabled:hover:text-rose-600 disabled:opacity-60 ${err ? 'border-rose-500/50 text-rose-600' : ''}`}>
+      {st || (err ? '다시 끄기' : '끄기')}
+    </button>
   );
 }
 
