@@ -177,7 +177,8 @@ claude plugin marketplace add <EDITH 체크아웃>   # 체크아웃이 없으면
 claude plugin install commit-guard@edith
 ```
 
-- 셸 명령(Bash·PowerShell 등)에 `git commit`·`git push` 가 들어 있으면(`git -C <폴더> push`, `cd x && git commit`, `bash -c "git push"` 도) 질문 창에 명령을 보이고 「실행」·「막기」 를 묻습니다. EDITH 화면에서는 질문 카드로 답합니다.
+- 셸 명령(Bash·PowerShell 등)에 `git commit`·`git push` 가 들어 있으면(`git -C <폴더> push`, `cd x && git commit`, `bash -c "git push"` 도) 질문 창에 「실행」·「막기」 를 묻습니다. EDITH 화면에서는 질문 카드로 답합니다.
+- 질문 창은 커밋마다 레포·브랜치·제목·파일(이미 staged 된 것과 같은 명령의 `git add` 인자)을, push 는 레포·브랜치·인자를 풀어 보이고 아래에 명령 원문(앞 400자)을 붙입니다. 브랜치·staged 파일은 허락 전에 그 레포에서 git 으로 읽기만 합니다(fsmonitor 끔, 2초). 변수·`bash -c` 처럼 못 푸는 명령은 원문만 보입니다.
 - 「실행」 이면 그 호출은 권한 확인을 다시 묻지 않고 실행하고(설정의 deny 규칙은 그대로), 「막기」·창 닫기·물을 사람이 없는 `claude -p` 는 막습니다.
 - 글자로 찾아서 `echo "git push"` 처럼 실행하지 않는 글에도 묻고, git 별칭(`git ci`)·스크립트 안의 커밋은 못 봅니다. Codex 는 해당 없음.
 - 끄면 Claude Code 의 보통 권한 확인대로 커밋·push 합니다. 플러그인을 통째로 빼려면 `claude plugin disable commit-guard@edith`. 확인은 `cd plugins/commit-guard && claude plugin test`.

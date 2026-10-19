@@ -95,10 +95,10 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
           </div>
           {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
           {menu.question && <div className="text-[0.84375rem] font-semibold whitespace-pre-wrap">{menu.question}</div>}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
             {menu.options.map(o => (
               <button key={o.n} disabled={busy} onClick={() => answer(menu, o)}
-                className={`flex min-w-0 grow basis-52 items-baseline gap-2.5 rounded-lg border bg-card px-3 py-2 text-left text-sm shadow-xs transition hover:border-primary/50 hover:bg-accent ${typed === o.n || o.checked ? 'border-primary ring-2 ring-primary/30' : ''}`}>
+                className={`flex min-w-0 items-baseline gap-2.5 rounded-lg border bg-card px-3 py-2 text-left text-sm shadow-xs transition hover:border-primary/50 hover:bg-accent ${typed === o.n || o.checked ? 'border-primary ring-2 ring-primary/30' : ''}`}>
                 {o.checked === undefined
                   ? <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[0.6875rem] font-bold text-primary tabular-nums">{o.n}</span>
                   : <span className={`flex size-5 shrink-0 items-center justify-center rounded-md border text-[0.75rem] font-bold ${o.checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>{o.checked ? '✓' : ''}</span>}
