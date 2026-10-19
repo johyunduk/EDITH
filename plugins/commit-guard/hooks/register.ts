@@ -145,13 +145,28 @@ function commitArgs(rest: string[], body: string | undefined, it: Item) {
 }
 
 // 레포마다 git 으로 이름·브랜치·staged 파일 — 사람이 허락하기 전에 도니 읽기만(fsmonitor·잠금 끔, 2초)
-async function look($: any, home: string, dirs: string[]) {
+const gitIn = ($: any, home: string, dirs: string[]) => {
   const C = dirs.flatMap(d => ['-C', d.replace(/^~(?=[\\/]|$)/, home)])
-  const git = (...a: string[]): Promise<string | undefined> =>
+  return (...a: string[]): Promise<string | undefined> =>
     $.process.run(['git', '-c', 'core.fsmonitor=false', ...C, ...a], { timeoutMs: 2000, env: { GIT_OPTIONAL_LOCKS: '0' } })
       .then((r: any) => r.exitCode ? undefined : r.stdout.trim()).catch(() => undefined)
+}
+async function look($: any, home: string, dirs: string[]) {
+  const git = gitIn($, home, dirs)
   const [top, branch, staged] = await Promise.all([git('rev-parse', '--show-toplevel'), git('branch', '--show-current'), git('diff', '--cached', '--name-only')])
   return { top, branch, staged }
+}
+
+// 티켓키 — 워크트리 설정 gada.ticket(PROJ-<id>·ISSUE-<id>, gada-tree 가 건다)이 있는데 커밋 제목에 [PROJ-…]·[ISSUE-…] 가 없으면 그 키를 돌려준다.
+// 예전 git 훅(prepare-commit-msg)은 레포마다 링크라 맥을 옮기면 깨져서 여기로 옮겼다. 고쳐 끼우지 않고 막아서 Claude 가 제목을 다시 쓰게 한다.
+// ponytail: amend·-F 파일·못 읽은 제목(편집기)은 보지 않는다 — 사람이 터미널에서 하는 커밋도 못 본다
+const TICKET = /^(PROJ|ISSUE)-\d+$/, HAS_KEY = /\[(PROJ|ISSUE)-\d+\]/
+export async function missingKeys($: any, command: string) {
+  const items = parse(command).filter(it => it.op === 'commit' && it.title && !/^\(.+ 파일의 내용\)$/.test(it.title) && !it.notes.some(n => n.startsWith('amend')) && !HAS_KEY.test(it.title))
+  if (!items.length) return []
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? '~'
+  const keys = await Promise.all(items.map(it => gitIn($, home, it.dirs)('config', '--get', 'gada.ticket')))
+  return [...new Set(keys.filter((k): k is string => !!k && TICKET.test(k)))]
 }
 
 export async function describe($: any, command: string) {
@@ -195,6 +210,8 @@ export function register(on: any, options: { enabled?: boolean } = {}) {
     // 엔진 자체 fork(기억·요약 등 — 목록에 없는 loop)의 도구 호출은 어차피 막히는 것이라 묻지 않고 막는다(엉뚱한 때 질문 창이 뜨지 않게).
     // ponytail: 워크플로 agent 도 목록에 없어 여기서 막힌다 — 커밋은 메인 대화나 subagent 에서
     if (e.agentId && !(await $.agent.list()).some((a: any) => a.id === e.agentId)) return { deny: `git ${what} 는 메인 대화에서만 — 이 loop 에서는 사용자에게 물을 수 없어 막았다` }
+    const keys = await missingKeys($, e.command).catch(() => [])   // 못 풀면 그냥 묻는다
+    if (keys.length) return { deny: `커밋 제목에 티켓키가 없다(워크트리 gada.ticket = ${keys.join(', ')}) — 제목을 '<타입>[${keys[0]}]. [태그] 내용' 꼴로 고쳐 다시 커밋한다` }
     const cmd = e.command.length > 400 ? `${e.command.slice(0, 400)}…` : e.command
     const told = await describe($, e.command).catch(() => undefined)
     const a = await $.ui.ask(told ? `${told}\n\n명령 원문(앞 400자):\n${cmd}` : `git ${what} 실행할까?\n\n${cmd}`, { header: `git ${what}`, options: [YES, NO] })

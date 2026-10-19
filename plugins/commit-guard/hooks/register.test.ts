@@ -79,3 +79,20 @@ test('질문 창에 커밋을 풀어 보이고 원문은 아래에 남긴다', a
   expect(asked).toContain('파일 2개: new.ts, already.ts')
   expect(asked).toContain('명령 원문(앞 400자):\ngit -C /r/my-repo add')
 })
+
+test('워크트리에 gada.ticket 이 있는데 제목에 키가 없으면 묻지 않고 막는다 — 키가 있거나·amend·키 꼴이 아니면 그냥 묻는다', async ($: any, on: any) => {
+  let ran = 0, asked = 0, ticket = 'ISSUE-9513'
+  on('tool.call', { tool: 'Bash' }, () => { ran++; return { result: 'ok' } })
+  on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => { asked++; return answer('실행')($, e) })
+  on('env.get', () => ({ value: '/home/me' }))
+  on('process.run', ($: any, e: any) => ({ value: { exitCode: 0, stdout: e.argv.includes('gada.ticket') ? `${ticket}\n` : 'x\n', stderr: '' } }))
+  const no = await $.tool.call({ tool: 'Bash', command: 'git -C /r/wt commit -m "fix. [상벌] 옵션 변경"' })
+  expect(String(no.text ?? no.deny)).toContain("'<타입>[ISSUE-9513]. [태그] 내용'")
+  expect([ran, asked]).toEqual([0, 0])
+  for (const c of ['git commit -m "fix[ISSUE-9513]. [상벌] 옵션 변경"', 'git commit -m "fix[PROJ-4542]. 안건 키"', 'git commit --amend -m "고침"', 'git commit -F msg.txt'])
+    await $.tool.call({ tool: 'Bash', command: c })
+  expect([ran, asked]).toEqual([4, 4])
+  ticket = 'already.ts'   // 키 꼴이 아닌 값은 무시
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m "아무 제목"' })
+  expect([ran, asked]).toEqual([5, 5])
+})
