@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { get, post, type HPane } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Icon } from './ui.tsx';
-import { isFree, type Menu } from './screenMenu.ts';
+import { isFree, wide, type Menu } from './screenMenu.ts';
 import { toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
 import { useScreen } from './Chat.tsx';
@@ -35,6 +35,12 @@ const loadDraft = (id: string) => { try { return localStorage.getItem(draftKey(i
 function saveDraft(id: string, text: string) {
   if (text) drafts.set(id, text); else drafts.delete(id);
   try { if (text) localStorage.setItem(draftKey(id), text); else localStorage.removeItem(draftKey(id)); } catch { /* 저장 안 됨 — 이 탭의 drafts 로 */ }
+}
+// 미리 보기 글 — 터미널처럼 칸을 맞춘다. 고정폭 글꼴에 한글이 없으면 대체 글꼴 폭이 두 칸과 달라 열이 어긋나서,
+// ASCII 가 아닌 글자 덩어리를 터미널 칸 수(한글 2 · 그 밖 1)만큼의 상자에 넣는다 — 글자는 붙고 남는 폭은 덩어리 뒤로 간다
+function Cells({ text }: { text: string }) {
+  return text.split(/([^\x00-\x7f]+)/u).map((s, i) => i % 2
+    ? <span key={i} className="inline-block whitespace-nowrap" style={{ width: `${[...s].reduce((n, c) => n + (wide(c) ? 2 : 1), 0)}ch` }}>{s}</span> : s);
 }
 export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   const agent = !!p.agent, { menu } = useScreen(p), qc = useQueryClient();
@@ -95,6 +101,8 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
           </div>
           {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
           {menu.question && <div className="text-[0.84375rem] font-semibold whitespace-pre-wrap">{menu.question}</div>}
+          {/* 미리 보기가 있으면 넓은 화면에선 터미널처럼 선택지 옆에 둔다 */}
+          <div className={menu.preview ? 'grid items-start gap-2 lg:grid-cols-2' : ''}>
           <div className="flex flex-col gap-2">
             {menu.options.map(o => (
               <button key={o.n} disabled={busy} onClick={() => answer(menu, o)}
@@ -104,8 +112,26 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
                   : <span className={`flex size-5 shrink-0 items-center justify-center rounded-md border text-[0.75rem] font-bold ${o.checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>{o.checked ? '✓' : ''}</span>}
                 <span className="font-medium">{o.label}</span>
                 {o.desc && <span className="truncate text-xs text-muted-foreground">{o.desc}</span>}
+                {menu.preview?.n === o.n && <span className="ml-auto shrink-0 text-[0.6875rem] font-semibold text-primary">미리 보기 중</span>}
               </button>
             ))}
+          </div>
+          {/* 미리 보기는 터미널 커서(❯)가 있는 선택지 것만 화면에 있다 — ↑↓ 로 커서를 옮겨 다른 선택지 것을 본다(고르지는 않는다) */}
+          {menu.preview && (
+            <div className="overflow-hidden rounded-lg border bg-card">
+              <div className="flex items-center gap-2 border-b px-3 py-1 text-xs text-muted-foreground">
+                미리 보기{menu.preview.n && ` · ${menu.preview.n}. ${menu.options.find(o => o.n === menu.preview?.n)?.label ?? ''}`}
+                <span className="ml-auto flex gap-1">
+                  {(['up', 'down'] as const).map(k => (
+                    <Button key={k} size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={busy} title={k === 'up' ? '위 선택지 미리 보기' : '아래 선택지 미리 보기'}
+                      onClick={() => void run(() => key(k))}>{k === 'up' ? '↑' : '↓'}</Button>
+                  ))}
+                </span>
+              </div>
+              {/* 한글이 영문 두 칸 폭인 코딩 글꼴(D2Coding · Nerd Font 판)이 깔려 있으면 먼저 쓴다 — 없으면 Cells 상자가 칸만 맞춘다 */}
+              <pre className="max-h-80 overflow-auto px-3 py-2 font-mono text-xs leading-relaxed" style={{ fontFamily: '"D2Coding", "D2CodingLigature Nerd Font", "D2KodingLigature Nerd Font", var(--font-mono)' }}><Cells text={menu.preview.text} /></pre>
+            </div>
+          )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {typed !== null ? `아래 칸에 답을 쓰고 Enter — ${typed}번으로 들어간다` : menu.multi ? '눌러서 체크 — 다 고르면 「다음」' : '눌러서 고른다'}

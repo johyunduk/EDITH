@@ -55,3 +55,38 @@ test('여러 개 고르기(Claude 질문) — 체크 상자는 checked 로, 「N
     [[1, '사과', true, '사과'], [2, '바나나', false, ''], [3, '포도', true, ''], [4, 'Type something', false, ''], [5, 'Chat about this', null, '']]);
   assert.ok(!stillPicked(screen, 1));
 });
+
+test('미리 보기가 붙은 질문 — 오른쪽 상자는 커서 선택지의 미리 보기로, 질문 앞 막대(│)·Notes 줄·가로줄 밑 「Chat about this」는 빠진다', () => {
+  const m = parseMenu([
+    '──────────────────────────────', '←  ☐ 목록 모양  ☐ 작업 위치  ✔ Submit  →', '',
+    '│ 사이드 목록을 어떤 모양으로 바꿀까요?', '',
+    '  1. 트리 (추천)                  ┌──────────────────────────┐',
+    '❯ 2. 한 줄 목록                   │ - 새 체인   + 새 엔진    │',
+    '  3. 한 줄 + 쓰는 곳              │                          │',
+    '                                  │ ▾ 엔진 8                 │',
+    '                                  │    풀스택 개발     초안  │',
+    '                                  └──────────────────────────┘', '',
+    '                                  Notes: press n to add notes', '',
+    '──────────────────────────────', '  Chat about this', '',
+    'Enter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions · Esc to cancel',
+  ]);
+  assert.equal(m?.question, '사이드 목록을 어떤 모양으로 바꿀까요?');
+  assert.equal(m?.tabs, '☐ 목록 모양  ☐ 작업 위치  ✔ Submit');
+  assert.deepEqual(m?.options, [{ n: 1, label: '트리 (추천)', desc: '' }, { n: 2, label: '한 줄 목록', desc: '' }, { n: 3, label: '한 줄 + 쓰는 곳', desc: '' }]);
+  assert.deepEqual(m?.preview, { n: 2, text: '- 새 체인   + 새 엔진\n\n▾ 엔진 8\n   풀스택 개발     초안' });
+});
+
+test('미리 보기 없는 질문 — 상자로 읽지 않고, 가로줄 밑 번호 선택지(Chat about this)는 받되 설명은 붙이지 않는다', () => {
+  const m = parseMenu([
+    '고치는 건 어디서 할까요?', '', '❯ 1. 내가 직접 (추천)', '     이 세션이 고친다', '  2. 넘김', '     메시지로 보낸다', '  3. Type something.',
+    '──────────────────────────────', '  4. Chat about this', '', 'Enter to select · Tab/Arrow keys to navigate · Esc to cancel',
+  ]);
+  assert.deepEqual(m?.options.map(o => [o.n, o.label, o.desc]), [[1, '내가 직접 (추천)', '이 세션이 고친다'], [2, '넘김', '메시지로 보낸다'], [3, 'Type something.', ''], [4, 'Chat about this', '']]);
+  assert.equal(m?.preview, undefined);
+});
+
+test('wide — 한글·한자·전각·이모지는 두 칸, ASCII·▾·←·· 는 한 칸', async () => {
+  const { wide } = await import('../web/src/screenMenu.ts');
+  assert.deepEqual(['가', '힣', '漢', 'Ａ', '🙂'].map(wide), [true, true, true, true, true]);
+  assert.deepEqual(['a', ' ', '▾', '←', '·', '─'].map(wide), [false, false, false, false, false, false]);
+});
