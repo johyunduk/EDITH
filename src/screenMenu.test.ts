@@ -98,6 +98,35 @@ test('긴 질문(커밋 지킴이) — 가로줄 아래 전부가 질문(머리 
   assert.deepEqual(m?.options.map(o => o.label), ['실행', '막기', 'Type something.', 'Chat about this']);
 });
 
+test('Claude 승인 화면 — 첫 줄은 종류(tabs), 점선 사이는 block(줄 번호), Tip 줄은 빠진다', () => {
+  const screen = [
+    '⏺ 목록 보기', '────────────', ' Bash command', ' Tip: auto mode handles these prompts for you', ' 임시 폴더 목록 보기', '╌╌╌╌╌╌╌╌╌╌',
+    ' │ ls -la /tmp | head -5', ' │ && echo done', '╌╌╌╌╌╌╌╌╌╌', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', ' Esc to cancel · Tab to amend',
+  ];
+  const m = parseMenu(screen);
+  assert.equal(m?.tabs, 'Bash command');
+  assert.equal(m?.question, '임시 폴더 목록 보기\nDo you want to proceed?');
+  assert.deepEqual(m?.block, [6, 8]);
+  assert.deepEqual(screen.slice(...m!.block!).map(l => l.trim()), ['│ ls -la /tmp | head -5', '│ && echo done']);
+});
+
+test('긴 승인 화면 — 가로줄이 화면 밖으로 밀려나도 점선 두 줄이 보이면 맨 위부터 읽는다', () => {
+  const body = Array.from({ length: 45 }, (_, i) => `  ${i + 1} line ${i + 1}`);
+  const m = parseMenu([' Create file', ' long.txt', '╌╌╌╌╌╌', ...body, '╌╌╌╌╌╌', ' Do you want to create long.txt?', ' ❯ 1. Yes', '   2. No', ' Esc to cancel']);
+  assert.equal(m?.tabs, 'Create file');
+  assert.equal(m?.question, 'long.txt\nDo you want to create long.txt?');
+  assert.deepEqual(m?.block, [3, 48]);
+});
+
+test('Codex 승인 — 가로줄이 없으면 마지막 대화 줄(•) 아래만 질문, 「Press enter…」 는 선택지 설명이 아니다', () => {
+  const m = parseMenu([
+    '• 파일을 쓰는 명령이라 승인을 요청하겠습니다.', '• Running printf a > out.txt', '', '  Would you like to run the following command?', '  Reason: out.txt 를 만든다', '  $ printf a > out.txt', '',
+    '› 1. Yes, proceed (y)', '  2. No, and tell Codex what to do differently (esc)', '', '  Press enter to confirm or esc to cancel',
+  ]);
+  assert.equal(m?.question, 'Would you like to run the following command?\nReason: out.txt 를 만든다\n$ printf a > out.txt');
+  assert.deepEqual(m?.options.map(o => [o.label, o.desc]), [['Yes, proceed (y)', ''], ['No, and tell Codex what to do differently (esc)', '']]);
+});
+
 test('wide — 한글·한자·전각·이모지는 두 칸, ASCII·▾·←·· 는 한 칸', async () => {
   const { wide } = await import('../web/src/screenMenu.ts');
   assert.deepEqual(['가', '힣', '漢', 'Ａ', '🙂'].map(wide), [true, true, true, true, true]);

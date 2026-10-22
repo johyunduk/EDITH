@@ -9,12 +9,16 @@
 // multi 는 여러 개 고르기(Claude 질문의 「1. [ ] 사과」 꼴) — 번호는 체크만 켜고 끄고(checked), → 로 다음 질문·제출 화면으로 넘어간다.
 // tabs 는 질문이 여럿일 때 맨 위 줄(「☒ 과일  ☐ 크기  ✔ Submit」) — 어디쯤인지 보여 준다.
 // preview 는 미리 보기가 붙은 Claude 질문에서 지금 커서(❯)가 있는 선택지(n)의 미리 보기 글 — ↑↓ 로 커서를 옮기면 바뀐다.
-export type Menu = { question: string; options: { n: number; label: string; desc: string; checked?: boolean }[]; cursor?: number; multi?: boolean; tabs?: string; preview?: { n?: number; text: string } };
+// block 은 Claude 승인 화면의 점선(╌) 사이 — 명령·파일 내용·diff 가 든 줄 범위 [시작, 끝)(받은 lines 의 줄 번호). 화면이 터미널 색 그대로 따로 그린다.
+export type Menu = { question: string; options: { n: number; label: string; desc: string; checked?: boolean }[]; cursor?: number; multi?: boolean; tabs?: string; preview?: { n?: number; text: string }; block?: [number, number] };
 
 const OPT = /^\s*(?:[❯›>]\s*)?(\d{1,2})\.\s+(.+)$/;
 const CURSOR = /^(\s*)❯\s+(\S.*)$/;
 const RULE = /^\s*[─━▔-]{3,}/;
-const HINT = /Enter to (select|confirm)|Esc to (cancel|exit)|↑\/↓|to navigate|to add notes/;
+const HINT = /Enter to (select|confirm)|Esc to (cancel|exit)|↑\/↓|to navigate|to add notes/i;   // Codex 는 「Press enter to confirm or esc to cancel」
+const DASH = /^\s*╌{3,}\s*$/;                    // Claude 승인 화면의 점선 — 두 줄 사이가 명령·파일 내용·diff
+const TALK = /^\s*[•⏺]\s/;                       // 대화 줄(Codex •·Claude ⏺) — 가로줄 없는 질문(Codex 승인)은 그 아래부터
+const TIP = /^Tip: /;                             // 승인 화면의 안내 한 줄(「Tip: auto mode handles…」)
 const BOX = /^\[([ ✔✓xX])\]\s*(.*)$/;          // 여러 개 고르기의 체크 상자
 const TABS = /^←.*→$/;                           // 질문 여럿일 때 맨 위 줄
 const CHIP = /^[☐☒✔]\s+\S/;                      // 질문 하나일 때 맨 위 머리표(「☐ git commit」) — tabs 자리에 작게 보인다
@@ -34,12 +38,19 @@ export const wide = (c: string) => /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u34
 export const isFree = (l: string) => /type something|직접|other/i.test(l);
 
 // 가로줄 아래는 전부 질문 — 커밋 지킴이처럼 긴 질문도 머리(무엇을 할지)가 잘리지 않게. 빈 줄은 단락으로 하나만 남긴다.
-// 가로줄이 없으면(커서 메뉴) 위쪽 대화가 섞이지 않게 끝 6줄만. 왼쪽 막대(│ — 질문 상자)는 떼고 그 안의 들여쓰기는 둔다.
-const question = (lines: string[], end: number) => {
-  const before = lines.slice(0, end), cut = before.findLastIndex(l => RULE.test(l));
-  const body = before.slice(cut + 1).map(l => l.trim()).filter(l => !TABS.test(l) && !CHIP.test(l)).map(l => l.replace(/^│ ?/, '').trimEnd());
-  return (cut < 0 ? body.filter(Boolean).slice(-6) : body).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-};
+// 가로줄이 없으면(커서 메뉴·Codex 승인) 위쪽 대화가 섞이지 않게 마지막 대화 줄(•·⏺) 아래, 끝 6줄만. 왼쪽 막대(│ — 질문 상자)는 떼고 그 안의 들여쓰기는 둔다.
+// 점선 두 줄이 있으면(Claude 승인 화면) 그 사이는 block 으로 빼고, 맨 첫 줄(「Bash command」·「Edit file」)은 종류(kind)로 뺀다.
+function question(lines: string[], end: number) {
+  const cut = lines.slice(0, end).findLastIndex(l => RULE.test(l));
+  let at = [...lines.keys()].slice(cut + 1, end);
+  // 가로줄이 화면 밖으로 밀려난 긴 승인 화면(45줄 파일 쓰기 등)은 점선 두 줄로 알아보고 화면 맨 위부터 읽는다
+  if (cut < 0 && at.filter(i => DASH.test(lines[i])).length < 2) { const talk = at.findLast(i => TALK.test(lines[i])) ?? -1; at = at.filter(i => i > talk && lines[i].trim()).slice(-6); }
+  at = at.filter(i => !TABS.test(lines[i].trim()) && !CHIP.test(lines[i].trim()) && !TIP.test(lines[i].trim()));
+  const dash = at.filter(i => DASH.test(lines[i])), block = dash.length > 1 ? [dash[0] + 1, dash[1]] as [number, number] : undefined;
+  const text = at.filter(i => !block || i < block[0] - 1 || i > block[1]).map(i => lines[i].trim().replace(/^│ ?/, '').trimEnd());
+  const k = text.findIndex(Boolean), kind = block && k >= 0 ? text.splice(k, 1)[0] : undefined;
+  return { text: text.join('\n').replace(/\n{3,}/g, '\n\n').trim(), block, kind };
+}
 
 export function parseMenu(lines: string[]): Menu | null {
   const first = lines.findIndex(l => OPT.test(l));
@@ -66,7 +77,8 @@ export function parseMenu(lines: string[]): Menu | null {
     if (b) { multi = true; o.label = b[2].trim(); o.checked = b[1] !== ' '; }
   }
   const head = lines.slice(0, first).map(l => l.trim()), tabs = head.findLast(l => TABS.test(l))?.replace(/^←\s*|\s*→$/g, '') ?? head.findLast(l => CHIP.test(l))?.replace(/^[☐☒✔]\s+/, '');
-  return { question: question(lines, first), options, ...(multi ? { multi } : {}), ...(tabs ? { tabs } : {}), ...(preview ? { preview } : {}) };
+  const q = question(lines, first), top = tabs ?? q.kind;
+  return { question: q.text, options, ...(multi ? { multi } : {}), ...(top ? { tabs: top } : {}), ...(preview ? { preview } : {}), ...(q.block ? { block: q.block } : {}) };
 }
 
 // 커서 메뉴 — ❯ 줄의 글자 자리(칸)와 같은 칸에서 시작하는 줄이 선택지, 더 들여 쓴 줄은 그 설명. 빈 줄·가로줄·안내·덜 들여 쓴 줄에서 끝난다.
@@ -86,5 +98,5 @@ function cursorMenu(lines: string[]): Menu | null {
     else if (indent(lines[i]) === col) options.push({ n: options.length + 1, label: lines[i].trim(), desc: '' });
     else if (options.length) options.at(-1)!.desc += `${options.at(-1)!.desc ? ' ' : ''}${lines[i].trim()}`;
   }
-  return options.length < 2 ? null : { question: question(lines, a), options, cursor };
+  return options.length < 2 ? null : { question: question(lines, a).text, options, cursor };
 }

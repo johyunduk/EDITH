@@ -194,8 +194,8 @@ async function ready(id: string) {
 
 // 지금 화면의 아래쪽 — 기록에 아직 없는 화면. 작업 중이면 진행 부분(쓰는 중인 글·도구 진행·스피너), 쉬는 중이면 메뉴 같은 것.
 // 입력칸: Claude 는 가로선 바로 아래 ❯ 줄, Codex 는 › 줄 + 아래 3줄 안의 상태줄(… used · for shortcuts).
-// 입력칸이 있으면 그 바로 위까지 18줄, 없으면(메뉴가 입력칸 자리를 차지했다) 화면 끝 40줄. input 은 입력칸이 보였는지.
-// 아래쪽 빈 줄은 먼저 떼고 센다 — 화면이 덜 찼을 때 빈 줄이 창을 먹으면 긴 질문(커밋 지킴이)의 머리가 잘린다.
+// 입력칸이 있으면 그 바로 위까지 18줄, 없으면(메뉴가 입력칸 자리를 차지했다) 보이는 화면 전체 — 긴 승인(파일 쓰기)·질문(커밋 지킴이)은
+// 화면을 거의 다 채운다. 메뉴의 질문은 screenMenu 가 가로줄·점선으로 자른다. 아래쪽 빈 줄은 먼저 뗀다. input 은 입력칸이 보였는지.
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 export async function live(id: string) {
   const lines = (await sh('herdr', ['pane', 'read', id, '--source', 'visible', '--format', 'ansi'])).stdout.replace(/\r/g, '').split('\n');
@@ -208,7 +208,7 @@ export async function live(id: string) {
 export function liveWindow(plain: string[], box: number): [number, number] {
   let b = box >= 0 ? box : plain.length;
   while (b > 0 && !plain[b - 1].trim()) b--;
-  let a = Math.max(0, b - (box >= 0 ? 18 : 40));
+  let a = box >= 0 ? Math.max(0, b - 18) : 0;
   while (a < b && !plain[a].trim()) a++;
   return [a, b];
 }

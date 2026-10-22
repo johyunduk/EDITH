@@ -8,6 +8,7 @@ import { isFree, wide, type Menu } from './screenMenu.ts';
 import { toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
 import { useScreen } from './Chat.tsx';
+import { Ansi } from './ansi.tsx';
 
 // 중지 — 셸은 Ctrl+C(php artisan serve·npm run dev 같은 돌고 있는 명령 끝내기), 에이전트는 Esc(하던 일 멈추기).
 // 에이전트에 Ctrl+C 를 두 번 보내면 Claude 가 꺼지므로 에이전트에는 Esc 만 보낸다.
@@ -38,12 +39,14 @@ function saveDraft(id: string, text: string) {
 }
 // 미리 보기 글 — 터미널처럼 칸을 맞춘다. 고정폭 글꼴에 한글이 없으면 대체 글꼴 폭이 두 칸과 달라 열이 어긋나서,
 // ASCII 가 아닌 글자 덩어리를 터미널 칸 수(한글 2 · 그 밖 1)만큼의 상자에 넣는다 — 글자는 붙고 남는 폭은 덩어리 뒤로 간다
+// 승인 화면 block 줄 앞의 세로 막대(│) — 색 코드는 두고 막대만 뗀다
+const BAR = /^\s*((?:\x1b\[[0-9;?]*[A-Za-z])*)│ ?((?:\x1b\[[0-9;?]*[A-Za-z])*) ?/;
 function Cells({ text }: { text: string }) {
   return text.split(/([^\x00-\x7f]+)/u).map((s, i) => i % 2
     ? <span key={i} className="inline-block whitespace-nowrap" style={{ width: `${[...s].reduce((n, c) => n + (wide(c) ? 2 : 1), 0)}ch` }}>{s}</span> : s);
 }
 export function PromptBox({ p, label }: { p: HPane; label?: string }) {
-  const agent = !!p.agent, { menu } = useScreen(p), qc = useQueryClient();
+  const agent = !!p.agent, { menu, raw } = useScreen(p), qc = useQueryClient();
   const [text, setText] = useState(() => loadDraft(p.id)), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
   const ac = useComplete(p, text, caret);
@@ -100,11 +103,18 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
             <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[0.75rem] font-bold text-white">!</span>답을 기다린다
           </div>
           {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
-          {/* 질문 첫 줄(무엇을 묻는지)은 굵게, 나머지(레포·제목·파일·명령 원문 등)는 보통 글씨로 — 긴 경로는 아무 데서나 줄을 바꾼다 */}
-          {menu.question && (
-            <div className="max-h-72 overflow-y-auto text-[0.8125rem] whitespace-pre-wrap [overflow-wrap:anywhere]">
-              <div className="text-[0.84375rem] font-semibold">{menu.question.split('\n')[0]}</div>
-              {menu.question.includes('\n') && <div className="mt-1 text-foreground/85">{menu.question.slice(menu.question.indexOf('\n') + 1).replace(/^\n+/, '')}</div>}
+          {/* 질문 첫 줄(무엇을 묻는지)은 굵게, 나머지(레포·제목·파일·명령 원문 등)는 보통 글씨로 — 긴 경로는 아무 데서나 줄을 바꾼다.
+              승인 화면의 명령·파일 내용·diff(block)는 첫 줄 아래에 터미널 색 그대로, 「$ 명령」 줄(Codex 승인)은 고정폭으로 */}
+          {(menu.question || menu.block) && (
+            <div className="space-y-1.5 text-[0.8125rem] whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {menu.question && <div className="text-[0.84375rem] font-semibold">{menu.question.split('\n')[0]}</div>}
+              {menu.block && <Ansi text={raw.slice(...menu.block).map(l => l.replace(BAR, '$1$2')).join('\n')} className="max-h-64 overflow-auto text-xs" />}
+              {menu.question.includes('\n') && (
+                <div className="max-h-72 overflow-y-auto text-foreground/85">
+                  {menu.question.slice(menu.question.indexOf('\n') + 1).replace(/^\n+/, '').split('\n').map((l, i) =>
+                    <div key={i} className={l.startsWith('$ ') ? 'my-1 rounded-md bg-code px-2.5 py-1.5 font-mono text-xs text-code-foreground' : ''}>{l || '\u00a0'}</div>)}
+                </div>
+              )}
             </div>
           )}
           {/* 미리 보기가 있으면 넓은 화면에선 터미널처럼 선택지 옆에 둔다 */}

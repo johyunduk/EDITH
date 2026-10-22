@@ -95,7 +95,7 @@ test('Codex 프로세스가 연 세션 기록 — lsof -Fn 출력에서 rollout 
   assert.deepEqual(rolloutsIn(out), ['/Users/me/.codex/sessions/2026/10/15/rollout-2026-10-15T00-13-52-abc.jsonl']);
 });
 
-test('liveWindow — 아래쪽 빈 줄은 창(40줄)에 세지 않아 긴 질문의 머리가 남는다, 입력칸이 있으면 그 위 18줄', () => {
+test('liveWindow — 입력칸이 없으면(메뉴) 아래쪽 빈 줄만 떼고 화면 전체, 입력칸이 있으면 그 위 18줄', () => {
   const menu = ['대화', '────', ' ☐ 머리', ...Array.from({ length: 30 }, (_, i) => `│ 질문 ${i}`), '❯ 1. 예', '  2. 아니오', 'Enter to select'];
   const screen = [...menu, ...Array(20).fill('')];   // 덜 찬 화면 — 아래가 빈 줄
   const [a, b] = liveWindow(screen, -1);
