@@ -100,7 +100,13 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
             <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[0.75rem] font-bold text-white">!</span>답을 기다린다
           </div>
           {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
-          {menu.question && <div className="text-[0.84375rem] font-semibold whitespace-pre-wrap">{menu.question}</div>}
+          {/* 질문 첫 줄(무엇을 묻는지)은 굵게, 나머지(레포·제목·파일·명령 원문 등)는 보통 글씨로 — 긴 경로는 아무 데서나 줄을 바꾼다 */}
+          {menu.question && (
+            <div className="max-h-72 overflow-y-auto text-[0.8125rem] whitespace-pre-wrap [overflow-wrap:anywhere]">
+              <div className="text-[0.84375rem] font-semibold">{menu.question.split('\n')[0]}</div>
+              {menu.question.includes('\n') && <div className="mt-1 text-foreground/85">{menu.question.slice(menu.question.indexOf('\n') + 1).replace(/^\n+/, '')}</div>}
+            </div>
+          )}
           {/* 미리 보기가 있으면 넓은 화면에선 터미널처럼 선택지 옆에 둔다 */}
           <div className={menu.preview ? 'grid items-start gap-2 lg:grid-cols-2' : ''}>
           <div className="flex flex-col gap-2">

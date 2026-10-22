@@ -17,6 +17,7 @@ const RULE = /^\s*[─━▔-]{3,}/;
 const HINT = /Enter to (select|confirm)|Esc to (cancel|exit)|↑\/↓|to navigate|to add notes/;
 const BOX = /^\[([ ✔✓xX])\]\s*(.*)$/;          // 여러 개 고르기의 체크 상자
 const TABS = /^←.*→$/;                           // 질문 여럿일 때 맨 위 줄
+const CHIP = /^[☐☒✔]\s+\S/;                      // 질문 하나일 때 맨 위 머리표(「☐ git commit」) — tabs 자리에 작게 보인다
 const STEP = /^(Next|Submit)$/;                  // 여러 개 고르기 아래의 「다음」 줄 — 선택지 설명이 아니다
 const SIDE = /^(.*?)(?:^|\s{2,})([┌│└].*[┐│┘])\s*$/;   // 선택지 줄 오른쪽에 붙은 미리 보기 상자 조각(┌─┐ · │ … │ · └─┘)
 
@@ -32,9 +33,12 @@ export const wide = (c: string) => /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u34
 // 직접 써서 답하는 선택지(「Type something」 등) — 고르면 글을 받아야 한다
 export const isFree = (l: string) => /type something|직접|other/i.test(l);
 
+// 가로줄 아래는 전부 질문 — 커밋 지킴이처럼 긴 질문도 머리(무엇을 할지)가 잘리지 않게. 빈 줄은 단락으로 하나만 남긴다.
+// 가로줄이 없으면(커서 메뉴) 위쪽 대화가 섞이지 않게 끝 6줄만. 왼쪽 막대(│ — 질문 상자)는 떼고 그 안의 들여쓰기는 둔다.
 const question = (lines: string[], end: number) => {
   const before = lines.slice(0, end), cut = before.findLastIndex(l => RULE.test(l));
-  return before.slice(cut + 1).filter(l => l.trim() && !TABS.test(l.trim())).slice(-6).map(l => l.trim().replace(/^[☐☒✔│]\s*/, '')).join('\n');   // 질문 머리표(☐ 색)의 상자와 미리 보기 꼴의 왼쪽 막대(│)는 뺀다
+  const body = before.slice(cut + 1).map(l => l.trim()).filter(l => !TABS.test(l) && !CHIP.test(l)).map(l => l.replace(/^│ ?/, '').trimEnd());
+  return (cut < 0 ? body.filter(Boolean).slice(-6) : body).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 };
 
 export function parseMenu(lines: string[]): Menu | null {
@@ -61,7 +65,7 @@ export function parseMenu(lines: string[]): Menu | null {
     const b = o.label.match(BOX);
     if (b) { multi = true; o.label = b[2].trim(); o.checked = b[1] !== ' '; }
   }
-  const tabs = lines.slice(0, first).map(l => l.trim()).findLast(l => TABS.test(l))?.replace(/^←\s*|\s*→$/g, '');
+  const head = lines.slice(0, first).map(l => l.trim()), tabs = head.findLast(l => TABS.test(l))?.replace(/^←\s*|\s*→$/g, '') ?? head.findLast(l => CHIP.test(l))?.replace(/^[☐☒✔]\s+/, '');
   return { question: question(lines, first), options, ...(multi ? { multi } : {}), ...(tabs ? { tabs } : {}), ...(preview ? { preview } : {}) };
 }
 

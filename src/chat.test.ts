@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkAlive, claudeLine, follow, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
-import { agentSince, noteAgents } from './herdr.ts';
+import { agentSince, liveWindow, noteAgents } from './herdr.ts';
 
 test('이전 대화 — 4MB 보다 긴 줄을 사이에 두고도 순서·바이트 위치를 지켜 거꾸로 모은다', () => {
   const dir = mkdtempSync(join(tmpdir(), 'edith-chat-'));
@@ -93,4 +93,13 @@ test('백그라운드 에이전트 — 끝남 알림이 queued_command 첨부로
 test('Codex 프로세스가 연 세션 기록 — lsof -Fn 출력에서 rollout 파일만', () => {
   const out = ['p12014', 'fcwd', 'n/Users/me/proj', 'f23', 'n/Users/me/.codex/sessions/2026/10/15/rollout-2026-10-15T00-13-52-abc.jsonl', 'f24', 'n/Users/me/.codex/log/codex-tui.log', 'f25', 'n/Users/me/.codex/sessions/2026/10/16/rollout-x.jsonl.lock'].join('\n');
   assert.deepEqual(rolloutsIn(out), ['/Users/me/.codex/sessions/2026/10/15/rollout-2026-10-15T00-13-52-abc.jsonl']);
+});
+
+test('liveWindow — 아래쪽 빈 줄은 창(40줄)에 세지 않아 긴 질문의 머리가 남는다, 입력칸이 있으면 그 위 18줄', () => {
+  const menu = ['대화', '────', ' ☐ 머리', ...Array.from({ length: 30 }, (_, i) => `│ 질문 ${i}`), '❯ 1. 예', '  2. 아니오', 'Enter to select'];
+  const screen = [...menu, ...Array(20).fill('')];   // 덜 찬 화면 — 아래가 빈 줄
+  const [a, b] = liveWindow(screen, -1);
+  assert.equal(screen[b - 1], 'Enter to select');
+  assert.ok(screen.slice(a, b).includes('────'));
+  assert.deepEqual(liveWindow(['x', ...Array(30).fill('y'), '', '────', '❯ '], 32), [13, 31]);
 });

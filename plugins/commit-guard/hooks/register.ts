@@ -71,7 +71,7 @@ export function split(s: string): Cmd[] {
   return out
 }
 
-export type Item = { op: 'commit' | 'push', dirs: string[], title?: string, files: string[], notes: string[] }   // dirs: 차례로 -C 할 폴더(cd·-C)
+export type Item = { op: 'commit' | 'push', dirs: string[], title?: string, msgFile?: string, files: string[], notes: string[] }   // dirs: 차례로 -C 할 폴더(cd·-C), msgFile: -F 로 준 메시지 파일
 const SKIP = ['{', '!', 'then', 'do', 'else', 'command', 'env', 'exec', 'time', 'nohup']   // 명령 앞에 붙는 말
 const OPT = ['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env']   // 값을 다음 단어로 받는 git 앞 옵션
 const VAL = ['--author', '--date', '--trailer', '--fixup', '--squash', '--reuse-message', '--reedit-message', '--cleanup', '--template', '--pathspec-from-file']   // 값을 다음 단어로 받는 commit 옵션
@@ -135,7 +135,7 @@ function commitArgs(rest: string[], body: string | undefined, it: Item) {
       }
     } else it.files.push(w)
   }
-  if (file !== undefined && file !== '-') it.title = `(${file} 파일의 내용)`
+  if (file !== undefined && file !== '-') { it.title = `(${file.split(/[\\/]/).pop()} 파일의 내용)`; it.msgFile = file }   // 실제 제목은 describe 가 파일에서 읽는다
   else {
     const text = file === '-' ? body : msg
     // -m "$(cat <<'EOF' … EOF)" 면 heredoc 첫 줄
@@ -151,6 +151,10 @@ const gitIn = ($: any, home: string, dirs: string[]) => {
     $.process.run(['git', '-c', 'core.fsmonitor=false', ...C, ...a], { timeoutMs: 2000, env: { GIT_OPTIONAL_LOCKS: '0' } })
       .then((r: any) => r.exitCode ? undefined : r.stdout.trim()).catch(() => undefined)
 }
+// 경로를 cd·-C 폴더를 차례로 따라 푼다(git 이 그 폴더에서 -F 파일을 읽는다) — 절대 경로가 오면 거기서 다시 시작, ~ 는 집
+export const pathIn = (home: string, dirs: string[], f: string) =>
+  [...dirs, f].map(d => d.replace(/^~(?=[\\/]|$)/, home)).reduce((p, d) => !p || /^([\\/]|[A-Za-z]:)/.test(d) ? d : `${p}/${d}`, '')
+
 async function look($: any, home: string, dirs: string[]) {
   const git = gitIn($, home, dirs)
   const [top, branch, staged] = await Promise.all([git('rev-parse', '--show-toplevel'), git('branch', '--show-current'), git('diff', '--cached', '--name-only')])
@@ -173,7 +177,13 @@ export async function describe($: any, command: string) {
   const items = parse(command)
   if (!items.length) return undefined
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? '~'
-  const seen = await Promise.all(items.map(async it => ({ it, ...await look($, home, it.dirs) })))
+  // -F 파일이면 그 파일의 첫 글 줄(# 주석 빼고)을 제목으로 — 못 읽으면 「(파일 이름 파일의 내용)」 그대로
+  const titled = async (it: Item) => {
+    if (it.msgFile === undefined) return
+    const text = await $.fs.read(pathIn(home, it.dirs, it.msgFile)).catch(() => '')
+    it.title = String(text).split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#')) ?? it.title
+  }
+  const seen = await Promise.all(items.map(async it => { await titled(it); return { it, ...await look($, home, it.dirs) } }))
   const count = (op: string) => items.filter(it => it.op === op).length
   const lines = [`${['commit', 'push'].filter(count).map(op => `git ${op} ${count(op)}건`).join(' · ')} — 실행할까?`]
   for (const { it, top, branch, staged } of seen) {

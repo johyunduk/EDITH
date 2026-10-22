@@ -194,7 +194,8 @@ async function ready(id: string) {
 
 // 지금 화면의 아래쪽 — 기록에 아직 없는 화면. 작업 중이면 진행 부분(쓰는 중인 글·도구 진행·스피너), 쉬는 중이면 메뉴 같은 것.
 // 입력칸: Claude 는 가로선 바로 아래 ❯ 줄, Codex 는 › 줄 + 아래 3줄 안의 상태줄(… used · for shortcuts).
-// 입력칸이 있으면 그 바로 위까지 18줄, 없으면(메뉴가 입력칸 자리를 차지했다) 화면 끝 30줄. input 은 입력칸이 보였는지.
+// 입력칸이 있으면 그 바로 위까지 18줄, 없으면(메뉴가 입력칸 자리를 차지했다) 화면 끝 40줄. input 은 입력칸이 보였는지.
+// 아래쪽 빈 줄은 먼저 떼고 센다 — 화면이 덜 찼을 때 빈 줄이 창을 먹으면 긴 질문(커밋 지킴이)의 머리가 잘린다.
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 export async function live(id: string) {
   const lines = (await sh('herdr', ['pane', 'read', id, '--source', 'visible', '--format', 'ansi'])).stdout.replace(/\r/g, '').split('\n');
@@ -202,10 +203,14 @@ export async function live(id: string) {
   const claude = plain.findLastIndex((l, i) => /^\s*❯/.test(l) && i > 0 && /^─{3,}/.test(plain[i - 1].trim()));
   const codex = plain.findLastIndex((l, i) => /^\s*›(\s|$)/.test(l) && plain.slice(i + 1, i + 4).some(x => /% used|for shortcuts/.test(x)));
   const box = claude >= 0 ? claude - 1 : codex;
-  let b = box >= 0 ? box : lines.length, a = Math.max(0, b - (box >= 0 ? 18 : 30));
+  return { lines: lines.slice(...liveWindow(plain, box)), input: box >= 0 };
+}
+export function liveWindow(plain: string[], box: number): [number, number] {
+  let b = box >= 0 ? box : plain.length;
+  while (b > 0 && !plain[b - 1].trim()) b--;
+  let a = Math.max(0, b - (box >= 0 ? 18 : 40));
   while (a < b && !plain[a].trim()) a++;
-  while (b > a && !plain[b - 1].trim()) b--;
-  return { lines: lines.slice(a, b), input: box >= 0 };
+  return [a, b];
 }
 
 // 사용량 — 모델·생각 강도(effort), 컨텍스트가 몇 % 찼는지, 5시간·7일 한도를 몇 % 썼는지(reset 은 다시 차기까지 남은 시간 글).

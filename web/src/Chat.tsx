@@ -78,7 +78,7 @@ export function Chat({ p }: { p: HPane }) {
       {screen.menu ? (
         <div className="ml-9 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-sm">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400"><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다 — 아래 입력칸에서 고른다</div>
-          {screen.menu.question && <div className="mt-1 whitespace-pre-wrap">{screen.menu.question}</div>}
+          {screen.menu.question && <div className="mt-1 whitespace-pre-wrap">{screen.menu.question.split('\n')[0]}</div>}{/* 자세한 것은 아래 입력칸 카드에 */}
         </div>
       ) : (p.status === 'working' || !screen.input) && screen.raw.length > 0 && <LiveText raw={screen.raw} lines={screen.lines} working={p.status === 'working'} />}
       {away && (

@@ -18,7 +18,7 @@ test('커서 메뉴 — 번호 없는 ❯ 메뉴(폴더 신뢰)는 지금 커서
     ' ❯ No, exit', '   Yes, I trust this folder', '', ' Enter to confirm · Esc to cancel',
   ];
   assert.deepEqual(parseMenu(screen), {
-    question: 'Accessing workspace:\n/Users/me/EDITH\nQuick safety check: Is this a project you trust?\nSecurity guide',
+    question: 'Accessing workspace:\n\n/Users/me/EDITH\n\nQuick safety check: Is this a project you trust?\n\nSecurity guide',
     options: [{ n: 1, label: 'No, exit', desc: '' }, { n: 2, label: 'Yes, I trust this folder', desc: '' }], cursor: 0,
   });
   assert.equal(parseMenu(screen.slice(0, -1)), null);
@@ -83,6 +83,19 @@ test('미리 보기 없는 질문 — 상자로 읽지 않고, 가로줄 밑 번
   ]);
   assert.deepEqual(m?.options.map(o => [o.n, o.label, o.desc]), [[1, '내가 직접 (추천)', '이 세션이 고친다'], [2, '넘김', '메시지로 보낸다'], [3, 'Type something.', ''], [4, 'Chat about this', '']]);
   assert.equal(m?.preview, undefined);
+});
+
+test('긴 질문(커밋 지킴이) — 가로줄 아래 전부가 질문(머리 줄이 잘리지 않는다), 머리표는 tabs, 왼쪽 막대는 떼고 들여쓰기·단락은 둔다', () => {
+  const m = parseMenu([
+    '  ⎿  $ git commit -F msg.txt', '──────────────────────────────', ' ☐ git commit',
+    '│ git commit 1건 — 실행할까?', '│', '│ gtest (main)', '│   제목: Add a and b', '│   파일 2개: a.txt, b.txt', '│',
+    '│ 명령 원문(앞 400자):', '│ cd /tmp/gtest && git commit -F msg.txt && git log', '│ --oneline -1',
+    '❯ 1. 실행', '  2. 막기', '  3. Type something.', '──────────────────────────────', '  4. Chat about this',
+    'Enter to select · ↑/↓ to navigate · Esc to cancel',
+  ]);
+  assert.equal(m?.tabs, 'git commit');
+  assert.equal(m?.question, 'git commit 1건 — 실행할까?\n\ngtest (main)\n  제목: Add a and b\n  파일 2개: a.txt, b.txt\n\n명령 원문(앞 400자):\ncd /tmp/gtest && git commit -F msg.txt && git log\n--oneline -1');
+  assert.deepEqual(m?.options.map(o => o.label), ['실행', '막기', 'Type something.', 'Chat about this']);
 });
 
 test('wide — 한글·한자·전각·이모지는 두 칸, ASCII·▾·←·· 는 한 칸', async () => {

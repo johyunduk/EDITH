@@ -1,6 +1,6 @@
 {
   "name": "commit-guard",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "git commit·push 는 모드(auto 포함)와 허용 규칙에 상관없이 매번 사람에게 묻고, 허락할 때만 실행한다. gada.ticket 이 걸린 워크트리에서 제목에 티켓키가 없는 커밋은 묻기 전에 막는다",
   "userConfig": {
     "enabled": {
