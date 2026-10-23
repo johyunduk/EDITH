@@ -67,7 +67,8 @@ export function chainView(steps: ChainStep[], node: (k: string) => { state: stri
 }
 
 // 런 입력의 노션 주소(노션 기획 · 이슈 페이지로 시작한 런) — 첫 것만. 글 속 괄호 · 낫표 · 끝 문장부호는 주소에서 뺀다
-export const notionUrl = (input: string) => input.match(/https?:\/\/(?:[\w-]+\.)*notion\.(?:so|site|com)\/[^\s)\]>」』"']+/)?.[0].replace(/[.,]+$/, '');
+export const notionUrl = (input: string) => input.match(/https?:\/\/(?:[\w-]+\.)*notion\.(?:so|site|com)\/[^\s)\]>」』"']+/)?.[0].replace(/[.,]+$/, '')
+  .replace(/^(https?:\/\/app\.notion\.com\/)(?!p\/)/, '$1p/'); // app.notion.com 은 /p/ 없이 열면 404
 
 // 사람용 한 줄 — 결과 파일에 「한줄」 이 없을 때(옛 런 · 안 쓴 스킬) 요약의 첫 문장을 n자 안으로
 export function short(t?: string, n = 70) {

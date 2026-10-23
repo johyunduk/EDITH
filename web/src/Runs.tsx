@@ -110,7 +110,7 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
       <p className="px-1 text-[0.6875rem] font-semibold text-sky-700 dark:text-sky-400">받은 요청 {q.data.length}</p>
       {q.data.map(r => {
         // 제목 — 요청이 준 것, 없으면 입력 첫 줄(주소뿐이면 주소 대신 「노션」 단추로)
-        const link = notionUrl(r.input), first = r.input.split('\n')[0].trim(), head = r.title ?? (link && first === link ? '' : first);
+        const link = notionUrl(r.input), first = r.input.split('\n')[0].trim(), head = r.title ?? (link && !/\s/.test(first) && notionUrl(first) === link ? '' : first);
         return (
         <div key={r.id} className="space-y-1 rounded-md bg-card px-2.5 py-2 text-xs">
           <p className="flex items-center gap-1.5">
