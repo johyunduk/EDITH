@@ -77,4 +77,5 @@ test('런 입력의 노션 주소 — 첫 것만, 둘레 괄호 · 낫표 · 끝
   assert.equal(notionUrl('기획은 「https://acme.notion.site/Plan-abc?pvs=4」 참고.'), 'https://acme.notion.site/Plan-abc?pvs=4');
   assert.equal(notionUrl('이슈(https://notion.so/p/123), 그리고 https://notion.so/p/456.'), 'https://notion.so/p/123');
   assert.equal(notionUrl('https://github.com/a/b 와 notion.so 라는 말'), undefined);
+  assert.equal(notionUrl('https://app.notion.com/4025b1b0fcd98188bd37e0a4d864af23'), 'https://app.notion.com/4025b1b0fcd98188bd37e0a4d864af23');
 });
