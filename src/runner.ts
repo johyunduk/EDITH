@@ -762,12 +762,14 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // 목록을 작업 문서가 아니라 엔진 폴더에 두는 것은, 런의 Claude 가 단추를 지어내 사람이 누르게 하지 못하게.
 // on: "results" — 단추가 아니라 결과 화면에서 체크가 바뀔 때 도는 명령(resultHook). on: "picks" — 새 런 칸의 고르기 목록(runPicks).
 // when: "done" — 런이 끝난 뒤에만 보이고 눌린다
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done' };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done'; reach?: string };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+// reach — 결과 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · clean(정리) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
 function allActions(r: Run): RunAction[] {
   try {
     const a = JSON.parse(readFileSync(join(dirOf(r.id), 'engine', r.engine, 'actions.json'), 'utf8')) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
-      && (x.on === undefined || x.on === 'results' || x.on === 'picks' || x.on === 'request') && (x.when === undefined || x.when === 'done')).slice(0, 16) : [];
+      && (x.on === undefined || x.on === 'results' || x.on === 'picks' || x.on === 'request') && (x.when === undefined || x.when === 'done')
+      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach)))).slice(0, 16) : [];
   } catch { return []; }
 }
 export const readActions = (r: Run) => allActions(r).filter(x => !x.on).slice(0, 12);

@@ -13,6 +13,9 @@ test('레포 목록 읽기 — 절대 경로만, 틀린 브랜치 · 기준 이�
   // 더 볼 기준(also) 3개까지 · 틀린 이름 빼기, 딴 커밋(start)은 16진수만
   assert.deepEqual(parseRepos(JSON.stringify([{ path: '/c', also: ['origin/dev', '--x', 3, 'a', 'b', 'c'], start: 'abc1234' }, { path: '/d', start: 'HEAD~1' }])),
     [{ path: '/c', base: 'origin/master', also: ['origin/dev', 'a', 'b'], start: 'abc1234' }, { path: '/d', base: 'origin/master' }]);
+  // 먼저 합쳐지는 브랜치(via) — 브랜치 이름 꼴만
+  assert.deepEqual(parseRepos(JSON.stringify([{ path: '/e', via: 'feature/auto-point' }, { path: '/f', via: '--orphan' }])),
+    [{ path: '/e', base: 'origin/master', via: 'feature/auto-point' }, { path: '/f', base: 'origin/master' }]);
 });
 
 test('레포 커밋 상태 — 커밋 안 한 파일 · 기준에 없는 커밋 · 올리지 않음, 작업 폴더 밖은 보지 않는다', async () => {

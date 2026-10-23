@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { sh } from './sh.ts';
 import { inside, readRefs, repoStatus } from './repos.ts';
-import { listRuns, loadRun, RUNS } from './runner.ts';
+import { listRuns, loadRun, readActions, RUNS } from './runner.ts';
 import { parseResults, RESULTS_FILE } from './results.ts';
 
 export type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
@@ -84,8 +84,10 @@ function workJson(id: number, file: string): unknown {
 }
 const str = (v: unknown, n: number) => typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined;
 
-export type ReachRepo = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; envs: Reach[] };
-export type ReachRun = { id: number; name: string; title: string; tag?: string; ended: number; repos: ReachRepo[]; tasks: { done: number; total: number } | null; fetched?: number };
+// via — 먼저 합쳐지는 브랜치(이슈 → 안건)에 들어갔나, headAt — 지금 커밋 시각, actions — 엔진 런 단추 중 단계(reach)가 적힌 것(결과 화면이 그 단계 칸에 놓는다)
+export type ReachRepo = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
+export type ReachAction = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean };
+export type ReachRun = { id: number; name: string; title: string; tag?: string; ended: number; repos: ReachRepo[]; tasks: { done: number; total: number } | null; fetched?: number; actions: ReachAction[] };
 // 끝난 런마다 — 레포 상태(src/repos.ts — 커밋 안 한 파일 · 올렸는지)와 브랜치마다 어디까지, 배포 할 일 수(edith-results.json). 최근에 끝난 것부터
 export async function reachList(): Promise<ReachRun[]> {
   const runs = listRuns().filter(r => r.state === 'done');
@@ -104,8 +106,9 @@ export async function reachList(): Promise<ReachRun[]> {
       const base = { name, path: s.path, ...(s.head ? { branch: s.head } : {}), dirty: s.dirty, pushed: s.pushed };
       const start = x.start ?? await out(x.path, ['merge-base', x.base, 'HEAD']), [head, from] = await Promise.all([out(x.path, ['rev-parse', 'HEAD']), start ? out(x.path, ['rev-parse', `${start}^{commit}`]) : null]);
       // 딴 뒤 커밋이 없으면 딴 커밋이 어디에나 들어 있어 「들어감」 으로 보인다 — 커밋 없음으로
-      if (!from || from === head) return { ...base, fresh: true, envs: envRefs.map(ref => ({ ref, state: from ? 'none' : 'missing' })) };
-      return { ...base, envs: await Promise.all(envRefs.map(ref => reachOf(x.path, from, ref))) };
+      if (!from || from === head) return { ...base, fresh: true, ...(x.via ? { via: { ref: x.via, state: 'none' as const } } : {}), envs: envRefs.map(ref => ({ ref, state: from ? 'none' : 'missing' })) };
+      const [envs, via, headAt] = await Promise.all([Promise.all(envRefs.map(ref => reachOf(x.path, from, ref))), x.via ? reachOf(x.path, from, x.via) : undefined, out(x.path, ['log', '-1', '--format=%ct', 'HEAD'])]);
+      return { ...base, envs, ...(via ? { via } : {}), ...(secs(headAt) ? { headAt: secs(headAt) } : {}) };
     }));
     const req = workJson(r.id, 'edith-request.json') as { title?: unknown; tag?: unknown } | null, sum = workJson(r.id, 'edith-summary.json') as { title?: unknown } | null;
     let ended = r.created;
@@ -114,7 +117,8 @@ export async function reachList(): Promise<ReachRun[]> {
     const title = [str(req?.title, 120), str(sum?.title, 120), str(results[0]?.title, 120)].find(t => t && !/^https?:\/\/\S+$/.test(t)) ?? (full.input.split('\n')[0] || full.name).slice(0, 120);
     const tag = str(req?.tag, 40) ?? (results[0]?.tag || undefined);
     return { id: r.id, name: r.name, title, ...(tag ? { tag } : {}), ended, repos,
-      tasks: items.length ? { done: items.filter(i => i.done).length, total: items.length } : null, fetched: await fetchedAt(repos.map(x => x.path)) };
+      tasks: items.length ? { done: items.filter(i => i.done).length, total: items.length } : null, fetched: await fetchedAt(repos.map(x => x.path)),
+      actions: readActions(full).flatMap((a, n) => a.reach ? [{ n, label: a.label, reach: a.reach, command: a.command, ...(a.hint ? { hint: a.hint } : {}), ...(a.ask ? { ask: a.ask } : {}), ...(a.danger ? { danger: true } : {}) }] : []) };
   });
   return rows.filter((x): x is ReachRun => !!x).sort((a, b) => b.ended - a.ended);
 }

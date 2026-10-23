@@ -1,5 +1,6 @@
 // 런 화면 「레포」 — 엔진이 작업 문서에 남긴 edith-repos.json 의 레포마다 git 으로 커밋 상태를 읽는다(쓰지 않는다 — fetch 도 안 해서 원격 기준은 마지막 fetch 때):
-// [{"path": "<워크트리 절대 경로>", "branch"?: "<브랜치 — 다르면 알린다>", "base"?: "<기준 — 기본 origin/master>", "also"?: ["<더 볼 기준 — 예: origin/dev>"](3개까지), "start"?: "<워크트리를 딴 커밋>"}]
+// [{"path": "<워크트리 절대 경로>", "branch"?: "<브랜치 — 다르면 알린다>", "base"?: "<기준 — 기본 origin/master>", "also"?: ["<더 볼 기준 — 예: origin/dev>"](3개까지), "start"?: "<워크트리를 딴 커밋>",
+//   "via"?: "<먼저 합쳐지는 브랜치 — 예: 이슈 브랜치가 들어갈 안건 브랜치. 있으면 결과 화면이 「올림」 대신 「합침」 단계를 본다>"}]
 // 커밋 안 한 파일 수 · 기준(들)에 없는 커밋 수(0 이면 다 들어 있음) · 올렸는지(upstream 과 같은지). start 가 있고 그 뒤 커밋이 없으면 「커밋 없음」(fresh) —
 // 커밋이 없어도 기준에 없는 커밋은 0 이라, 그것만으로는 「다 들어 있음」 과 가르지 못한다. 커밋 · 정리 · 버리기는 엔진의 런 단추가 한다.
 // 경로는 런 작업 폴더 안의 git 작업 트리만 — 런의 Claude · 명령이 쓰는 파일이라 그 밖은 보지 않는다(파일 이름도 수만 센다).
@@ -8,7 +9,7 @@ import { basename, join, sep } from 'node:path';
 import { sh } from './sh.ts';
 
 export const REPOS_FILE = 'edith-repos.json';
-export type RepoRef = { path: string; branch?: string; base: string; also?: string[]; start?: string };
+export type RepoRef = { path: string; branch?: string; base: string; also?: string[]; start?: string; via?: string };
 export type Repo = RepoRef & { name: string; error?: string; head?: string; dirty?: number; ahead?: number; pushed?: boolean | null; fresh?: boolean; more?: { base: string; ahead: number | null }[] };
 
 const REF = /^[\w][\w./-]{0,120}$/, SHA = /^[0-9a-f]{7,40}$/;
@@ -17,11 +18,11 @@ export function parseRepos(t: string): RepoRef[] {
   let a: unknown;
   try { a = JSON.parse(t); } catch { return []; }
   if (!Array.isArray(a)) return [];
-  return a.flatMap((x: { path?: unknown; branch?: unknown; base?: unknown; also?: unknown; start?: unknown }) => {
+  return a.flatMap((x: { path?: unknown; branch?: unknown; base?: unknown; also?: unknown; start?: unknown; via?: unknown }) => {
     if (typeof x?.path !== 'string' || !x.path.startsWith('/')) return [];
     const also = Array.isArray(x.also) ? x.also.filter((b): b is string => typeof b === 'string' && REF.test(b)).slice(0, 3) : [];
     return [{ path: x.path, ...(typeof x.branch === 'string' && REF.test(x.branch) ? { branch: x.branch } : {}), base: typeof x.base === 'string' && REF.test(x.base) ? x.base : 'origin/master',
-      ...(also.length ? { also } : {}), ...(typeof x.start === 'string' && SHA.test(x.start) ? { start: x.start } : {}) }];
+      ...(also.length ? { also } : {}), ...(typeof x.start === 'string' && SHA.test(x.start) ? { start: x.start } : {}), ...(typeof x.via === 'string' && REF.test(x.via) ? { via: x.via } : {}) }];
   }).slice(0, 12);
 }
 
