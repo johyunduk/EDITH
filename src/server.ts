@@ -30,6 +30,7 @@ import { livePort, stream } from './live.ts';
 import { runAnalysis } from './analysis.ts';
 import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
 import { checkResult, listResults } from './results.ts';
+import { reachFetch, reachList } from './reach.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -220,6 +221,9 @@ export function serve(port: number) {
       }
       if (path === '/api/requests' && req.method === 'GET') return reply(res, 200, listRequests());
       if (path === '/api/results' && req.method === 'GET') return reply(res, 200, listResults());
+      // 끝난 런의 코드가 어느 브랜치까지 갔나(src/reach.ts) · 「새로 받기」 — 그 레포들을 origin 에서 fetch
+      if (path === '/api/reach' && req.method === 'GET') return reply(res, 200, await reachList());
+      if (path === '/api/reach/fetch' && req.method === 'POST') { await body(req); return reply(res, 200, await reachFetch()); }
       if (path === '/api/results/check' && req.method === 'POST') {
         // 체크를 파일에 쓰고, 그 런 엔진에 「결과 반영」 명령(actions.json on: results)이 있으면 돌린다
         try { const x = checkResult(await body(req) as Record<string, unknown>); return reply(res, 200, { ok: true, hook: resultHook(x.run, x) }); } catch (e) { return fail(e); }

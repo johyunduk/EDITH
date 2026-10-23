@@ -25,11 +25,11 @@ export function parseRepos(t: string): RepoRef[] {
   }).slice(0, 12);
 }
 
-const inside = (p: string, root: string) => { try { const a = realpathSync(p), b = realpathSync(root); return a === b || a.startsWith(b + sep); } catch { return false; } };
+export const inside = (p: string, root: string) => { try { const a = realpathSync(p), b = realpathSync(root); return a === b || a.startsWith(b + sep); } catch { return false; } };
 const git = (cwd: string, ...args: string[]) => sh('git', ['-C', cwd, ...args], { ok: true, timeoutMs: 15_000 });
 
 // 작업 문서 안의 파일만(링크로 밖을 가리키면 없는 것으로)
-function readRefs(work: string): RepoRef[] {
+export function readRefs(work: string): RepoRef[] {
   try { const f = join(work, REPOS_FILE); return inside(f, work) ? parseRepos(readFileSync(f, 'utf8')) : []; } catch { return []; }
 }
 export async function repoStatus(work: string, cwd: string): Promise<Repo[]> {
