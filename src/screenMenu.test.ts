@@ -12,6 +12,20 @@ test('번호 메뉴 — 번호·설명 줄·질문, 커서는 없다', () => {
   });
 });
 
+test('위 대화에 번호 제목(「1. …」·「2. …」)·표가 보여도 맨 아래 질문만 — 질문 글·설명이 빠지지 않는다', () => {
+  const m = parseMenu([
+    '⏺ 정할 것을 두 표로 나눴습니다.', '', '  1. 정해 주셔야 할 것', '', '  ┌────┬──────┐', '  │ 16 │ 가다 │', '  └────┴──────┘', '',
+    '  2. 제가 직접 확인할 것', '', '  ┌───┬──────┐', '  │ A │ 단계 │', '  └───┴──────┘', '',
+    '──────────────────────────────', ' ☐ 목표', '', '1/17 — 앱 이름은 어떻게 할까요?', '',
+    '❯ 1. 같이 쓰다 대체 (Recommended)', '     검증될 때까지 둡니다.', '  2. 바로 대체', '     전부 옮깁니다.', '  3. Type something.',
+    '──────────────────────────────', '  4. Chat about this', '', 'Enter to select · ↑/↓ to navigate · Esc to cancel',
+  ]);
+  assert.equal(m?.question, '1/17 — 앱 이름은 어떻게 할까요?');
+  assert.equal(m?.tabs, '목표');
+  assert.deepEqual(m?.options.map(o => [o.n, o.label, o.desc]),
+    [[1, '같이 쓰다 대체 (Recommended)', '검증될 때까지 둡니다.'], [2, '바로 대체', '전부 옮깁니다.'], [3, 'Type something.', ''], [4, 'Chat about this', '']]);
+});
+
 test('커서 메뉴 — 번호 없는 ❯ 메뉴(폴더 신뢰)는 지금 커서 자리와 함께, 안내 줄이 없으면 메뉴가 아니다', () => {
   const screen = [
     '────────────', ' Accessing workspace:', '', ' /Users/me/EDITH', '', ' Quick safety check: Is this a project you trust?', '', ' Security guide', '',

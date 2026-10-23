@@ -26,12 +26,13 @@ edith --no-open             # 서버 코드를 바꿨으면 다시 켠다 — �
 - 쓰기는 같은 출처의 JSON `POST` 만 받는다(CSRF). CORS 머리를 달지 않는다. `x-frame-options: DENY`·`frame-ancestors 'none'` 을 지우지 않는다.
 - 파일을 읽어 주는 API 는 정해 둔 폴더 안만 준다(`realpath` 뒤 경로 확인 — `skillFile`·`taskOutput` 참고). 브라우저가 보낸 경로를 그대로 열지 않는다.
 - 프로세스를 띄울 때는 인자 배열로(`sh(cmd, args)`) — 셸 문자열로 이어 붙이지 않는다.
+  예외는 공방 명령 노드와 런 단추: `engine.json` · 맨 위 엔진 폴더의 `actions.json`(결과 체크 때 도는 `on: "results"` 포함)에 사용자가 적은 명령을 그대로 셸로 돌린다(`src/runner.ts`). 다른 값(런 입력 · 경로 · 단추에 넣은 글 · 체크한 할 일)은 그 문자열에 붙이지 않고 환경 변수로 넘긴다.
 - 열쇠를 로그·화면·URL 에 남기지 않는다(시작 때 찍는 주소 빼고).
 
 **코드 꼴**
 
 - 서버(`src/`)는 빌드 없이 `node src/cli.ts` 로 돈다(Node 24 type stripping). 지울 수 있는 TypeScript 만 — enum·namespace·생성자 매개변수 속성 금지(`erasableSyntaxOnly`). import 는 `.ts` 확장자까지 쓴다.
-- 서버에 런타임 의존성을 넣지 않는다(Node 내장만). 화면(`web/`)은 React·TanStack Query·Tailwind·xterm.js.
+- 서버에 런타임 의존성을 넣지 않는다(Node 내장만). 화면(`web/`)은 React·TanStack Query·Tailwind·xterm.js·React Flow(공방 캔버스).
 - 둘레 코드와 같게: 짧은 함수, 위에 한두 줄 주석(왜 그렇게 하는지), 한국어 주석. 깨질 수 있는 단순화는 `ponytail:` 주석으로 한계를 적는다.
 - herdr 는 읽기는 CLI(`sh('herdr', …)`), 쓰기·구독은 소켓(`api(method, params)`) — 이유는 `src/herdr.ts` 머리 주석. 쓸 수 있는 메서드는 `herdr api schema`.
 - macOS·Linux·Windows 를 다 생각한다: 경로는 `node:path`, Windows 는 `\`·대소문자·`.cmd` 가 다르다.

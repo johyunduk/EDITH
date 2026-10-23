@@ -1,12 +1,16 @@
-// EDITH 화면 — 위에서 「herdr」·「스킬」·「설정」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>, #/settings. 오른쪽 위 종은 알림함.
+// EDITH 화면 — 위에서 「herdr」·「스킬」·「공방」·「런」·「결과」·「설정」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/results, #/settings. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { get, post, useHerdr, useLive, useView, type HerdrView, type View } from './api.ts';
 import { HerdrPage } from './Herdr.tsx';
 import { AlertBell, useAlerts } from './Alerts.tsx';
 import { SkillsPage } from './Skills.tsx';
 import { SettingsPage } from './Settings.tsx';
+// 공방은 캔버스 라이브러리(React Flow)를 쓴다 — 공방을 열 때만 불러와 다른 화면의 첫 로딩을 늘리지 않는다
+const WorkshopPage = lazy(() => import('./Workshop.tsx').then(m => ({ default: m.WorkshopPage })));
+const RunsPage = lazy(() => import('./Runs.tsx').then(m => ({ default: m.RunsPage })));
 import { copyOnSelect, toast } from './copy.ts';
+import { ResultsPage } from './Results.tsx';
 import { Icon, TERMINAL } from './ui.tsx';
 import { APP_NAME, applyTheme, readTheme } from './theme.ts';
 
@@ -15,9 +19,17 @@ const HEX = <><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0
 const GEAR = <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></>;
 const GRID = <><rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" /></>;
 
+// 공방 탭 아이콘(lucide workflow)
+const FLOW = <><rect width="8" height="8" x="3" y="3" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect width="8" height="8" x="13" y="13" rx="2" /></>;
+const PLAY = <><circle cx="12" cy="12" r="10" /><path d="m10 8 6 4-6 4z" /></>;   // 런 탭(lucide circle-play)
+const CHECKS = <><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></>;   // 결과 탭(lucide list-checks)
+
 const route = () => {
-  const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/);
+  const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/), ws = h.match(/^#\/workshop(?:\/(.+))?/), runs = h.match(/^#\/runs(?:\/(.+))?/);
   if (h.startsWith('#/settings')) return { view: 'settings' as const, id: undefined };
+  if (h.startsWith('#/results')) return { view: 'results' as const, id: undefined };
+  if (ws) return { view: 'workshop' as const, id: ws[1] };
+  if (runs) return { view: 'runs' as const, id: runs[1] };
   return skill ? { view: 'skills' as const, id: skill[1] } : { view: 'herdr' as const, id: h.match(/^#\/herdr\/(.+)/)?.[1] };
 };
 
@@ -49,7 +61,7 @@ export default function App() {
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
   }, []);
-  const nav = (on: boolean) => `flex h-13 items-center gap-2 border-b-2 px-4 text-sm transition ${on ? 'border-primary bg-accent/60 font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`;
+  const nav = (on: boolean) => `flex h-13 shrink-0 items-center gap-2 border-b-2 px-4 text-sm whitespace-nowrap transition ${on ? 'border-primary bg-accent/60 font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`;
   const err = herdr.error && String(herdr.error);
   return (
     <div className="flex h-screen flex-col">
@@ -66,9 +78,13 @@ export default function App() {
         <span className="flex items-center gap-2 text-lg font-bold tracking-[0.08em]">
           <Icon className="brand-mark size-6 text-primary">{HEX}<path d="M12 22V12M12 12 3.3 7M12 12l8.7-5" /></Icon>{APP_NAME}
         </span>
-        <nav className="-my-px flex self-stretch">
+        {/* 좁은 화면에선 탭 줄만 옆으로 밀린다(페이지는 가로로 안 밀리게) */}
+        <nav className="-my-px flex max-w-full min-w-0 self-stretch overflow-x-auto [scrollbar-width:none]">
           <a href="#/herdr" className={nav(r.view === 'herdr')}><Icon className="size-4">{TERMINAL}</Icon>herdr</a>
           <a href="#/skills" className={nav(r.view === 'skills')}><Icon className="size-4">{GRID}</Icon>스킬</a>
+          <a href="#/workshop" className={nav(r.view === 'workshop')}><Icon className="size-4">{FLOW}</Icon>공방</a>
+          <a href="#/runs" className={nav(r.view === 'runs')}><Icon className="size-4">{PLAY}</Icon>런</a>
+          <a href="#/results" className={nav(r.view === 'results')}><Icon className="size-4">{CHECKS}</Icon>결과</a>
           <a href="#/settings" className={nav(r.view === 'settings')}><Icon className="size-4">{GEAR}</Icon>설정</a>
         </nav>
         {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}
@@ -89,7 +105,7 @@ export default function App() {
           )}
         </span>
       </header>
-      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
+      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : r.view === 'results' ? <ResultsPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
 }

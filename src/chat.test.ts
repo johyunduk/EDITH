@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkAlive, claudeLine, follow, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
-import { agentSince, liveWindow, noteAgents } from './herdr.ts';
+import { agentSince, hasShells, isLimitScreen, liveWindow, noteAgents } from './herdr.ts';
 
 test('이전 대화 — 4MB 보다 긴 줄을 사이에 두고도 순서·바이트 위치를 지켜 거꾸로 모은다', () => {
   const dir = mkdtempSync(join(tmpdir(), 'edith-chat-'));
@@ -102,4 +102,19 @@ test('liveWindow — 입력칸이 없으면(메뉴) 아래쪽 빈 줄만 떼고 
   assert.equal(screen[b - 1], 'Enter to select');
   assert.ok(screen.slice(a, b).includes('────'));
   assert.deepEqual(liveWindow(['x', ...Array(30).fill('y'), '', '────', '❯ '], 32), [13, 31]);
+});
+
+test('사용량 한도 화면 — Claude 가 남기는 한도 글만', () => {
+  assert.ok(isLimitScreen(['⏺ 구현 중…', "  ⎿  You've hit your session limit · resets 3pm (Asia/Seoul)"]));
+  assert.ok(isLimitScreen(['  ⎿  Claude usage limit reached — send a message after it resets to continue']));
+  assert.ok(!isLimitScreen(['⏺ 테스트를 고쳤습니다. 한도 3번 안에서 끝났습니다.', '  rate limit 은 설정에 있습니다']));
+});
+
+test('백그라운드 셸 — 입력칸 아래 모드 줄의 「N shell」 만', () => {
+  const box = ['⏺ Codex 리뷰를 기다린다', '────', '❯ ', '────', '  ✦ Opus 5.5 [xhigh]  ·  CONTEXT 11%'];
+  assert.ok(hasShells([...box, '  ⏵⏵ auto mode on · 1 shell · ⧉ 7 · ← for agents']));
+  assert.ok(hasShells([...box, '  2 shells · ? for shortcuts']));
+  assert.ok(!hasShells([...box, '  ⏵⏵ auto mode on · ⧉ 7']));
+  assert.ok(!hasShells(['⏺ 1 shell 로 돌렸다', ...box]));   // 입력칸 위 글은 안 본다
+  assert.ok(!hasShells(['  ⏵⏵ auto mode on · 1 shell']));   // 입력칸이 안 보이면(메뉴 중) 모른다
 });

@@ -116,6 +116,15 @@
 
 /* 어두운 코드·출력 판 — 코드 블록, 도구 결과, 셸 출력, 진행 화면 */
 @utility code-panel { @apply overflow-x-auto rounded-lg bg-code px-3 py-2 font-mono text-xs leading-relaxed text-code-foreground; }
+/* 런 흐름 — 지금 가는 선(흐르는 점선) · 도는 노드 막대(RunFlow.tsx) */
+@keyframes wire-flow { to { background-position: 14px 0; } }
+@utility wire-flow { background: repeating-linear-gradient(90deg, var(--color-sky-500) 0 8px, transparent 8px 14px); background-size: 14px 100%; animation: wire-flow 0.8s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@utility shimmer { background: linear-gradient(90deg, color-mix(in oklab, var(--color-sky-500) 25%, transparent), var(--color-sky-500), color-mix(in oklab, var(--color-sky-500) 25%, transparent)); background-size: 200% 100%; animation: shimmer 1.8s linear infinite; }
+/* 런 타임라인 — 덱을 펼칠 때 카드가 차례로 내려앉는다(RunTimeline.tsx) */
+@keyframes fan { from { opacity: 0; transform: translateY(-12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@utility animate-fan { animation: fan 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) { .wire-flow, .shimmer, .animate-fan { animation: none; } }
 
 /* 마크다운(Claude 답 · result.md · 작업 문서) */
 .md { @apply space-y-3 text-[0.84375rem] leading-[1.75] text-foreground; }
@@ -173,3 +182,24 @@
 }
 :root[data-theme="ultron"] .brand-mark { filter: drop-shadow(0 0 5px #ef526650); }
 :root[data-theme="ultron"] .hud-corners { filter: drop-shadow(0 0 4px #ef526640); }
+
+/* 공방 캔버스(React Flow) — 선 · 점 · 미니맵 · 확대 단추가 테마 색을 따른다 */
+.react-flow {
+  --xy-background-color: var(--background);
+  --xy-background-pattern-dots-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+  --xy-edge-stroke: var(--muted-foreground);
+  --xy-edge-stroke-selected: var(--primary);
+  --xy-connectionline-stroke: var(--primary);
+  --xy-handle-background-color: var(--card);
+  --xy-handle-border-color: var(--primary);
+  --xy-minimap-background-color: var(--card);
+  --xy-minimap-mask-background-color: color-mix(in oklch, var(--background) 60%, transparent);
+  --xy-minimap-node-background-color: var(--accent);
+  --xy-controls-button-background-color: var(--card);
+  --xy-controls-button-background-color-hover: var(--muted);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-color-hover: var(--foreground);
+  --xy-controls-button-border-color: var(--border);
+}
+.react-flow .react-flow__handle { width: 10px; height: 10px; border-width: 2px; }
+.react-flow__edge.fail .react-flow__edge-path { stroke: #e5484d; stroke-dasharray: 6 4; }

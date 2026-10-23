@@ -172,7 +172,11 @@ export async function prompt(id: string, text: string) {
   if (!p) throw new Error('pane 없음');
   if (!p.agent) return void await api('pane.send_input', { pane_id: id, text, keys: ['enter'] });
   // Codex 는 스킬을 $이름으로 부르는 등 기호가 달라 Claude 방식으로 쓴 글을 바꿔 보낸다
-  const params = { target: id, text: p.agent === 'codex' ? toCodex(text) : text };
+  return promptAgent(id, p.agent === 'codex' ? toCodex(text) : text);
+}
+// 에이전트에게만 보낸다 — 셸로 새는 길이 없다(실행기가 쓴다: 에이전트가 꺼져 셸만 남았으면 herdr 가 거절한다)
+export async function promptAgent(id: string, text: string) {
+  const params = { target: id, text };
   // 에이전트가 막 뜨는 중이면 herdr 가 agent_not_ready 로 거절한다 — 준비 확인(ready) 뒤 20초까지 1초마다 다시
   for (const t0 = Date.now(); ;) {
     try { return void await api('agent.prompt', params); }
@@ -197,10 +201,12 @@ async function ready(id: string) {
 // 입력칸이 있으면 그 바로 위까지 18줄, 없으면(메뉴가 입력칸 자리를 차지했다) 보이는 화면 전체 — 긴 승인(파일 쓰기)·질문(커밋 지킴이)은
 // 화면을 거의 다 채운다. 메뉴의 질문은 screenMenu 가 가로줄·점선으로 자른다. 아래쪽 빈 줄은 먼저 뗀다. input 은 입력칸이 보였는지.
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
+// Claude 입력칸 줄(가로선 바로 아래 ❯) — 없으면 -1
+const claudeBox = (plain: string[]) => plain.findLastIndex((l, i) => /^\s*❯/.test(l) && i > 0 && /^─{3,}/.test(plain[i - 1].trim()));
 export async function live(id: string) {
   const lines = (await sh('herdr', ['pane', 'read', id, '--source', 'visible', '--format', 'ansi'])).stdout.replace(/\r/g, '').split('\n');
   const plain = lines.map(l => l.replace(ANSI, ''));
-  const claude = plain.findLastIndex((l, i) => /^\s*❯/.test(l) && i > 0 && /^─{3,}/.test(plain[i - 1].trim()));
+  const claude = claudeBox(plain);
   const codex = plain.findLastIndex((l, i) => /^\s*›(\s|$)/.test(l) && plain.slice(i + 1, i + 4).some(x => /% used|for shortcuts/.test(x)));
   const box = claude >= 0 ? claude - 1 : codex;
   return { lines: lines.slice(...liveWindow(plain, box)), input: box >= 0 };
@@ -221,7 +227,7 @@ export type Usage = { model: string | null; effort: string | null; ctx: number |
 // 상태줄은 입력칸 아래에만 있어서 입력칸 아래 줄만 본다. 입력칸이 안 보이면(메뉴 중) null. 상태줄 모양을 바꾸면 이 정규식도 같이 바꾼다.
 export async function statusline(id: string): Promise<Usage | null> {
   const plain = (await sh('herdr', ['pane', 'read', id, '--source', 'visible'])).stdout.replace(/\r/g, '').split('\n');
-  const box = plain.findLastIndex((l, i) => /^\s*❯/.test(l) && i > 0 && /^─{3,}/.test(plain[i - 1].trim()));
+  const box = claudeBox(plain);
   if (box < 0) return null;
   const tail = plain.slice(box + 1).join(' ');
   const at = (k: string) => tail.match(new RegExp(`${k}\\s+(\\d+)%(?:\\s*\\|\\s*(\\S+))?`));
@@ -239,6 +245,15 @@ export async function statusline(id: string): Promise<Usage | null> {
 }
 const limits: { five?: { pct: number; at: number | null }; week?: { pct: number; at: number | null } } = {};
 export const knowLimits = () => !!(limits.five || limits.week);
+// 한도에 닿은(100%) 것이 다시 차는 시각(둘 다면 늦은 쪽) — 상태줄에서 못 읽었으면 null
+export const limitReset = () => Math.max(0, ...[limits.five, limits.week].flatMap(l => l && l.pct >= 100 && l.at && l.at > Date.now() ? [l.at] : [])) || null;
+// 사용량 한도로 멈춘 화면 — Claude 가 대화 끝에 남기는 글(「usage limit reached」 · 「You've hit your limit」 · 「send a message after it resets to continue」)
+// shortcut: 화면 아래쪽 글로만 가린다 — Claude 가 답에 이 말을 그대로 쓰면 한도로 본다(결과 파일 없이 쉴 때만 보니 드물다)
+export const isLimitScreen = (lines: string[]) => /usage limit reached|hit your (?:\w+ )?limit|after it resets to continue/i.test(lines.join('\n'));
+export const limitHit = async (id: string) => isLimitScreen((await live(id)).lines.map(l => l.replace(ANSI, '')));
+// 백그라운드 셸이 도는가 — 입력칸 아래 모드 줄의 「· 1 shell」(⏵⏵ auto mode on · 1 shell · …). 셸을 백그라운드로 돌리고 턴을 끝낸 Claude 는 셸이 끝나면 스스로 이어 간다
+export const hasShells = (plain: string[]) => { const box = claudeBox(plain); return box >= 0 && plain.slice(box + 1).some(l => /(?:^|·)\s*\d+ shells?(?:\s|$)/.test(l)); };
+export const bgShells = async (id: string) => hasShells((await sh('herdr', ['pane', 'read', id, '--source', 'visible'])).stdout.replace(/\r/g, '').split('\n'));
 // 상태줄의 남은 시간 글(3h10m · 2d4h · now) ↔ 초
 export const resetSecs = (r: string) => { const h = r.match(/^(\d+)h(\d+)m$/), d = r.match(/^(\d+)d(\d+)h$/); return h ? +h[1] * 3600 + +h[2] * 60 : d ? +d[1] * 86400 + +d[2] * 3600 : 0; };
 export const until = (ms: number, day: boolean) => {
@@ -322,6 +337,14 @@ export async function newWorkspace(label: unknown, cwd: unknown) {
   const r = await api('workspace.create', { label: label.trim(), cwd: dir, focus: false }) as { root_pane: { pane_id: string } };
   return r.root_pane.pane_id;
 }
+// 새 워크트리 — herdr 가 git 워크트리와 그 워크스페이스를 한 번에 만든다(자리는 herdr 기본 ~/.herdr/worktrees/<레포>/<브랜치>).
+// 실행기가 「새 워크트리」 엔진을 돌릴 때 쓴다. 워크트리 경로와 그 워크스페이스의 첫 pane(셸)을 돌려준다.
+export async function newWorktree(repo: string, branch: string, base: string | undefined, label: string) {
+  const r = await sh('herdr', ['worktree', 'create', '--cwd', repo, '--branch', branch, ...(base ? ['--base', base] : []), '--label', label, '--no-focus'])
+    .catch((e: Error) => { throw new Error(e.message.match(/"message"\s*:\s*"([^"]+)"/)?.[1] ?? e.message.split('\n').filter(Boolean).at(-1)); });
+  const out = JSON.parse(r.stdout).result as { worktree: { path: string }; root_pane: { pane_id: string } };
+  return { path: out.worktree.path, pane: out.root_pane.pane_id };
+}
 // 폴더 고르기 — 셸 탭 완성처럼 마지막 칸의 앞글자로 하위 폴더를 찾는다(숨김 폴더는 . 으로 시작할 때만).
 export function folders(q: string) {
   const full = expand(q || '~/'), cut = Math.max(full.lastIndexOf('/'), full.lastIndexOf('\\'));   // Windows 는 \ 도
@@ -369,9 +392,10 @@ export function ratio(tab: string, path: unknown, value: unknown) {
   return api('layout.set_split_ratio', { tab_id: tab, path, ratio: Math.min(0.9, Math.max(0.1, value)) });
 }
 // 셸 pane 에 에이전트를 띄운다(herdr agent start — 셸이 프롬프트에 있어야 한다). 이름은 herdr 가 요구해서 붙인다.
-export async function start(id: string, kind: string) {
+// args 는 그 에이전트 명령에 붙일 인자(실행기가 Claude 에 --add-dir 을 넘긴다).
+export async function start(id: string, kind: string, args: string[] = []) {
   if (kind !== 'claude' && kind !== 'codex') throw new Error(`띄울 수 없는 종류: ${kind}`);
-  await api('agent.start', { name: `${kind}-${Date.now().toString(36)}`, kind, pane_id: id, timeout_ms: 60000 });
+  await api('agent.start', { name: `${kind}-${Date.now().toString(36)}`, kind, pane_id: id, timeout_ms: 60000, ...(args.length ? { args } : {}) });
   for (const t0 = Date.now(); Date.now() - t0 < 60_000; await new Promise(r => setTimeout(r, 1000)))
     if (await ready(id).catch(() => false)) return;
   throw new Error(`${kind} 가 60초 안에 준비되지 않았다`);

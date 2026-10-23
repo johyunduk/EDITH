@@ -96,14 +96,36 @@ function ConnectForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-// 새 워크스페이스 — 이름과 시작 폴더(셸 탭 완성처럼 하위 폴더 추천, Tab 이면 첫 추천). 만들면 그 첫 pane 으로 간다.
+// 폴더 입력 — 셸 탭 완성처럼 하위 폴더를 추천한다(Tab 이면 첫 추천). 새 워크스페이스 · 새 런이 같이 쓴다.
+export function FolderInput({ value, onChange, onKeyDown, placeholder, className }: {
+  value: string; onChange: (v: string) => void; onKeyDown?: (e: React.KeyboardEvent) => void; placeholder?: string; className?: string;
+}) {
+  const [focus, setFocus] = useState(false);
+  const sug = useQuery({
+    queryKey: ['folders', value], queryFn: () => get<string[]>(`/api/herdr/folders?q=${encodeURIComponent(value)}`),
+    enabled: focus, placeholderData: keepPreviousData,
+  });
+  return (
+    <div>
+      <input placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} className={className}
+        onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 150)}
+        onKeyDown={e => { if (e.key === 'Tab' && sug.data?.[0]) { e.preventDefault(); onChange(`${sug.data[0]}/`); } else onKeyDown?.(e); }} />
+      {/* 추천은 입력칸 아래에 끼워 넣는다(아래 버튼을 덮지 않게). 친 경로 그대로 하나만 남으면 숨긴다 */}
+      {focus && !!sug.data?.length && !(sug.data.length === 1 && sug.data[0] === value.replace(/\/$/, '')) && (
+        <div className="mt-1 max-h-40 w-full overflow-y-auto rounded-md border bg-popover p-1">
+          {sug.data.map(f => (
+            <button key={f} onMouseDown={e => { e.preventDefault(); onChange(`${f}/`); }} className="block w-full truncate rounded px-2 py-0.5 text-left font-mono text-xs hover:bg-muted">{f}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 새 워크스페이스 — 이름과 시작 폴더(FolderInput). 만들면 그 첫 pane 으로 간다.
 export function NewWorkspace() {
   const move = useMove();
-  const [open, setOpen] = useState(false), [label, setLabel] = useState(''), [cwd, setCwd] = useState('~/'), [focus, setFocus] = useState(false);
-  const sug = useQuery({
-    queryKey: ['folders', cwd], queryFn: () => get<string[]>(`/api/herdr/folders?q=${encodeURIComponent(cwd)}`),
-    enabled: open && focus, placeholderData: keepPreviousData,
-  });
+  const [open, setOpen] = useState(false), [label, setLabel] = useState(''), [cwd, setCwd] = useState('~/');
   const create = async () => { if (label.trim() && await move('/api/herdr/workspaces', { label, cwd })) { setOpen(false); setLabel(''); } };
   const enter = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void create(); } if (e.key === 'Escape') setOpen(false); };
   if (!open) return <button onClick={() => setOpen(true)} className="mb-1 flex h-8 w-full items-center gap-2 rounded-md border border-dashed px-2.5 text-left text-[0.8125rem] text-muted-foreground hover:border-primary/40 hover:bg-card hover:text-foreground"><span className="text-base leading-none">+</span>새 워크스페이스</button>;
@@ -111,19 +133,7 @@ export function NewWorkspace() {
   return (
     <div className="mb-1 space-y-2 rounded-lg border bg-card p-2.5 shadow-sm">
       <input autoFocus placeholder="이름" value={label} onChange={e => setLabel(e.target.value)} onKeyDown={enter} className={input} />
-      <div>
-        <input placeholder="시작 폴더 (~/…)" value={cwd} onChange={e => setCwd(e.target.value)} className={`${input} font-mono text-xs`}
-          onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 150)}
-          onKeyDown={e => { if (e.key === 'Tab' && sug.data?.[0]) { e.preventDefault(); setCwd(`${sug.data[0]}/`); } else enter(e); }} />
-        {/* 추천은 입력칸 아래에 끼워 넣는다(만들기 버튼을 덮지 않게). 친 경로 그대로 하나만 남으면 숨긴다 */}
-        {focus && !!sug.data?.length && !(sug.data.length === 1 && sug.data[0] === cwd.replace(/\/$/, '')) && (
-          <div className="mt-1 max-h-40 w-full overflow-y-auto rounded-md border bg-popover p-1">
-            {sug.data.map(f => (
-              <button key={f} onMouseDown={e => { e.preventDefault(); setCwd(`${f}/`); }} className="block w-full truncate rounded px-2 py-0.5 text-left font-mono text-xs hover:bg-muted">{f}</button>
-            ))}
-          </div>
-        )}
-      </div>
+      <FolderInput placeholder="시작 폴더 (~/…)" value={cwd} onChange={setCwd} onKeyDown={enter} className={`${input} font-mono text-xs`} />
       <div className="flex gap-2">
         <Button size="sm" className="h-7" disabled={!label.trim()} onClick={() => void create()}>만들기</Button>
         <Button size="sm" variant="outline" className="h-7" onClick={() => setOpen(false)}>취소</Button>

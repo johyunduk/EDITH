@@ -45,12 +45,12 @@ export function Attach({ onPaths }: { onPaths: (paths: string[]) => void }) {
   const btn = 'flex size-8 shrink-0 items-center justify-center rounded-lg border text-muted-foreground/80 transition hover:bg-muted/60 hover:text-foreground disabled:opacity-50';
   return <>
     <input ref={input} type="file" multiple hidden onChange={e => void pick([...e.target.files ?? []])} />
-    <button disabled={!!busy} onClick={() => input.current?.click()} title="파일 첨부 — 골라서 올리고 경로를 넣는다 · 입력칸에 붙여넣기(스크린샷)도 된다"
+    <button type="button" disabled={!!busy} onClick={() => input.current?.click()} title="파일 첨부 — 골라서 올리고 경로를 넣는다 · 입력칸에 붙여넣기(스크린샷)도 된다"
       className={`${btn} ${busy === 'files' ? 'animate-pulse text-primary' : ''}`}>
       <Icon>{CLIP}</Icon>
     </button>
     {view?.shot && !view.remote && (
-      <button disabled={!!busy} onClick={shoot} title="스크린샷 — 영역을 골라 찍고(스페이스: 창, Esc: 취소) 경로를 넣는다"
+      <button type="button" disabled={!!busy} onClick={shoot} title="스크린샷 — 영역을 골라 찍고(스페이스: 창, Esc: 취소) 경로를 넣는다"
         className={`${btn} ${busy === 'shot' ? 'animate-pulse text-primary' : ''}`}>
         <Icon>{CAMERA}</Icon>
       </button>

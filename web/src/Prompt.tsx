@@ -45,12 +45,30 @@ function Cells({ text }: { text: string }) {
   return text.split(/([^\x00-\x7f]+)/u).map((s, i) => i % 2
     ? <span key={i} className="inline-block whitespace-nowrap" style={{ width: `${[...s].reduce((n, c) => n + (wide(c) ? 2 : 1), 0)}ch` }}>{s}</span> : s);
 }
+// 다른 화면(공방 노드 버튼)이 이 pane 입력칸에 글을 넣는다 — 쓰던 글이 있으면 뒤에 붙인다. 입력칸이 열려 있으면 바로 바뀌고,
+// 닫혀 있으면(접힌 칸) 쓰다 만 글로 남아 열 때 보인다. 보내기는 사람이.
+const DRAFT_EVENT = 'edith-draft';
+export function putDraft(id: string, add: string) {
+  const now = loadDraft(id).replace(/\s+$/, '');
+  saveDraft(id, now ? `${now}\n\n${add}` : add);
+  window.dispatchEvent(new CustomEvent(DRAFT_EVENT, { detail: id }));
+}
 export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   const agent = !!p.agent, { menu, raw } = useScreen(p), qc = useQueryClient();
   const [text, setText] = useState(() => loadDraft(p.id)), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
   const ac = useComplete(p, text, caret);
   useEffect(() => saveDraft(p.id, text), [p.id, text]);
+  useEffect(() => {
+    const put = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== p.id) return;
+      const t = loadDraft(p.id);
+      setText(t); setCaret(t.length);
+      requestAnimationFrame(() => { area.current?.focus(); area.current?.setSelectionRange(t.length, t.length); });
+    };
+    addEventListener(DRAFT_EVENT, put);
+    return () => removeEventListener(DRAFT_EVENT, put);
+  }, [p.id]);
   const run = async (f: () => Promise<unknown>) => {
     setBusy(true);
     try { await f(); setErr(''); } catch (e) { setErr(String(e)); }
@@ -127,7 +145,8 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
                   ? <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[0.6875rem] font-bold text-primary tabular-nums">{o.n}</span>
                   : <span className={`flex size-5 shrink-0 items-center justify-center rounded-md border text-[0.75rem] font-bold ${o.checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>{o.checked ? '✓' : ''}</span>}
                 <span className="font-medium">{o.label}</span>
-                {o.desc && <span className="truncate text-xs text-muted-foreground">{o.desc}</span>}
+                {/* 설명은 남은 폭에서 줄을 바꾼다 — 긴 설명이 선택지 이름을 한 글자 폭으로 짓누르지 않게 */}
+                {o.desc && <span className="min-w-0 flex-1 text-xs text-muted-foreground">{o.desc}</span>}
                 {menu.preview?.n === o.n && <span className="ml-auto shrink-0 text-[0.6875rem] font-semibold text-primary">미리 보기 중</span>}
               </button>
             ))}

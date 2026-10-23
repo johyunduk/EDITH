@@ -53,7 +53,9 @@ function question(lines: string[], end: number) {
 }
 
 export function parseMenu(lines: string[]): Menu | null {
-  const first = lines.findIndex(l => OPT.test(l));
+  // 선택지는 화면 맨 아래 메뉴 — 위 대화에 번호 목록·제목(「2. …」)이 보여도 마지막 「1.」 부터 읽는다
+  const opts = [...lines.keys()].filter(i => OPT.test(lines[i]));
+  const first = opts.findLast(i => lines[i].match(OPT)![1] === '1') ?? opts[0] ?? -1;
   if (first < 0) return cursorMenu(lines);
   // 미리 보기가 붙은 질문은 첫 선택지 줄 오른쪽에서 상자(┌)가 시작한다 — 줄마다 오른쪽 상자 조각을 떼어 미리 보기로 모은다.
   // 이 꼴에서 Claude 는 선택지 설명을 화면에 그리지 않는다(desc 가 빈다).

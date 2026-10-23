@@ -17,10 +17,19 @@ import { firstLine } from './sh.ts';
 import { branches, diff } from './diff.ts';
 import { summarize } from './summary.ts';
 import { forgetSkills, skillFile, skills } from './skills.ts';
+import { engineMap, workshopFile } from './engineMap.ts';
 import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
 import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
 import { canShoot, screenshot } from './screenshot.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
+import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, syncGuide } from './workshop.ts';
+import { act, listRuns, loadRun, pickAction, previewSteps, requestHook, resultHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
+import { repoDiff, repoStatus } from './repos.ts';
+import { listOutputs, readOutput } from './outputs.ts';
+import { livePort, stream } from './live.ts';
+import { runAnalysis } from './analysis.ts';
+import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
+import { checkResult, listResults } from './results.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -153,6 +162,110 @@ export function serve(port: number) {
       if (path === '/api/skills/file') {
         const t = skillFile(url.searchParams.get('id') ?? '', url.searchParams.get('file') ?? '');
         return t === null ? reply(res, 404, '없음') : reply(res, 200, t);
+      }
+      // 공방 — 체인 · 엔진 목록(+ 공방 Claude pane, herdr 가 없으면 null), 새로 만들기, 공방 Claude 띄우기, 하나 읽기 · 저장
+      if (path === '/api/workshop' && req.method === 'GET')
+        return reply(res, 200, { root: WORKSHOP, engines: listEngines(), claude: await findClaude().catch(() => null) });
+      if (path === '/api/workshop' && req.method === 'POST') {
+        const b = await body(req) as { id?: unknown; name?: unknown; kind?: unknown };
+        try { return reply(res, 200, createEngine(b.id, b.name, b.kind)); } catch (e) { return fail(e); }
+      }
+      if (path === '/api/workshop/claude' && req.method === 'POST') return await ensureClaude().then(id => reply(res, 200, { id }), fail);
+      // 초안 — 적용(읽은 판이 같을 때만) · 버리기, 지우기(휴지통으로)
+      const wd = path.match(/^\/api\/workshop\/([^/]+)\/(draft|remove)$/);
+      if (wd && NAME.test(wd[1]) && req.method === 'POST') {
+        const b = await body(req) as { do?: unknown; version?: unknown };
+        try {
+          if (wd[2] === 'remove') return reply(res, 200, { trash: removeEngine(wd[1]) });
+          return reply(res, 200, b.do === 'apply' ? applyDraft(wd[1], b.version) : discardDraft(wd[1]));
+        } catch (e) { return fail(e); }
+      }
+      // 펼쳐 보기 — 런처럼 노드 한 줄로(읽기만)
+      const ws = path.match(/^\/api\/workshop\/([^/]+)\/steps$/);
+      if (ws && NAME.test(ws[1]) && req.method === 'GET') return reply(res, 200, previewSteps(ws[1]));
+      // 흐름 지도 — 엔진을 단계 칸 · 줄로(읽기만, src/engineMap.ts), 「전체 보기」 — 공방 폴더 안 파일 하나
+      const wmap = path.match(/^\/api\/workshop\/([^/]+)\/map$/);
+      if (wmap && NAME.test(wmap[1]) && req.method === 'GET') { try { return reply(res, 200, engineMap(wmap[1])); } catch (e) { return fail(e); } }
+      if (path === '/api/workshop-file') {
+        const t = workshopFile(url.searchParams.get('path') ?? '');
+        return t === null ? reply(res, 404, '없음') : reply(res, 200, t);
+      }
+      const we = path.match(/^\/api\/workshop\/([^/]+)$/);
+      // 새 런 칸의 고르기 목록 — 엔진 actions.json 의 on: "picks" 명령을 돌린다(src/runner.ts runPicks). 명령을 돌리니 POST 로만
+      const wp = path.match(/^\/api\/workshop\/([^/]+)\/picks$/);
+      if (wp && req.method === 'POST') return await runPicks(wp[1]).then(v => reply(res, 200, v), fail);
+      if (we && NAME.test(we[1])) {
+        if (req.method === 'GET') { try { return reply(res, 200, { ...readEngine(we[1]), picks: pickAction(we[1])?.label }); } catch { return reply(res, 404, '공방에 없다'); } }
+        const b = await body(req) as { engine?: unknown; version?: unknown };
+        try { return reply(res, 200, saveEngine(we[1], b.engine, b.version)); } catch (e) { return fail(e); }
+      }
+      // 런 — 목록, 새 런(체인 · 엔진, 작업 폴더, 입력), 하나 보기, 멈춤 · 이어서 · 건너뛰기
+      if (path === '/api/runs' && req.method === 'GET') return reply(res, 200, listRuns());
+      // 동시 런 한도 — 넘으면 새 런은 줄을 선다
+      if (path === '/api/runs/limit' && req.method === 'GET') return reply(res, 200, { max: runLimit() });
+      if (path === '/api/runs/limit' && req.method === 'POST') { try { return reply(res, 200, setRunLimit((await body(req) as { max?: unknown }).max)); } catch (e) { return fail(e); } }
+      if (path === '/api/runs' && req.method === 'POST') {
+        const b = await body(req) as { engine?: unknown; cwd?: unknown; input?: unknown; branch?: unknown; unattended?: unknown; request?: unknown };
+        // 요청에서 연 런이면 시작한 뒤 그 요청에 런 번호로 답한다
+        const rq = typeof b.request === 'string' && b.request ? b.request : null;
+        const asked = rq ? readRequest(rq) : null;
+        if (rq && (!asked || !listRequests().some(x => x.id === rq))) return reply(res, 400, '없거나 이미 답한 요청이다');
+        return await startRun(b.engine, b.cwd, b.input, b.branch, port, b.unattended, asked ?? undefined).then(r => {
+          if (asked) {
+            answerRequest(asked.id, { state: 'started', run: r.id });
+            requestHook(asked.engine, { EDITH_REQUEST_FILE: join(REQUESTS, `${asked.id}.json`), EDITH_REQUEST_STATE: 'started', EDITH_REQUEST_RUN: String(r.id), EDITH_REQUEST_REASON: '' }, join(REQUESTS, `${asked.id}.hook.log`));
+          }
+          reply(res, 200, r);
+        }, fail);
+      }
+      if (path === '/api/requests' && req.method === 'GET') return reply(res, 200, listRequests());
+      if (path === '/api/results' && req.method === 'GET') return reply(res, 200, listResults());
+      if (path === '/api/results/check' && req.method === 'POST') {
+        // 체크를 파일에 쓰고, 그 런 엔진에 「결과 반영」 명령(actions.json on: results)이 있으면 돌린다
+        try { const x = checkResult(await body(req) as Record<string, unknown>); return reply(res, 200, { ok: true, hook: resultHook(x.run, x) }); } catch (e) { return fail(e); }
+      }
+      const rj = path.match(/^\/api\/requests\/([^/]+)\/reject$/);
+      if (rj && REQ_ID.test(rj[1]) && req.method === 'POST') {
+        const why = (await body(req) as { reason?: unknown } | null)?.reason, reason = typeof why === 'string' ? why.trim().slice(0, 1000) : '';
+        try {
+          const asked = readRequest(rj[1]);
+          answerRequest(rj[1], { state: 'rejected', ...(reason ? { reason } : {}) });
+          if (asked) requestHook(asked.engine, { EDITH_REQUEST_FILE: join(REQUESTS, `${asked.id}.json`), EDITH_REQUEST_STATE: 'rejected', EDITH_REQUEST_RUN: '', EDITH_REQUEST_REASON: reason }, join(REQUESTS, `${asked.id}.hook.log`));
+          return reply(res, 200, { ok: true });
+        } catch (e) { return fail(e); }
+      }
+      const ru = path.match(/^\/api\/runs\/(\d{1,6})(?:\/(stop|resume|skip|rewind|action))?$/);
+      if (ru && !ru[2] && req.method === 'GET') { const v = runView(Number(ru[1])); return v ? reply(res, 200, v) : reply(res, 404, '없는 런'); }
+      // 런의 레포 커밋 상태 — 엔진이 남긴 edith-repos.json 의 레포를 git 으로 읽는다(src/repos.ts)
+      const rp = path.match(/^\/api\/runs\/(\d{1,6})\/repos$/);
+      if (rp && req.method === 'GET') { const r = loadRun(Number(rp[1])); return r ? reply(res, 200, await repoStatus(join(RUNS, rp[1], 'work'), r.cwd)) : reply(res, 404, '없는 런'); }
+      // 런 레포의 변경 — i 번째 레포를 딴 커밋부터 지금까지(src/repos.ts repoDiff)
+      const rd = path.match(/^\/api\/runs\/(\d{1,6})\/repos\/(\d{1,2})\/diff$/);
+      if (rd && req.method === 'GET') {
+        const r = loadRun(Number(rd[1]));
+        if (!r) return reply(res, 404, '없는 런');
+        try { return reply(res, 200, await repoDiff(join(RUNS, rd[1], 'work'), r.cwd, Number(rd[2]))); } catch (e) { return fail(e); }
+      }
+      // 런 산출물 — 엔진이 남긴 edith-outputs.json 의 목록 · i 번째 파일의 글(src/outputs.ts). 파일은 런 작업 폴더 · 실행 폴더 안만
+      const ro = path.match(/^\/api\/runs\/(\d{1,6})\/outputs(?:\/(\d{1,2}))?$/);
+      if (ro && req.method === 'GET') {
+        const r = loadRun(Number(ro[1]));
+        if (!r) return reply(res, 404, '없는 런');
+        const work = join(RUNS, ro[1], 'work'), roots = [r.cwd, join(RUNS, ro[1])];
+        try { return reply(res, 200, ro[2] === undefined ? listOutputs(work, roots) : readOutput(work, roots, Number(ro[2]))); } catch (e) { return fail(e); }
+      }
+      // 런이 띄운 브라우저 화면 — 엔진이 남긴 edith-live.json 의 포트(이 기기)에서 MJPEG 로(src/live.ts)
+      const rl = path.match(/^\/api\/runs\/(\d{1,6})\/live$/);
+      if (rl && req.method === 'GET') { const p = livePort(join(RUNS, rl[1], 'work')); return p ? await stream(req, res, p) : reply(res, 404, '이 런은 화면을 보내지 않는다'); }
+      const ra = path.match(/^\/api\/runs\/(\d{1,6})\/analysis$/);
+      if (ra && req.method === 'GET') { const v = runAnalysis(Number(ra[1])); return v ? reply(res, 200, v) : reply(res, 404, '없는 런'); }
+      if (ru?.[2] && req.method === 'POST') {
+        const b = await body(req) as { key?: unknown; n?: unknown; text?: unknown };
+        try {
+          if (ru[2] === 'action') runAction(Number(ru[1]), b.n, b.text);
+          else act(Number(ru[1]), { do: ru[2] as 'stop' | 'resume' | 'skip' | 'rewind', key: b.key });
+          return reply(res, 200, { ok: true });
+        } catch (e) { return fail(e); }
       }
       // 다른 기기의 EDITH(machines.json) — 이름 목록, 열기(SSH 터널을 열고 그 기기의 열쇠 붙은 주소)
       if (path === '/api/machines') return reply(res, 200, machines().map(m => m.name));
@@ -314,6 +427,6 @@ export function serve(port: number) {
   });
   return new Promise<string>((ok, no) => {
     server.once('error', no);
-    server.listen(port, '127.0.0.1', () => { watchHerdr(); ok(`http://127.0.0.1:${port}/?key=${KEY}`); });
+    server.listen(port, '127.0.0.1', () => { watchHerdr(); resumeRuns(port); try { syncGuide(); } catch { /* 안내는 다음에 */ } ok(`http://127.0.0.1:${port}/?key=${KEY}`); });
   });
 }

@@ -12,7 +12,8 @@ const USAGE = `사용: edith [serve] [--port N] [--no-open]   herdr 확인·시�
       edith --no-herdr                         herdr 를 확인·시작하지 않고 화면만 — 다른 기기의 EDITH 를 열 때(이 기기 herdr 없이)
       edith update [--port N]                  받기(git pull)·화면 빌드 → 떠 있는 EDITH 를 새 코드로 다시 켜기
       edith setup                              설치 스크립트 다시 — 빠진 도구 설치, herdr 통합·스킬, 화면 빌드
-      edith connect [이름 user@host]           다른 기기 잇기 — SSH 키 등록·machines.json(인자 없으면 Tailscale 기기에서 고른다)`;
+      edith connect [이름 user@host]           다른 기기 잇기 — SSH 키 등록·machines.json(인자 없으면 Tailscale 기기에서 고른다)
+      edith request <id>                       요청(~/.local/share/edith/requests/<id>.json)의 진행 — 읽기만, JSON 으로`;
 
 const win = process.platform === 'win32';
 const fail = (m: string): never => { console.error(m); process.exit(1); };
@@ -112,6 +113,12 @@ switch (argv[0] ?? 'serve') {
   case 'setup': setup(); break;
   case 'update': await update(argv.slice(1)); break;
   case 'connect': await connect(argv.slice(1)); break;
+  case 'request': {
+    const { requestStatus } = await import('./requests.ts'), st = argv[1] ? requestStatus(argv[1]) : null;
+    if (!st) fail(`없는 요청: ${argv[1] ?? '(id 없음)'}`);
+    console.log(JSON.stringify(st, null, 2));
+    break;
+  }
   case 'serve': await serve(argv.slice(1)); break;
   case '-h': case '--help': case 'help': console.log(USAGE); break;
   default: if (argv[0].startsWith('--')) await serve(argv); else { console.log(USAGE); process.exit(2); }

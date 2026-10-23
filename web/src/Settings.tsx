@@ -30,6 +30,9 @@ export function SettingsPage({ theme, setTheme }: { theme: Theme; setTheme: (t: 
             ))}
           </div>
         </Section>
+        <Section title="런" note="공방 엔진 · 체인을 돌리는 런">
+          <RunLimit />
+        </Section>
         <Section title="Claude" note={view ? `${view.remote ? '다른 기기' : '이 기기'} 「${view.host}」 의 Claude 에 적용` : undefined}>
           <PluginToggles />
         </Section>
@@ -47,6 +50,29 @@ function Section({ title, note, children }: { title: string; note?: string; chil
       </div>
       {children}
     </section>
+  );
+}
+
+// 동시에 도는 런 수 — 넘으면 새 런은 「대기」 로 줄을 서고 자리가 나면 먼저 온 것부터(확인 필요인 런도 센다)
+function RunLimit() {
+  const qc = useQueryClient(), { data } = useQuery({ queryKey: ['run-limit'], queryFn: () => get<{ max: number }>('/api/runs/limit') });
+  const [err, setErr] = useState('');
+  const set = async (max: number) => {
+    setErr('');
+    try { qc.setQueryData(['run-limit'], await post<{ max: number }>('/api/runs/limit', { max })); } catch (e) { setErr((e as Error).message); }
+  };
+  return (
+    <label className="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3 text-sm">
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold">동시에 도는 런</span>
+        <span className="block text-xs text-muted-foreground">넘으면 새 런은 「대기」 로 줄을 서고, 도는 런이 끝나면 먼저 온 것부터 시작한다. 확인 필요(사람 대기)인 런도 센다 — 그동안에도 그 런의 Claude · 로컬 서버를 쥐고 있다.</span>
+        {err && <span className="block text-xs text-destructive">{err}</span>}
+      </span>
+      <select value={data?.max ?? 2} disabled={!data} onChange={e => void set(Number(e.target.value))}
+        className="h-8 rounded-md border bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50">
+        {Array.from({ length: 10 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}개</option>)}
+      </select>
+    </label>
   );
 }
 
