@@ -8,16 +8,58 @@ import { openMenu } from './Menu.tsx';
 import { toast } from './copy.ts';
 import { DOT, DRAG_PANE, DRAG_WS, Kind, REMOTE, STATUS, carrying, paneText, useMove, usePaneMenu, useTabMenu, useWorkspaceMenu } from './herdrUi.tsx';
 
-// 상태 표시 — 모든 pane 의 작업 중·승인 대기·끝남 수
-export function Legend({ panes }: { panes: HPane[] }) {
+// 상태 표시 — 모든 pane 의 작업 중·승인 대기·끝남 수. 줄에 마우스를 올리면(키보드는 Tab) 그 상태의 pane 목록이 오른쪽에 뜨고, 누르면 그 pane 으로.
+// 사이드바가 overflow-hidden 이라 목록은 fixed 로 띄운다. 목록도 이 div 의 자식이라 줄에서 목록으로 옮겨 가도 닫히지 않는다.
+export function Legend({ data }: { data: HerdrView }) {
+  const [at, setAt] = useState<{ s: string; left: number; bottom: number } | null>(null);
+  const show = (s: string) => (e: React.SyntheticEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setAt({ s, left: Math.min(r.right, innerWidth - 296), bottom: innerHeight - r.bottom });   // 좁은 화면이면 화면 안으로 당긴다
+  };
   return (
-    <div className="m-1.5 mt-0 shrink-0 border-t px-2.5 pt-2 pb-1">
+    <div className="m-1.5 mt-0 shrink-0 border-t px-2.5 pt-2 pb-1" onMouseLeave={() => setAt(null)}
+      onKeyDown={e => { if (e.key === 'Escape') setAt(null); }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setAt(null); }}>
       <div className="mb-0.5 text-[0.6875rem] font-semibold text-muted-foreground">상태 표시</div>
-      {(['working', 'blocked', 'done'] as const).map(s => (
-        <div key={s} className="flex h-6 items-center gap-2 text-[0.8125rem]">
-          <span className={`size-2.5 rounded-full ${DOT[s]}`} />{STATUS[s]}<span className="ml-auto text-muted-foreground tabular-nums">{panes.filter(p => p.status === s).length}</span>
-        </div>
-      ))}
+      {(['working', 'blocked', 'done'] as const).map(s => {
+        const n = data.panes.filter(p => p.status === s).length;
+        return (
+          <div key={s} tabIndex={n ? 0 : undefined} onMouseEnter={n ? show(s) : () => setAt(null)} onFocus={n ? show(s) : undefined}
+            className={`-mx-1 flex h-6 items-center gap-2 rounded px-1 text-[0.8125rem] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${at?.s === s ? 'bg-muted/70' : ''}`}>
+            <span className={`size-2.5 rounded-full ${DOT[s]}`} />{STATUS[s]}<span className="ml-auto text-muted-foreground tabular-nums">{n}</span>
+          </div>
+        );
+      })}
+      {at && <StatusList data={data} s={at.s} style={{ left: at.left, bottom: at.bottom }} onPick={() => setAt(null)} />}
+    </div>
+  );
+}
+
+// 상태 목록 — 사이드바 트리 순서대로 맨 위 워크스페이스마다 묶고, 각 줄은 pane 이름 + 그 아래 「하위 워크트리 · 탭」(탭은 둘 이상일 때만 — 트리와 같게)
+function StatusList({ data, s, style, onPick }: { data: HerdrView; s: string; style: React.CSSProperties; onPick: () => void }) {
+  const wss = [...data.workspaces].sort((a, b) => a.number - b.number), childOf = parentOf(wss);
+  const rows = data.panes.filter(p => p.status === s).flatMap(p => {
+    const w = wss.find(x => x.workspace_id === p.workspace);
+    return w ? [{ p, w, top: childOf(w) ?? w }] : [];
+  });
+  return (
+    <div style={style} className="fixed z-50 max-h-[70vh] w-72 overflow-y-auto pl-1">
+      <div className="rounded-md border bg-popover p-1 shadow-lg">
+        {wss.filter(t => rows.some(r => r.top === t)).map(t => (
+          <div key={t.workspace_id}>
+            <div className="truncate px-2 pt-1 pb-0.5 text-[0.6875rem] font-semibold text-muted-foreground">{t.label}</div>
+            {rows.filter(r => r.top === t).map(({ p, w }) => {
+              const tabs = data.tabs.filter(x => x.workspace_id === w.workspace_id);
+              const where = [w !== t && w.label, tabs.length > 1 && `탭 ${tabs.find(x => x.tab_id === p.tab)?.label ?? ''}`].filter(Boolean).join(' · ');
+              return (
+                <a key={p.id} href={`#/herdr/${p.id}`} onClick={onPick} className="block rounded px-2 py-1 hover:bg-muted focus-visible:bg-muted focus-visible:outline-none">
+                  <span className="flex items-center gap-2 text-xs"><Kind agent={p.agent} /><span className="truncate">{paneText(p)}</span></span>
+                  {where && <span className="block truncate pl-5.5 text-[0.6875rem] text-muted-foreground">{where}</span>}
+                </a>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -142,12 +184,16 @@ export function NewWorkspace() {
   );
 }
 
+// 링크 워크트리 워크스페이스의 위(같은 레포의 본 워크스페이스) — 없으면 맨 위 단. 트리와 상태 목록이 같이 쓴다.
+const parentOf = (wss: HWorkspace[]) => {
+  const main = new Map(wss.filter(w => w.worktree && !w.worktree.is_linked_worktree).map(w => [w.worktree!.repo_key, w]));
+  return (w: HWorkspace) => w.worktree?.is_linked_worktree ? main.get(w.worktree.repo_key) : undefined;
+};
+
 // 사이드바 — herdr 와 같은 레포 트리. 레포 워크스페이스 밑에 그 레포의 링크 워크트리를 붙이고, 각 아래에 pane.
 // 레포 워크스페이스가 안 열린 워크트리는 맨 위 단에 둔다. 순서는 herdr 번호.
 export function Tree({ data, sel }: { data: HerdrView; sel?: string }) {
-  const wss = [...data.workspaces].sort((a, b) => a.number - b.number);
-  const main = new Map(wss.filter(w => w.worktree && !w.worktree.is_linked_worktree).map(w => [w.worktree!.repo_key, w]));
-  const childOf = (w: HWorkspace) => w.worktree?.is_linked_worktree ? main.get(w.worktree.repo_key) : undefined;
+  const wss = [...data.workspaces].sort((a, b) => a.number - b.number), childOf = parentOf(wss);
   return wss.filter(w => !childOf(w)).map(w => (
     <Node key={w.workspace_id} w={w} data={data} sel={sel} depth={0}>
       {wss.filter(c => childOf(c) === w).map(c => <Node key={c.workspace_id} w={c} data={data} sel={sel} depth={1} />)}

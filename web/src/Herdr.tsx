@@ -19,7 +19,7 @@ export function HerdrPage({ pane, side = true, brand = 'EDITH' }: { pane?: strin
         <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1.5">
           {data && <><NewWorkspace /><Tree data={data} sel={sel?.id} /></>}
         </nav>
-        {data && <Legend panes={data.panes} />}
+        {data && <Legend data={data} />}
         <OtherDevices />
         <SideFooter brand={brand} ready={!!data} />
       </aside>
