@@ -16,10 +16,12 @@ import { parseMenu, stillPicked } from '../web/src/screenMenu.ts';
 // 없으면 `herdr status server` 가 알려 주는 경로(socket: …). 둘 다 못 얻으면 Unix 기본 경로 — 그때는 기억하지 않고 다음에 다시 묻는다.
 let socketPath = process.env.HERDR_SOCKET_PATH;
 function socket() {
-  if (socketPath) return socketPath;
+  if (socketPath) return pipeName(socketPath);
   const out = spawnSync('herdr', ['status', 'server'], { encoding: 'utf8', timeout: 5000 }).stdout ?? '';
-  return (socketPath = out.match(/^socket:\s*(.+)$/m)?.[1].trim()) ?? join(homedir(), '.config', 'herdr', 'herdr.sock');
+  return pipeName((socketPath = out.match(/^socket:\s*(.+)$/m)?.[1].trim()) ?? join(homedir(), '.config', 'herdr', 'herdr.sock'));
 }
+// Windows herdr 는 그 경로 앞에 \\.\pipe\ 를 붙인 이름으로 듣는다 — 경로의 파일은 표시일 뿐이라 그대로 열면 ENOTSOCK(herdr 0.9.5 src/ipc.rs)
+export const pipeName = (p: string, win = process.platform === 'win32') => win && !/^\\\\[.?]\\pipe\\/i.test(p) ? `\\\\.\\pipe\\${p}` : p;
 
 // 소켓 요청 하나 — 연결 하나에 요청 하나(herdr 가 답하고 닫는다).
 function api(method: string, params: Record<string, unknown>) {

@@ -126,7 +126,7 @@ edith
 
 ## 동작 방식
 
-- **herdr 연결** — 읽기는 `herdr` CLI, 쓰기·이벤트 구독은 herdr 소켓(Windows 는 named pipe). 소켓은 `HERDR_SOCKET_PATH`(herdr pane 안에서 띄우면 있음), 없으면 `herdr status server` 가 알려 주는 경로.
+- **herdr 연결** — 읽기는 `herdr` CLI, 쓰기·이벤트 구독은 herdr 소켓(Windows 는 named pipe — 알려 준 경로 앞에 `\\.\pipe\` 를 붙인 이름). 소켓은 `HERDR_SOCKET_PATH`(herdr pane 안에서 띄우면 있음), 없으면 `herdr status server` 가 알려 주는 경로.
 - **대화 기록 찾기** — herdr 통합이 알려 준 세션 ID → 그 pane 의 `claude` 프로세스가 쓰는 `~/.claude/sessions/<pid>.json`(Claude Code 내부 파일, 2.1.x 확인) → 창 제목으로 추측, 순서로 찾습니다. Codex 는 그 pane 의 `codex` 프로세스가 열어 둔 기록 파일(`lsof`), 없으면 herdr 가 알려 준 세션, 그다음 `~/.codex/session_index.jsonl` 의 스레드 이름으로.
 - **백그라운드 셸** — 끝 표시·끝남 알림으로 상태를 가리고, `lsof` 가 있으면 끝 표시 없이 죽은 셸도 가립니다(Windows 는 끝 표시로만). 셸·에이전트 모두, pane 의 `claude` 가 다시 뜨기 전에 띄운 것은 끝난 것으로 봅니다.
 
