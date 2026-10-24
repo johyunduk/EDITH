@@ -1,6 +1,8 @@
 # EDITH installer for Windows: herdr, Claude Code, Codex CLI, the herdr integrations and skill, then EDITH itself.
 # Safe to run again: tools already present are skipped, integrations and the skill are refreshed.
-#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/johyunduk/EDITH/main/install.ps1 | iex"
+#   Set-ExecutionPolicy -Scope Process Bypass -Force; irm https://raw.githubusercontent.com/johyunduk/EDITH/main/install.ps1 | iex
+# Runs in the current window: some security software refuses to start a new powershell.exe (Access is denied).
+# The policy change lasts only for this window; npm's .ps1 shims (npm, codex) need it under the default Restricted policy.
 # No admin rights. Downloads only from each tool's official installer (herdr.dev, claude.ai, npm, winget) and this repo.
 # Run from a checkout and EDITH is built there; otherwise $env:EDITH_REPO (default: this repo) is cloned to $env:EDITH_DIR (default ~\.edith).
 # In your own copy (template or fork), change only the default repo URL below.
@@ -17,7 +19,8 @@ function Run([string]$exe, [string[]]$a) {
 # Other installers run in their own PowerShell so their `exit` cannot end this script; PATH is re-read afterwards.
 function Pipe([string]$url) {
   Write-Host "  > irm $url | iex"
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $url | iex"
+  try { powershell -NoProfile -ExecutionPolicy Bypass -Command "irm $url | iex" }
+  catch { throw "Could not start a new PowerShell ($($_.Exception.Message)); security software may block it. Run   irm $url | iex   in this window yourself, then run this installer again." }
   if ($LASTEXITCODE) { throw "$url failed (exit code $LASTEXITCODE)" }
   Refresh-Path
 }

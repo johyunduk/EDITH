@@ -14,11 +14,13 @@ macOS·Linux:
 curl -fsSL https://raw.githubusercontent.com/johyunduk/EDITH/main/install.sh | bash
 ```
 
-Windows(PowerShell — WSL 없이):
+Windows(PowerShell — WSL 없이, [Git for Windows](https://git-scm.com) 가 먼저 있어야 합니다 — Claude Code 도 그 Git Bash 를 씁니다):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/johyunduk/EDITH/main/install.ps1 | iex"
+Set-ExecutionPolicy -Scope Process Bypass -Force; irm https://raw.githubusercontent.com/johyunduk/EDITH/main/install.ps1 | iex
 ```
+
+열린 PowerShell 창에서 그대로 돕니다. 실행 정책은 이 창에만 풀립니다(`npm` 같은 `.ps1` 명령이 기본 정책에서 막혀서).
 
 **2. 새 터미널을 열고 로그인** — 바뀐 PATH 는 새 터미널부터 잡힙니다.
 
@@ -37,7 +39,7 @@ herdr 서버가 꺼져 있으면 화면 없이 띄우고, 브라우저로 EDITH 
 
 설명서: [사용 설명서](docs/guide.md) · [고치기](docs/customize.md)
 
-> 확인한 환경: macOS, herdr 0.9.4, Claude Code 2.1.x. Linux·Windows 는 코드만 맞춰 두었고 아직 실기기에서 돌려 보지 않았습니다 — 막히면 「막힐 때」 를 보고 이슈로 알려 주세요.
+> 확인한 환경: macOS, herdr 0.9.5, Claude Code 2.1.x. Linux·Windows 는 코드만 맞춰 두었고 아직 실기기에서 돌려 보지 않았습니다 — 막히면 「막힐 때」 를 보고 이슈로 알려 주세요.
 
 ## 쓰기
 
@@ -49,6 +51,7 @@ edith --port 4400    # 다른 포트(기본 4320)
 edith update         # 받기(git pull)·화면 빌드 → 떠 있는 EDITH 를 새 코드로 다시 켜기
 edith setup          # 설치 스크립트 다시 — 빠진 도구, herdr 통합·스킬, 화면 빌드, Claude 플러그인
 edith connect        # 다른 기기 잇기 — SSH 키 등록·machines.json(「다른 기기의 EDITH 열기」)
+edith request <id>   # 다른 도구가 넣은 요청의 진행(요청 · 런 상태) — 읽기만, JSON
 ```
 
 - 이미 떠 있으면 새로 띄우지 않고 브라우저만 엽니다. 브라우저는 열쇠가 붙은 주소로 열리고, 열쇠는 쿠키로 30일 남습니다.
@@ -78,7 +81,12 @@ EDITH 는 받아서 마음대로 고쳐 쓰라고 만든 기본판입니다(MIT)
 - **백그라운드 작업** — Claude 가 띄운 셸·에이전트와 그 출력. 「끄기」는 그 Claude 에게 꺼도 되는지 묻고 TaskStop 으로 끄게 합니다.
 - **원격** — Claude pane 의 Remote Control 이 켜졌는지. 켜져 있으면 claude.ai 에서 그 세션을 여는 링크, 꺼져 있으면 「원격 켜기」. 함께 설치되는 Claude 플러그인 `rc-keepalive` 가 켜 두었던 세션이 끊기면 다시 켭니다(「Remote Control 지킴이」).
 - **스킬** — Claude·Codex 의 스킬·명령 목록과 서로 부르는 관계도. 다른 기기의 스킬을 파일 하나로 내려받아 이 기기로 가져오기(공개 스킬·플러그인은 설치 명령으로).
-- **설정** — 화면 테마(EDITH·ULTRON), 커밋 지킴이(Claude 가 git commit·push 전에 묻기)·Claude 끼리는 SendMessage 켜고 끄기.
+- **공방** — 스킬·명령 노드를 이어 체인을, 체인을 이어 엔진을 그립니다(예: 기획 파악 → 구현 → 테스트).
+- **런** — 엔진을 실제로 돌립니다. 노드마다 herdr 에 Claude 를 띄워 지시를 보내고, 결과 파일을 받으면 다음 노드로. 동시에 도는 수에 한도가 있고 넘으면 줄을 섭니다. 다른 도구(대화방 봇 등)가 넣은 **받은 요청** 을 열어 런으로 시작합니다.
+- **결과** — 끝난 런의 코드가 커밋에서 마지막 브랜치까지 어디 있는지 단계로 보이고, 단계마다 엔진이 정한 단추(머지·푸시 등)를 누릅니다.
+- **설정** — 런 동시 수, 화면 테마(EDITH·ULTRON), 커밋 지킴이(Claude 가 git commit·push 전에 묻기)·Claude 끼리는 SendMessage 켜고 끄기.
+
+자세한 쓰는 법은 [사용 설명서](docs/guide.md).
 
 ## 설치 자세히
 
@@ -108,6 +116,8 @@ edith
 
 - **`edith`·`claude`·`node` 를 못 찾는다** — 설치 뒤 새 터미널을 열었는지 봅니다(PATH·nvm 은 새 터미널부터). 그래도 없으면 `edith setup`(또는 EDITH 폴더의 `./install.sh`)을 다시 돌립니다.
 - **새 맥에서 `git clone` 중 「명령어 라인 개발자 도구」 설치 창이 뜬다** — 설치를 끝내고 설치 한 줄을 다시 돌립니다.
+- **Windows 에서 「'powershell.exe' 프로그램을 실행하지 못했습니다. 액세스가 거부되었습니다」** — 보안 프로그램이 새 PowerShell 을 띄우지 못하게 막은 것입니다. 설치 한 줄은 지금 창에서 돌고, herdr·Claude Code 설치만 새 PowerShell 로 띄웁니다. 막히면 설치가 알려 주는 공식 설치 명령(`irm https://herdr.dev/install.ps1 | iex` 등)을 지금 창에서 직접 돌린 뒤 설치 한 줄을 다시 돌립니다.
+- **Windows 새 창에서 `edith`·`codex` 가 「이 시스템에서 스크립트를 실행할 수 없으므로」** — npm 이 만든 `.ps1` 명령이 기본 실행 정책에 막힌 것입니다. `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`(관리자 권한 없이, 내 계정에만)를 한 번 돌리거나 `edith.cmd` 로 띄웁니다.
 - **「화면이 아직 빌드되지 않았다」** — `edith setup`.
 - **「4320 포트를 다른 프로그램이 쓴다」** — `edith --port <다른 번호>`.
 - **「herdr 에 닿지 않는다」·「herdr 서버가 10초 안에 뜨지 않았다」** — 터미널에서 `herdr` 를 직접 띄워 보고, `herdr status server` 로 상태를 봅니다.
@@ -203,7 +213,8 @@ Claude Code 에는 세션끼리 주고받는 `SendMessage`(대상은 `ListAgents
 - 모든 `/api` 는 열쇠 쿠키(`edith-<포트>`, `HttpOnly`, `SameSite=Strict`)가 있어야 합니다. 쿠키는 포트마다 따로라 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 섞이지 않습니다. 열쇠는 `~/.config/edith/console.key`(600)에 있고, 바꾸려면 지우고 다시 띄웁니다.
 - 쓰기는 같은 출처에서 온 JSON `POST` 만 받습니다(CSRF). 화면은 다른 사이트의 틀에 들어가지 않습니다(`frame-ancestors 'none'`). CORS 머리는 달지 않습니다.
 - **포트를 밖으로 열지 마세요** — 터널·리버스 프록시·`0.0.0.0` 포워딩 금지. 다른 기기에서 쓰려면 「다른 기기의 EDITH 열기」(SSH 터널)로.
-- 화면이 읽는 것은 내 계정 파일입니다: herdr 상태, `~/.claude`·`~/.codex` 의 세션 기록·스킬, pane 폴더의 git. 밖으로 보내는 것은 AI 요약을 누를 때 `claude -p` 로 넘기는 diff 뿐입니다(도구·MCP·훅 끄고 실행).
+- 화면이 읽는 것은 내 계정 파일입니다: herdr 상태, `~/.claude`·`~/.codex` 의 세션 기록·스킬, pane 폴더의 git, 공방·런 폴더. EDITH 가 직접 Claude 에 넘기는 것은 AI 요약을 누를 때 `claude -p` 로 보내는 diff(도구·MCP·훅 끄고 실행)와, 런이 그 런의 Claude pane 에 보내는 노드 지시입니다.
+- **공방의 명령 노드와 런 단추는 그 엔진 파일(`engine.json`·`actions.json`)에 적힌 명령을 셸로 그대로 돌립니다.** 남이 준 엔진 폴더는 그 파일을 읽어 보고 씁니다.
 - 첨부한 파일은 `~/.local/share/edith/uploads`(700/600)에 두고, 7일 지난 것은 다음에 올릴 때 지웁니다.
 
 ## 데이터
@@ -212,6 +223,10 @@ Claude Code 에는 세션끼리 주고받는 `SendMessage`(대상은 `ListAgents
 |---|---|
 | `~/.config/edith/console.key` | 화면 열쇠 |
 | `~/.config/edith/machines.json` | 다른 기기 목록(이름 → SSH 대상) — 직접 만든다 |
+| `~/.config/edith/runs.json` | 런 동시 수(설정 화면) |
+| `~/.local/share/edith/workshop/` | 공방 — 엔진·체인 폴더(`engine.json`·`actions.json`) |
+| `~/.local/share/edith/workshop-runs/` | 런 — 번호마다 엔진 사본·작업 문서(`work/`)·로그 |
+| `~/.local/share/edith/requests/` | 받은 요청과 답(`<id>.json`·`<id>.answer.json`) |
 | `~/.local/share/edith/summaries.json` | AI 요약 기억(파일 diff 해시별, 최근 2000개) |
 | `~/.local/share/edith/uploads/` | 첨부(7일 지나면 지움) |
 | `~/.claude/rc-keepalive.log` | Remote Control 지킴이 기록(최근 200줄) |
