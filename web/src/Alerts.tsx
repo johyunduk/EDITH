@@ -64,7 +64,7 @@ export function AlertBell({ data, alerts }: { data?: HerdrView; alerts: ReturnTy
       <button onClick={() => setOpen(v => !v)} title="알림 — 승인 대기·끝남 내역"
         className={`relative rounded-lg p-1.5 hover:bg-muted ${open ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}>
         <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{BELL}</svg>
-        {waiting > 0 && <span className={`absolute -top-0.5 -right-0.5 min-w-4 rounded-full px-1 text-center text-[0.625rem] leading-4 font-bold text-white tabular-nums ring-2 ring-card ${blocked ? 'bg-amber-500' : 'bg-emerald-500'}`}>{waiting}</span>}
+        {waiting > 0 && <span className={`absolute top-0 right-0 min-w-3 rounded-full px-0.5 text-center text-[0.5rem] leading-3 font-bold text-white tabular-nums ring-2 ring-card ${blocked ? 'bg-amber-500' : 'bg-emerald-500'}`}>{waiting}</span>}
       </button>
       {open && (
         <div className="absolute top-full right-0 z-40 mt-2 w-96 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl">

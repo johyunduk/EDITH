@@ -207,13 +207,12 @@ function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrVie
   const tabs = data.tabs.filter(t => t.workspace_id === w.workspace_id).sort((a, b) => a.number - b.number);
   const panes = data.panes.filter(p => p.workspace === w.workspace_id);
   const kids = children?.length ?? 0;
-  const auto = w.agent_status === 'working' || w.agent_status === 'blocked' || panes.some(p => p.id === sel)
-    || (kids > 0 && data.workspaces.some(c => c.worktree?.is_linked_worktree && c.worktree.repo_key === w.worktree?.repo_key
-      && (c.agent_status === 'working' || c.agent_status === 'blocked' || data.panes.some(p => p.workspace === c.workspace_id && p.id === sel))));
-  // 직접 펼치거나 접은 것은 에이전트 상태가 바뀌어도 그대로 둔다. 접어 둔 것도 새로 일을 시작하거나 승인 대기가 되면 다시 펼친다.
-  const [pick, setPick] = useState<boolean | null>(null), [was, setWas] = useState(auto);
-  if (was !== auto) { setWas(auto); if (auto && pick === false) setPick(null); }
-  const open = depth > 0 || (pick ?? auto);
+  // 펼침·접힘은 누른 대로만 — 에이전트 상태·고른 pane 으로 바꾸지 않는다. 처음엔 접힘.
+  // 이 탭에만 기억한다(sessionStorage — 다른 탭과 따로 놀고, 새로 고침해도 남는다. 저장이 막혀도 동작).
+  const key = `edith.ws.${w.workspace_id}`;
+  const [pick, setPick] = useState(() => { try { return sessionStorage.getItem(key) === 'open'; } catch { return false; } });
+  const toggle = () => setPick(v => { try { sessionStorage.setItem(key, v ? 'closed' : 'open'); } catch { /* 저장 안 됨 */ } return !v; });
+  const open = depth > 0 || pick;
   const mine = panes.some(p => p.id === sel);
   return (
     // 펼친 워크스페이스는 카드로 묶고, 접힌 건 같은 높이의 한 줄. 하위(링크 워크트리)는 왼쪽 안내선 아래로 들인다.
@@ -224,7 +223,7 @@ function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrVie
         onDragOver={e => { const k = carrying(e, DRAG_PANE) ? 'pane' : carrying(e, DRAG_WS) ? 'ws' : null; if (!k) return; e.preventDefault(); setOver(k); }}
         onDragLeave={() => setOver(null)}
         onContextMenu={e => openMenu(e, wsMenu(w))}
-        onClick={e => { if (depth) return; e.preventDefault(); setPick(!open); }}   // 맨 위 단은 React 가 쥔다 — 브라우저가 열고 닫게 두면 다음 상태 변화에 덮인다
+        onClick={e => { if (depth) return; e.preventDefault(); toggle(); }}   // 맨 위 단은 React 가 쥔다 — 탭에 기억하려고
         onDrop={e => {
           e.preventDefault(); setOver(null);
           const pane = e.dataTransfer.getData(DRAG_PANE), ws = e.dataTransfer.getData(DRAG_WS);

@@ -1,6 +1,7 @@
 // EDITH 화면 — 위에서 「herdr」·「스킬」·「공방」·「런」·「결과」·「설정」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/results, #/settings. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { get, post, useHerdr, useLive, useView, type HerdrView, type View } from './api.ts';
 import { HerdrPage } from './Herdr.tsx';
 import { AlertBell, useAlerts } from './Alerts.tsx';
@@ -47,6 +48,8 @@ export default function App() {
   const herdr = useHerdr(), view = useView().data, remote = view?.remote ? view.host : null;
   useBlockedAlert(APP_NAME, herdr.data, remote);
   const alerts = useAlerts(herdr.data);
+  // 받은 요청 수 — 런 화면 목록과 같은 쿼리(시작 · 거절로 답하면 목록에서 빠지고 수도 같이 준다)
+  const asked = useQuery({ queryKey: ['requests'], queryFn: () => get<unknown[]>('/api/requests'), refetchInterval: 5000 }).data?.length ?? 0;
   const [perm, setPerm] = useState(() => typeof Notification === 'undefined' ? 'denied' : Notification.permission);
   // 사이드 메뉴 접기 — 헤더 버튼이나 ⌘B·Ctrl+B. 이 브라우저에만 기억한다(저장이 막혀도 동작).
   const [side, setSide] = useState(() => { try { return localStorage.getItem('edith.side') !== 'off'; } catch { return true; } });
@@ -83,7 +86,8 @@ export default function App() {
           <a href="#/herdr" className={nav(r.view === 'herdr')}><Icon className="size-4">{TERMINAL}</Icon>herdr</a>
           <a href="#/skills" className={nav(r.view === 'skills')}><Icon className="size-4">{GRID}</Icon>스킬</a>
           <a href="#/workshop" className={nav(r.view === 'workshop')}><Icon className="size-4">{FLOW}</Icon>공방</a>
-          <a href="#/runs" className={nav(r.view === 'runs')}><Icon className="size-4">{PLAY}</Icon>런</a>
+          <a href="#/runs" className={`relative ${nav(r.view === 'runs')}`}><Icon className="size-4">{PLAY}</Icon>런
+            {asked > 0 && <span title={`받은 요청 ${asked} — 런 시작 · 거절 전까지 보인다`} className="absolute top-3 right-1.5 min-w-3 rounded-full bg-red-500 px-0.5 text-center text-[0.5rem] leading-3 font-bold text-white tabular-nums ring-2 ring-card">{asked}</span>}</a>
           <a href="#/results" className={nav(r.view === 'results')}><Icon className="size-4">{CHECKS}</Icon>결과</a>
           <a href="#/settings" className={nav(r.view === 'settings')}><Icon className="size-4">{GEAR}</Icon>설정</a>
         </nav>
