@@ -23,7 +23,7 @@ import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } f
 import { canShoot, screenshot } from './screenshot.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
 import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, syncGuide } from './workshop.ts';
-import { act, listRuns, loadRun, pickAction, previewSteps, requestHook, resultHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
+import { act, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resultHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
 import { repoDiff, repoStatus } from './repos.ts';
 import { listOutputs, readOutput } from './outputs.ts';
 import { livePort, stream } from './live.ts';
@@ -206,12 +206,13 @@ export function serve(port: number) {
       if (path === '/api/runs/limit' && req.method === 'GET') return reply(res, 200, { max: runLimit() });
       if (path === '/api/runs/limit' && req.method === 'POST') { try { return reply(res, 200, setRunLimit((await body(req) as { max?: unknown }).max)); } catch (e) { return fail(e); } }
       if (path === '/api/runs' && req.method === 'POST') {
-        const b = await body(req) as { engine?: unknown; cwd?: unknown; input?: unknown; branch?: unknown; unattended?: unknown; request?: unknown };
+        const b = await body(req) as { engine?: unknown; cwd?: unknown; input?: unknown; branch?: unknown; unattended?: unknown; request?: unknown; pick?: unknown };
         // 요청에서 연 런이면 시작한 뒤 그 요청에 런 번호로 답한다
         const rq = typeof b.request === 'string' && b.request ? b.request : null;
         const asked = rq ? readRequest(rq) : null;
         if (rq && (!asked || !listRequests().some(x => x.id === rq))) return reply(res, 400, '없거나 이미 답한 요청이다');
-        return await startRun(b.engine, b.cwd, b.input, b.branch, port, b.unattended, asked ?? undefined).then(r => {
+        // 고르기 목록에서 고른 채로 시작하면 그 제목 · 꼬리표를 요청처럼 남긴다
+        return await startRun(b.engine, b.cwd, b.input, b.branch, port, b.unattended, asked ?? pickRequest(b.engine, b.input, b.pick)).then(r => {
           if (asked) {
             answerRequest(asked.id, { state: 'started', run: r.id });
             requestHook(asked.engine, { EDITH_REQUEST_FILE: join(REQUESTS, `${asked.id}.json`), EDITH_REQUEST_STATE: 'started', EDITH_REQUEST_RUN: String(r.id), EDITH_REQUEST_REASON: '' }, join(REQUESTS, `${asked.id}.hook.log`));
@@ -266,8 +267,8 @@ export function serve(port: number) {
       if (ru?.[2] && req.method === 'POST') {
         const b = await body(req) as { key?: unknown; n?: unknown; text?: unknown };
         try {
-          if (ru[2] === 'action') runAction(Number(ru[1]), b.n, b.text);
-          else act(Number(ru[1]), { do: ru[2] as 'stop' | 'resume' | 'skip' | 'rewind', key: b.key });
+          if (ru[2] === 'action') return reply(res, 200, { ok: true, ...await runAction(Number(ru[1]), b.n, b.text) });
+          act(Number(ru[1]), { do: ru[2] as 'stop' | 'resume' | 'skip' | 'rewind', key: b.key });
           return reply(res, 200, { ok: true });
         } catch (e) { return fail(e); }
       }

@@ -762,20 +762,22 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // 목록을 작업 문서가 아니라 엔진 폴더에 두는 것은, 런의 Claude 가 단추를 지어내 사람이 누르게 하지 못하게.
 // on: "results" — 단추가 아니라 결과 화면에서 체크가 바뀔 때 도는 명령(resultHook). on: "picks" — 새 런 칸의 고르기 목록(runPicks).
 // when: "done" — 런이 끝난 뒤에만 보이고 눌린다
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done'; reach?: string };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
-// reach — 결과 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · clean(정리) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+// reach — 결과 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · clean(정리) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
+// copy — 명령의 출력을 사람이 복사해 직접 돌릴 글로 돌려준다(결과 화면 확인 창 · 런 화면 단추 기록에 복사 단추). 이 명령은 아무것도 바꾸지 않아야 한다 — 바꾸는 일은 사람이 그 글로
 function allActions(r: Run): RunAction[] {
   try {
     const a = JSON.parse(readFileSync(join(dirOf(r.id), 'engine', r.engine, 'actions.json'), 'utf8')) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
       && (x.on === undefined || x.on === 'results' || x.on === 'picks' || x.on === 'request') && (x.when === undefined || x.when === 'done')
-      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach)))).slice(0, 16) : [];
+      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean')).slice(0, 16) : [];
   } catch { return []; }
 }
 export const readActions = (r: Run) => allActions(r).filter(x => !x.on).slice(0, 12);
 type Acted = { label: string; at: number; text?: string; code: number | null; note?: string };
 const acting = new Set<number>();
-export function runAction(id: number, n: unknown, text: unknown) {
+// copy 단추면 끝날 때까지 기다려 출력(64KB 까지)과 끝 코드를 돌려준다 — 화면이 그 글을 복사하게
+export async function runAction(id: number, n: unknown, text: unknown): Promise<{ output?: string; code?: number }> {
   const r = loadRun(id);
   if (!r) throw new Error('없는 런이다');
   const a = typeof n === 'number' ? readActions(r)[n] : undefined;
@@ -787,7 +789,8 @@ export function runAction(id: number, n: unknown, text: unknown) {
   if (t.length > 4000) throw new Error('글은 4000자까지');
   if (acting.has(id)) throw new Error('다른 단추 명령이 도는 중이다');
   acting.add(id);
-  launch(r, a, t, {}, () => acting.delete(id));
+  if (!a.copy) { launch(r, a, t, {}, () => acting.delete(id)); return {}; }
+  return new Promise(ok => launch(r, a, t, {}, (code, log) => { acting.delete(id); ok({ output: tail(log, 64 * 1024) ?? '', code }); }));
 }
 // 새 런 칸의 고르기 목록 — 공방 엔진 폴더(사본이 아니라 공방 것) actions.json 의 on: "picks" 명령(예: 일감 목록에서 고르면 입력칸에 그 주소).
 // 사람이 「고르기」 를 열 때만 그 엔진 폴더에서 돈다(런이 없다 — 환경 변수는 EDITH_ENGINE · EDITH_WORKSHOP). 표준 출력의 JSON [{label, note?, input}] 만 받는다
@@ -807,13 +810,20 @@ export function requestHook(engine: string, env: Record<string, string>, log: st
   shell(a.command, dir, { EDITH_ENGINE: dir, EDITH_WORKSHOP: WORKSHOP, ...env }, createWriteStream(log, { mode: 0o600 }));
   return true;
 }
-export type Pick = { label: string; note?: string; input: string };
+// title · tag 가 있으면 고른 런이 받은 요청처럼 그 제목 · 꼬리표를 갖는다(결과 화면 등 — pickRequest)
+export type Pick = { label: string; note?: string; input: string; title?: string; tag?: string };
 export function parsePicks(t: string): Pick[] {
   let a: unknown;
   try { a = JSON.parse(t); } catch { throw new Error('고르기 명령이 JSON 배열을 내지 않았다'); }
   if (!Array.isArray(a)) throw new Error('고르기 명령이 JSON 배열을 내지 않았다');
   return a.flatMap((x: Record<string, unknown>) => typeof x?.label === 'string' && x.label.trim() && typeof x.input === 'string' && x.input.trim()
-    ? [{ label: x.label.trim().slice(0, 200), input: x.input.slice(0, 4000), ...(typeof x.note === 'string' && x.note.trim() ? { note: x.note.trim().slice(0, 120) } : {}) }] : []).slice(0, 200);
+    ? [{ label: x.label.trim().slice(0, 200), input: x.input.slice(0, 4000), ...(typeof x.note === 'string' && x.note.trim() ? { note: x.note.trim().slice(0, 120) } : {}),
+      ...(typeof x.title === 'string' && x.title.trim() ? { title: x.title.trim().slice(0, 200) } : {}), ...(typeof x.tag === 'string' && x.tag.trim() ? { tag: x.tag.trim().slice(0, 40) } : {}) }] : []).slice(0, 200);
+}
+// 고르기 목록에서 고른 채로 시작한 런 — 그 제목 · 꼬리표를 받은 요청처럼 작업 문서 edith-request.json 에 둔다(from: 고르기). 제목이 없으면 두지 않는다
+export function pickRequest(engine: unknown, input: unknown, p: unknown): Record<string, string> | undefined {
+  const x = p as { title?: unknown; tag?: unknown } | null, title = typeof x?.title === 'string' ? x.title.trim().slice(0, 200) : '', tag = typeof x?.tag === 'string' ? x.tag.trim().slice(0, 40) : '';
+  return title && typeof engine === 'string' && typeof input === 'string' ? { engine, input, title, ...(tag ? { tag } : {}), from: '고르기' } : undefined;
 }
 export function runPicks(engine: unknown): Promise<Pick[]> {
   const a = typeof engine === 'string' ? pickAction(engine) : undefined;
@@ -832,16 +842,17 @@ export function runPicks(engine: unknown): Promise<Pick[]> {
   });
 }
 
-// 단추 · 결과 반영 명령을 작업 폴더의 셸로 — 기록(actions/<시각>.json · .log)을 남기고, 끝 코드 0 에 되돌림 파일이 있으면 되돌린다
-function launch(r: Run, a: RunAction, t: string, env: Record<string, string>, done: () => void) {
+// 단추 · 결과 반영 명령을 작업 폴더의 셸로 — 기록(actions/<시각>.json · .log)을 남기고, 끝 코드 0 에 되돌림 파일이 있으면 되돌린다.
+// done 은 기록 파일을 다 쓴 뒤(끝 코드 · 기록 경로와 함께)
+function launch(r: Run, a: RunAction, t: string, env: Record<string, string>, done: (code: number, log: string) => void) {
   const id = r.id, d = join(dirOf(id), 'actions'), at = Date.now(), meta: Acted = { label: a.label, at, ...(t ? { text: t } : {}), code: null };
   mkdirSync(d, { recursive: true, mode: 0o700 });
   const put = () => writeFileSync(join(d, `${at}.json`), JSON.stringify(meta), { mode: 0o600 });
   put();
-  const back = join(d, `${at}.rewind.json`);
-  shell(a.command, r.cwd, { ...runEnv(r, r.engine), EDITH_REWIND: back, EDITH_ACTION_TEXT: t, ...env }, createWriteStream(join(d, `${at}.log`), { mode: 0o600 }))
+  const back = join(d, `${at}.rewind.json`), file = join(d, `${at}.log`), log = createWriteStream(file, { mode: 0o600 });
+  shell(a.command, r.cwd, { ...runEnv(r, r.engine), EDITH_REWIND: back, EDITH_ACTION_TEXT: t, ...env }, log)
     .on('close', code => {
-      done();
+      log.on('close', () => done(code ?? 1, file));   // shell 이 같은 close 에서 log.end() — 파일이 닫힌 뒤에 읽게
       meta.code = code ?? 1;
       let b: ReturnType<typeof parseRewind> | null = null;
       if (code === 0) try { b = parseRewind(readFileSync(back, 'utf8')); } catch { /* 되돌림 없음 */ }
@@ -866,7 +877,7 @@ export function resultHook(id: number, x: { tag: string; title: string; group: s
   const r = loadRun(id), a = r && allActions(r).find(y => y.on === 'results');
   if (!r || !a) return false;
   const env = { EDITH_RESULT_TAG: x.tag, EDITH_RESULT_TITLE: x.title, EDITH_RESULT_GROUP: x.group, EDITH_RESULT_TEXT: x.text, EDITH_RESULT_DONE: x.done ? '1' : '0' };
-  hooks.set(id, (hooks.get(id) ?? Promise.resolve()).then(() => new Promise<void>(ok => launch(r, a, `${x.done ? '✓' : '☐'} ${x.title} · ${x.text}`, env, ok))));
+  hooks.set(id, (hooks.get(id) ?? Promise.resolve()).then(() => new Promise<void>(ok => launch(r, a, `${x.done ? '✓' : '☐'} ${x.title} · ${x.text}`, env, () => ok()))));
   return true;
 }
 // 최근 단추 기록 5개 — 화면에 출력 끝과 함께

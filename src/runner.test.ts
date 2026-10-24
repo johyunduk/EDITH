@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
 
 const node = (id: string, x: Record<string, unknown> = {}) => ({ id, title: id, skill: { from: 'engine' as const, id: 'do' }, x: 0, y: 0, ...x });
@@ -254,6 +255,33 @@ test('무인 런 — 확인 필요 노드를 2번까지 다시 돌리고, 그래
 test('새 런 고르기 목록 — 이름 · 입력이 있는 줄만, 배열이 아니면 오류', () => {
   assert.deepEqual(parsePicks(JSON.stringify([{ label: ' TICKET-1 메모 칸 ', note: '안건 · 높음', input: 'https://www.notion.so/x' }, { label: '입력 없음' }, { input: 'https://y' }, 3])),
     [{ label: 'TICKET-1 메모 칸', note: '안건 · 높음', input: 'https://www.notion.so/x' }]);
+  // 제목 · 꼬리표 — 있으면 다듬어 싣고, 고른 채로 시작하면 요청처럼(제목이 없으면 안 남긴다)
+  assert.deepEqual(parsePicks(JSON.stringify([{ label: 'ISSUE-9 정렬', input: 'u', title: ' 정렬 ', tag: 'ISSUE-9', note: 3 }])), [{ label: 'ISSUE-9 정렬', input: 'u', title: '정렬', tag: 'ISSUE-9' }]);
+  assert.deepEqual(pickRequest('e', 'u', { title: ' 정렬 ', tag: 'ISSUE-9' }), { engine: 'e', input: 'u', title: '정렬', tag: 'ISSUE-9', from: '고르기' });
+  assert.equal(pickRequest('e', 'u', { title: '  ', tag: 'ISSUE-9' }), undefined);
+  assert.equal(pickRequest('e', 'u', null), undefined);
   assert.throws(() => parsePicks('{"label":"x"}'), /JSON 배열/);
   assert.throws(() => parsePicks('깨짐'), /JSON 배열/);
+});
+
+test('copy 단추 — 끝날 때까지 기다려 출력 · 끝 코드를 돌려주고, 보통 단추는 기다리지 않는다', () => {
+  const home = mkdtempSync(join(tmpdir(), 'edith-copy-')), dir = join(home, '.local', 'share', 'edith', 'workshop-runs', '7');
+  try {
+    mkdirSync(join(dir, 'engine', 'e'), { recursive: true });
+    writeFileSync(join(dir, 'run.json'), JSON.stringify({ id: 7, engine: 'e', name: 'e', cwd: home, input: '', created: 0, state: 'done', steps: [], nodes: {} }));
+    writeFileSync(join(dir, 'engine', 'e', 'actions.json'), JSON.stringify([
+      { label: '명령 보기', command: 'echo "git push origin HEAD:master"; echo 둘째', copy: true },
+      { label: '틀린 copy', command: 'true', copy: 'yes' },
+      { label: '돌리기', command: 'sleep 1' },
+    ]));
+    const code = `import { runAction, readActions, loadRun } from ${JSON.stringify(join(import.meta.dirname, 'runner.ts'))};
+      const labels = readActions(loadRun(7)).map(a => a.label);
+      const copied = await runAction(7, 0, ''), plain = await runAction(7, 1, '');
+      console.log(JSON.stringify({ labels, copied, plain }));`;
+    const out = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+    const got = JSON.parse(out.stdout.trim().split('\n').pop() ?? '{}');
+    assert.deepEqual(got.labels, ['명령 보기', '돌리기']);   // copy 가 참 · 거짓이 아니면 단추가 아니다
+    assert.deepEqual(got.copied, { output: 'git push origin HEAD:master\n둘째\n', code: 0 });
+    assert.deepEqual(got.plain, {});
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });

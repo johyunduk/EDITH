@@ -9,7 +9,7 @@ import { Empty, Icon, Md, Tag } from './ui.tsx';
 import { DiffView } from './Diff.tsx';
 import { Kind, STATUS } from './herdrUi.tsx';
 import { FolderInput } from './Side.tsx';
-import { toast } from './copy.ts';
+import { copyText, toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
 import { RunFlow } from './RunFlow.tsx';
@@ -27,7 +27,7 @@ type Run = {
   rewinds?: { at: number; to: string; name: string; by: string; reason: string }[];
   timeline?: Entry[];   // 옛 서버는 없다
   panes?: Record<string, { pane?: string }>;   // 갈래의 pane(본 줄은 pane)
-  actions: { label: string; command: string; ask?: string; hint?: string; danger?: boolean; when?: 'done' }[];
+  actions: { label: string; command: string; ask?: string; hint?: string; danger?: boolean; when?: 'done'; copy?: boolean }[];
   acted: { label: string; at: number; text?: string; code: number | null; note?: string; output: string }[];
   live?: boolean;   // 엔진이 브라우저 화면 포트(edith-live.json)를 남겼다
   summary?: Summary | null;   // 끝난 런 요약(엔진이 남긴 edith-summary.json — 서버 src/runSummary.ts)
@@ -147,6 +147,7 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
   );
 }
 
+type Pick = { label: string; note?: string; input: string; title?: string; tag?: string };
 // 새 런 — 엔진 · 체인, 작업 폴더(Claude 가 일할 곳, 이 브라우저에 기억), 입력. 받은 요청을 열면 그 값으로 채운다.
 function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   const qc = useQueryClient();
@@ -155,11 +156,12 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   // 고른 것의 작업 폴더 설정 — 늘 같은 폴더 · 새 워크트리면 폴더를 묻지 않는다
   const eq = useQuery({ queryKey: ['workshop', engine], queryFn: () => get<{ engine: { workdir?: Workdir } | null; picks?: string }>(`/api/workshop/${engine}`), enabled: !!engine });
   // 엔진이 주는 고르기 목록(actions.json on: "picks" — 예: 일감 목록) — 누를 때만 명령이 돈다
-  const [picks, setPicks] = useState<{ label: string; note?: string; input: string }[] | null>(null), [picking, setPicking] = useState(false);
-  useEffect(() => { setPicks(null); }, [engine]);
+  // 고른 것(picked)은 입력을 고치지 않은 채 시작하면 그 제목 · 꼬리표를 런에 남긴다
+  const [picks, setPicks] = useState<Pick[] | null>(null), [picking, setPicking] = useState(false), [picked, setPicked] = useState<Pick | null>(null);
+  useEffect(() => { setPicks(null); setPicked(null); }, [engine]);
   const loadPicks = async () => {
     setPicking(true); setErr('');
-    try { setPicks(await post<{ label: string; note?: string; input: string }[]>(`/api/workshop/${engine}/picks`, {})); } catch (e) { setErr((e as Error).message); }
+    try { setPicks(await post<Pick[]>(`/api/workshop/${engine}/picks`, {})); } catch (e) { setErr((e as Error).message); }
     setPicking(false);
   };
   const wd: Workdir = eq.data?.engine?.workdir ?? { kind: 'ask' };
@@ -188,9 +190,10 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   const go = async () => {
     setBusy(true);
     try {
-      const r = await post<{ id: number }>('/api/runs', { engine, cwd: cwd.trim(), input, branch: branch.trim(), unattended, ...(req ? { request: req.id } : {}) });
+      const pick = !req && picked?.input === input ? { pick: { title: picked.title ?? picked.label, tag: picked.tag } } : {};
+      const r = await post<{ id: number }>('/api/runs', { engine, cwd: cwd.trim(), input, branch: branch.trim(), unattended, ...(req ? { request: req.id } : {}), ...pick });
       if (wd.kind === 'ask') try { localStorage.setItem('edith.runs.cwd', cwd.trim()); } catch { /* 저장 안 됨 */ }
-      setBranch(''); setUnattended(false);
+      setBranch(''); setUnattended(false); setPicked(null);
       await qc.invalidateQueries({ queryKey: ['runs'] });
       setOpen(false); setInput(''); setErr(''); done();
       void qc.invalidateQueries({ queryKey: ['requests'] });
@@ -236,7 +239,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
             <FolderInput value={cwd} onChange={setCwd} placeholder="~/develop/project/app  (치면 하위 폴더 추천 · Tab)" className={`font-mono text-xs ${field}`} />
           </div>}
           {eq.data?.picks && (picks
-            ? <select value="" onChange={e => { const p = picks[Number(e.target.value)]; if (p) setInput(p.input); }} className={`${field} text-xs`} aria-label={eq.data.picks}>
+            ? <select value="" onChange={e => { const p = picks[Number(e.target.value)]; if (p) { setInput(p.input); setPicked(p); } }} className={`${field} text-xs`} aria-label={eq.data.picks}>
                 <option value="">{picks.length ? `${eq.data.picks} — ${picks.length}개` : `${eq.data.picks} — 없다`}</option>
                 {picks.map((p, i) => <option key={i} value={i}>{p.label}{p.note ? ` · ${p.note}` : ''}</option>)}
               </select>
@@ -869,7 +872,9 @@ function Actions({ r }: { r: Run }) {
           <div className="mt-1.5 space-y-2">
             {r.acted.map(a => (
               <div key={a.at} className="space-y-1">
-                <p className="text-xs text-muted-foreground tabular-nums">{when(a.at)} · 「{a.label}」{a.text ? ` · ${a.text}` : ''} — {how(a)}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">{when(a.at)} · 「{a.label}」{a.text ? ` · ${a.text}` : ''} — {how(a)}
+                  {/* copy 단추 — 출력이 사람이 직접 돌릴 명령이다 */}
+                  {a.code === 0 && a.output && r.actions.some(x => x.copy && x.label === a.label) && <Button size="sm" variant="outline" className="ml-2 h-6 text-xs" onClick={() => void copyText(a.output)}>복사</Button>}</p>
                 <pre className="code-panel max-h-60 whitespace-pre-wrap">{a.output || '(출력 없음)'}</pre>
               </div>
             ))}

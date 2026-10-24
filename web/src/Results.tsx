@@ -1,18 +1,19 @@
 // 결과 — 끝난 런의 코드가 커밋에서 마지막 브랜치까지 어디 있나(서버 src/reach.ts). 런마다 꺾쇠 패널, 레포마다 단계 선:
 // 커밋 → 올림(via 가 있으면 그 브랜치에 합침 — 예: 이슈 → 안건) → 엔진이 edith-repos.json 에 정한 브랜치(also → base 차례).
 // 노드는 끝남(커밋 그대로 · 내용 일치) · 일부(k/n — 빠진 파일) · 확인 필요(제목만 같음) · 지금 차례(빛나는 고리) · 아직.
-// 지금 차례 칸에는 엔진 런 단추 중 그 단계(reach)가 적힌 것을 놓고, 누르면 확인 창을 거쳐 돌린다(런 화면 단추와 같은 명령 · 같은 기록).
+// 처음 안 끝난 칸(아직 · 일부 · 확인 필요)에는 엔진 런 단추 중 그 단계(reach)가 적힌 것을 놓고, 누르면 확인 창을 거쳐 돌린다(런 화면 단추와 같은 명령 · 같은 기록).
+// copy 단추는 돌리지 않고 엔진이 만든 명령 글을 받아 복사하게만 한다(사람이 직접 돌릴 일 — 예: 운영 배포).
 // 다 나간 런은 아래 「COMPLETE」 로 접는다. 원격은 마지막 fetch 기준이고 「새로 받기」 로 받는다. 배포 할 일(edith-results.json)은 오른쪽 패널. 주소는 #/results.
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, post } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Empty } from './ui.tsx';
-import { toast } from './copy.ts';
+import { copyText, toast } from './copy.ts';
 
 type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
 type Repo = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
-type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean };
+type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean };
 type Run = { id: number; name: string; title: string; tag?: string; ended: number; repos: Repo[]; tasks: { done: number; total: number } | null; fetched?: number; actions: Action[] };
 type Res = { tag: string; title: string; note?: string; items: { text: string; done: boolean; group?: string }[]; run: { id: number } };
 
@@ -27,7 +28,9 @@ const mix = (pct: number) => `color-mix(in oklab, var(--primary) ${pct}%, transp
 
 // ── 단계 — 레포 하나의 커밋 → 올림(또는 합침) → 브랜치들. 처음 안 끝난 칸이 「아직」 이면 그게 지금 차례 ──
 type State = 'done' | 'partial' | 'check' | 'next' | 'todo';
-type Step = { key: string; name: string; state: State; reach?: Reach; note?: string };
+type Step = { key: string; name: string; state: State; reach?: Reach; note?: string; base?: boolean; act?: boolean };   // base — 레포의 기본 브랜치 칸, act — 단추를 놓는 칸(처음 안 끝난 칸)
+// reach "base" 는 레포마다 이름이 다른 기본 브랜치 칸(origin/master · origin/main)
+const fits = (a: Action, s: Step) => a.reach === s.key || (a.reach === 'base' && !!s.base);
 const envState = (e: Reach): State => reached(e) ? 'done' : e.state === 'partial' ? 'partial' : e.state === 'subject' ? 'check' : 'todo';
 function steps(x: Repo): Step[] {
   const envs = x.envs.filter(e => e.state !== 'missing'), out = envs.some(reached);   // 없는 브랜치(그 레포에 stage 가 없는 등)는 칸을 만들지 않는다
@@ -35,10 +38,11 @@ function steps(x: Repo): Step[] {
     { key: 'commit', name: 'commit', state: x.dirty || x.fresh ? 'todo' : 'done', note: x.dirty ? `커밋 안 한 파일 ${x.dirty}` : x.fresh ? '바꾼 것 없음' : at(x.headAt) },
     x.via ? { key: 'via', name: 'merge', state: out ? 'done' : envState(x.via), reach: x.via, note: `${x.via.ref} 에 합침` }
       : { key: 'push', name: 'push', state: x.pushed === true || out ? 'done' : 'todo', note: x.pushed === true ? 'origin 과 같음' : out ? '다른 브랜치로 나감' : x.pushed === null ? '아직 안 올림' : '안 올린 커밋 있음' },
-    ...envs.map(e => ({ key: e.ref, name: label(e.ref), state: envState(e), reach: e })),
+    ...envs.map(e => ({ key: e.ref, name: label(e.ref), state: envState(e), reach: e, base: e === x.envs.at(-1) })),
   ];
+  // 일부 · 확인 필요 칸에도 단추를 놓는다 — 이슈를 합쳐 다시 올릴 때 그 칸이 「일부」 로 다시 열린다
   const i = all.findIndex(s => s.state !== 'done');
-  if (i >= 0 && all[i].state === 'todo' && !(i === 0 && x.fresh && !x.dirty)) all[i].state = 'next';
+  if (i >= 0 && !(i === 0 && x.fresh && !x.dirty)) { all[i].act = true; if (all[i].state === 'todo') all[i].state = 'next'; }
   return all;
 }
 const done = (r: Run) => r.repos.length > 0 && r.repos.every(x => !x.error && steps(x).every(s => s.state === 'done'));
@@ -142,10 +146,8 @@ function Bracketed({ children, as = 'section', label: aria }: { children: ReactN
 
 function RunPanel({ r, onTasks, onFiles, onAct }: { r: Run; onTasks: () => void; onFiles: (x: { title: string; list: string[] }) => void; onAct: (a: Action) => void }) {
   // 런 단추는 런 전체에 한 번 돈다(커밋하러 가기는 레포를 다 커밋) — 같은 단추는 그 단계가 지금 차례인 첫 레포에만 놓는다
-  const used = new Set<number>(), allowed = r.repos.map(x => new Set(x.error ? [] : steps(x).flatMap(s => {
-    const a = s.state === 'next' ? r.actions.find(a => a.reach === s.key) : undefined;
-    return a && !used.has(a.n) ? (used.add(a.n), [a.n]) : [];
-  })));
+  const used = new Set<number>(), allowed = r.repos.map(x => new Set(x.error ? [] : steps(x).flatMap(s =>
+    s.act ? r.actions.filter(a => fits(a, s) && !used.has(a.n)).map(a => (used.add(a.n), a.n)) : [])));
   return (
     <Bracketed label={`런 #${r.id}`}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -179,7 +181,7 @@ function Track({ x, run, allowed, onFiles, onAct }: { x: Repo; run: Run; allowed
   return (
     <ol aria-label="단계" className="grid min-w-0 flex-[999_1_36rem]" style={{ gridTemplateColumns: `repeat(${ss.length}, minmax(0, 1fr))` }}>
       {ss.map((s, i) => {
-        const act = s.state === 'next' ? run.actions.find(a => a.reach === s.key && allowed.has(a.n)) : undefined;
+        const acts = s.act ? run.actions.filter(a => fits(a, s) && allowed.has(a.n)) : [];
         return (
           <li key={s.key} className="flex flex-col items-center gap-1 px-1 text-center">
             <div className="relative flex h-7 w-full items-center justify-center">
@@ -189,7 +191,7 @@ function Track({ x, run, allowed, onFiles, onAct }: { x: Repo; run: Run; allowed
             </div>
             <span className={`font-mono text-[0.6875rem] tracking-[0.16em] uppercase ${s.state === 'next' ? 'font-bold text-primary' : s.state === 'partial' ? 'font-bold text-amber-700 dark:text-amber-400' : s.state === 'check' ? 'font-bold text-blue-700 dark:text-blue-400' : s.state === 'todo' ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>{s.name}</span>
             <Note s={s} name={`${x.name} · ${s.name}`} onFiles={onFiles} />
-            {act && <Button size="sm" className="mt-1 h-8 font-bold shadow-md" style={{ boxShadow: `0 4px 12px ${mix(30)}` }} title={act.hint} onClick={() => onAct(act)}>{act.label} ›</Button>}
+            {acts.map(a => <Button key={a.n} size="sm" variant={a.copy ? 'outline' : 'default'} className="mt-1 h-8 font-bold shadow-md" style={a.copy ? undefined : { boxShadow: `0 4px 12px ${mix(30)}` }} title={a.hint} onClick={() => onAct(a)}>{a.label} ›</Button>)}
           </li>
         );
       })}
@@ -224,6 +226,7 @@ const r = (how?: 'merge' | 'ff') => how === 'ff' ? 'fast-forward' : '머지';
 // 단추 확인 창 — 무엇을 돌리는지(단추 설명 · 명령) 보여 주고 사람이 누를 때만. 돌리는 것은 런 화면 단추와 같다(POST /api/runs/<번호>/action)
 function ActionDialog({ pick, onClose }: { pick: Pick; onClose: () => void }) {
   const qc = useQueryClient(), [text, setText] = useState(''), [busy, setBusy] = useState(false), { run, action: a } = pick;
+  if (a.copy) return <CopyDialog pick={pick} onClose={onClose} />;
   const go = async () => {
     setBusy(true);
     try {
@@ -246,6 +249,35 @@ function ActionDialog({ pick, onClose }: { pick: Pick; onClose: () => void }) {
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="outline" onClick={onClose}>취소</Button>
           <Button variant={a.danger ? 'destructive' : 'default'} disabled={busy || (!!a.ask && !text.trim())} onClick={() => void go()}>{busy ? '보내는 중…' : a.label}</Button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+// 복사 단추 창 — 엔진 명령이 만든 글(사람이 직접 돌릴 명령)을 받아 보여 주고 복사만. EDITH 는 그 글을 돌리지 않는다
+function CopyDialog({ pick, onClose }: { pick: Pick; onClose: () => void }) {
+  const { run, action: a } = pick, [busy, setBusy] = useState(false), [res, setRes] = useState<{ output: string; code: number } | null>(null), [copied, setCopied] = useState(false);
+  const make = async () => {
+    setBusy(true);
+    try { const r = await post<{ output?: string; code?: number }>(`/api/runs/${run.id}/action`, { n: a.n }); setRes({ output: r.output ?? '', code: r.code ?? 1 }); }
+    catch (e) { toast(`만들지 못했다 — ${(e as Error).message}`, 6000); }
+    setBusy(false);
+  };
+  const copy = async () => { await copyText(res!.output); setCopied(true); };
+  return (
+    <Sheet title={`「${a.label}」`} sub={`런 #${run.id} · ${short(run.title)}`} onClose={onClose}>
+      <div className="space-y-4">
+        {a.hint && <p className="text-sm">{a.hint}</p>}
+        <p className="text-sm text-muted-foreground">EDITH 는 이 명령을 돌리지 않습니다 — 복사해서 직접 돌립니다.</p>
+        {res && <div className="space-y-1.5">
+          <p className={`text-xs font-semibold ${res.code === 0 ? 'text-muted-foreground' : 'text-rose-700 dark:text-rose-300'}`}>{res.code === 0 ? '복사할 명령' : `만드는 명령이 끝 코드 ${res.code} — 아래는 그 출력`}</p>
+          <pre className="max-h-[45vh] overflow-auto rounded-lg bg-[var(--code)] px-3 py-2.5 font-mono text-xs whitespace-pre text-[var(--code-foreground)]">{res.output || '(출력 없음)'}</pre>
+        </div>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" onClick={onClose}>닫기</Button>
+          {res?.code === 0 ? <Button onClick={() => void copy()}>{copied ? '복사됨' : '복사'}</Button>
+            : <Button disabled={busy} onClick={() => void make()}>{busy ? '만드는 중…' : res ? '다시 만들기' : '명령 만들기'}</Button>}
         </div>
       </div>
     </Sheet>

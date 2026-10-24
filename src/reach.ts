@@ -86,7 +86,7 @@ const str = (v: unknown, n: number) => typeof v === 'string' && v.trim() ? v.tri
 
 // via — 먼저 합쳐지는 브랜치(이슈 → 안건)에 들어갔나, headAt — 지금 커밋 시각, actions — 엔진 런 단추 중 단계(reach)가 적힌 것(결과 화면이 그 단계 칸에 놓는다)
 export type ReachRepo = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
-export type ReachAction = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean };
+export type ReachAction = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean };
 export type ReachRun = { id: number; name: string; title: string; tag?: string; ended: number; repos: ReachRepo[]; tasks: { done: number; total: number } | null; fetched?: number; actions: ReachAction[] };
 // 끝난 런마다 — 레포 상태(src/repos.ts — 커밋 안 한 파일 · 올렸는지)와 브랜치마다 어디까지, 배포 할 일 수(edith-results.json). 최근에 끝난 것부터
 export async function reachList(): Promise<ReachRun[]> {
@@ -118,7 +118,7 @@ export async function reachList(): Promise<ReachRun[]> {
     const tag = str(req?.tag, 40) ?? (results[0]?.tag || undefined);
     return { id: r.id, name: r.name, title, ...(tag ? { tag } : {}), ended, repos,
       tasks: items.length ? { done: items.filter(i => i.done).length, total: items.length } : null, fetched: await fetchedAt(repos.map(x => x.path)),
-      actions: readActions(full).flatMap((a, n) => a.reach ? [{ n, label: a.label, reach: a.reach, command: a.command, ...(a.hint ? { hint: a.hint } : {}), ...(a.ask ? { ask: a.ask } : {}), ...(a.danger ? { danger: true } : {}) }] : []) };
+      actions: readActions(full).flatMap((a, n) => a.reach ? [{ n, label: a.label, reach: a.reach, command: a.command, ...(a.hint ? { hint: a.hint } : {}), ...(a.ask ? { ask: a.ask } : {}), ...(a.danger ? { danger: true } : {}), ...(a.copy ? { copy: true } : {}) }] : []) };
   });
   return rows.filter((x): x is ReachRun => !!x).sort((a, b) => b.ended - a.ended);
 }
