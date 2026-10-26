@@ -154,7 +154,7 @@ function compare(r: Run) {
 // 그 뒤의 답(같은 message.id 는 한 번)을 그 노드에 더한다. 노드마다 /clear 라 보통 노드 시도 하나가 세션 파일 하나다.
 // shortcut: 런 시작 뒤 바뀐 세션 파일을 통째로 읽는다 — 같은 폴더에서 다른 큰 세션이 돌면 느려진다. 그러면 (파일 · 크기) 로 캐시한다
 // 노드 안쪽 — 그 노드 대화의 처음 · 끝 시각과 도구별 걸린 시간(도구 호출 → 결과). 모델이 생각 · 글 쓴 시간은 나머지로 본다
-export type Inside = { first: number; last: number; tools: Record<string, number>; busy: number; spans?: [number, number][]; turns?: number; reads?: Record<string, number>; readChars?: number };   // busy = 도구가 하나라도 돈 시간(겹친 것은 한 번)
+export type Inside = { first: number; last: number; tools: Record<string, number>; busy: number; spans?: [number, number][]; turns?: number; reads?: Record<string, number>; readChars?: number; agents?: { n: number; ms: number; turns: number } };   // busy = 도구가 하나라도 돈 시간(겹친 것은 한 번)
 // 읽기 — 읽은 파일(Read 도구, cat · head · sed 같은 Bash 가 연 파일)과 그 결과 글자 수. 경로는 끝 세 마디로
 const READ_CMD = /\b(cat|head|tail|sed|less)\b/, FILE = /[^\s'"`;|&>()]+\.[A-Za-z]{1,5}\b/g;   // 확장자가 있는 낱말(읽기 명령 안에서만)
 export function readPaths(name: string, input: unknown): string[] {
@@ -175,7 +175,7 @@ export function toolLabel(name: string, input: unknown) {
   }
   return name.startsWith('mcp__') ? `MCP ${name.split('__').at(-1)}` : name;
 }
-export function tokensIn(lines: string[], run: number, into: Record<string, Tok>, inside: Record<string, Inside> = {}) {
+export function tokensIn(lines: string[], run: number, into: Record<string, Tok>, inside: Record<string, Inside> = {}, agents = new Map<string, string>()) {
   let cur: string | null = null;
   const seen = new Set<string>(), head = `[EDITH 런 #${run} ·`, open = new Map<string, { t: number; label: string; node: string; paths: string[] }>();
   const mark = (node: string, t: number) => { if (!Number.isFinite(t)) return; const x = inside[node] ??= { first: t, last: t, tools: {}, busy: 0 }; x.first = Math.min(x.first, t); x.last = Math.max(x.last, t); };
@@ -208,7 +208,11 @@ export function tokensIn(lines: string[], run: number, into: Record<string, Tok>
     }
     if (!cur) continue;
     mark(cur, at);
-    for (const b of blocks) if (b?.type === 'tool_use' && b.id && !open.has(b.id) && Number.isFinite(at)) open.set(b.id, { t: at, label: toolLabel(b.name ?? '', b.input), node: cur, paths: readPaths(b.name ?? '', b.input) });
+    for (const b of blocks) {
+      if (b?.type !== 'tool_use' || !b.id) continue;
+      if (b.name === 'Agent' || b.name === 'Task') agents.set(b.id, cur);   // 하위 에이전트 기록(meta.json 의 toolUseId)을 이 노드에 붙인다
+      if (!open.has(b.id) && Number.isFinite(at)) open.set(b.id, { t: at, label: toolLabel(b.name ?? '', b.input), node: cur, paths: readPaths(b.name ?? '', b.input) });
+    }
     const id = o.message?.id, u = o.message?.usage;
     if (!u || !id || seen.has(id)) continue;
     seen.add(id);
@@ -226,13 +230,48 @@ export function tokensIn(lines: string[], run: number, into: Record<string, Tok>
     delete x.spans;
   }
 }
+// 하위 에이전트 — 세션 기록 옆 <세션>/subagents/agent-*.jsonl(그 옆 meta.json 의 toolUseId 로 부른 노드를 찾는다). 토큰은 그 노드에 더하고, 노드 안쪽에 수 · 걸린 시간 · 턴
+export function subagentIn(lines: string[], node: string, into: Record<string, Tok>, inside: Record<string, Inside>) {
+  const seen = new Set<string>(), t = into[node] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
+  let first = Infinity, last = -Infinity;
+  for (const l of lines) {
+    let o: { type?: string; timestamp?: string; message?: { id?: string; model?: string; usage?: Record<string, number> } };
+    try { o = JSON.parse(l); } catch { continue; }
+    const at = Date.parse(o.timestamp ?? '');
+    if (Number.isFinite(at)) { first = Math.min(first, at); last = Math.max(last, at); }
+    const id = o.message?.id, u = o.message?.usage;
+    if (o.type !== 'assistant' || !u || !id || seen.has(id)) continue;
+    seen.add(id);
+    t.input += u.input_tokens ?? 0; t.output += u.output_tokens ?? 0;
+    t.cacheRead += u.cache_read_input_tokens ?? 0; t.cacheWrite += u.cache_creation_input_tokens ?? 0;
+    if (o.message?.model && !t.models.includes(o.message.model)) t.models.push(o.message.model);
+  }
+  const x = inside[node];
+  if (!x) return;
+  const a = x.agents ??= { n: 0, ms: 0, turns: 0 };
+  a.n++; a.turns += seen.size; a.ms += last > first ? last - first : 0;
+}
+function subagents(session: string, agents: Map<string, string>, into: Record<string, Tok>, inside: Record<string, Inside>) {
+  const dir = join(session.replace(/\.jsonl$/, ''), 'subagents');
+  let fs: string[] = [];
+  try { fs = readdirSync(dir).filter(f => f.endsWith('.meta.json')); } catch { return; }
+  for (const m of fs) {
+    try {
+      const node = agents.get(String(JSON.parse(readFileSync(join(dir, m), 'utf8')).toolUseId ?? ''));
+      if (node) subagentIn(readFileSync(join(dir, m.replace(/\.meta\.json$/, '.jsonl')), 'utf8').split('\n'), node, into, inside);
+    } catch { /* 깨진 기록은 건너뛴다 */ }
+  }
+}
 function tokens(r: Run, inside: Record<string, Inside>) {
   const out: Record<string, Tok> = {}, dir = transcriptDir(r.cwd);
   let files: string[] = [];
   try { files = readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f)).filter(f => statSync(f).mtimeMs >= r.created); } catch { return out; }
   for (const f of files) {
     const t = readFileSync(f, 'utf8');
-    if (t.includes(`[EDITH 런 #${r.id} ·`)) tokensIn(t.split('\n'), r.id, out, inside);
+    if (!t.includes(`[EDITH 런 #${r.id} ·`)) continue;
+    const agents = new Map<string, string>();
+    tokensIn(t.split('\n'), r.id, out, inside, agents);
+    if (agents.size) subagents(f, agents, out, inside);
   }
   return out;
 }

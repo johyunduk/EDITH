@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { codexUsage, flow, lanes, phaseTimes, readPaths, redo, repoPick, sameCode, timings, toolLabel, tokensIn, type Ev, type Inside } from './analysis.ts';
+import { codexUsage, flow, lanes, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, type Ev, type Inside } from './analysis.ts';
 import { codeFp } from './runner.ts';
 
 test('런 분석 시간 — 도는 중은 일한 시간, 답 기다림 · 확인 필요는 사람 대기, 끝나면 멈춘다', () => {
@@ -100,4 +100,16 @@ test('코드 지문 — 작업 폴더(git)의 HEAD · 바뀐 파일 · diff 가 
 test('런 분석 레포 판단 — 엔진 기록의 마지막 repo-pick 줄, 없으면 없음', () => {
   assert.equal(repoPick(-1, [{ kind: 'stage' }]), null);
   assert.deepEqual(repoPick(-1, [{ kind: 'repo-pick', must: ['a'], check: ['b'] }, { kind: 'repo-pick', must: ['c', 1], check: [], human: true }]), { must: ['c'], check: [], human: true, picked: [] });
+});
+
+test('런 분석 하위 에이전트 — 부른 노드(Agent 도구 호출 id)를 잇고, 그 기록의 토큰 · 걸린 시간 · 턴을 그 노드에', () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 9, 26, 0, 0, s)).toISOString();
+  const inside: Record<string, Inside> = {}, into = {}, agents = new Map<string, string>();
+  tokensIn([JSON.stringify({ type: 'user', timestamp: at(0), message: { content: '[EDITH 런 #5 · 준비 › 「준비」]\n결과 파일: /r/5/nodes/p/1/result.json' } }),
+    JSON.stringify({ type: 'assistant', timestamp: at(1), message: { id: 'm1', usage: { input_tokens: 1, output_tokens: 2 }, content: [{ type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: '판정' } }] } })], 5, into, inside, agents);
+  assert.equal(agents.get('toolu_A'), 'p');
+  const sub = (s: number, id: string, out: number) => JSON.stringify({ type: 'assistant', timestamp: at(s), message: { id, model: 'claude-sonnet-5-5', usage: { input_tokens: 10, output_tokens: out, cache_read_input_tokens: 100 } } });
+  subagentIn([JSON.stringify({ type: 'user', timestamp: at(2), message: { content: '판정해 줘' } }), sub(5, 's1', 7), sub(5, 's1', 7), sub(62, 's2', 3)], 'p', into, inside);
+  assert.deepEqual(inside.p.agents, { n: 1, ms: 60_000, turns: 2 });
+  assert.deepEqual((into as Record<string, { output: number; models: string[] }>).p.output, 2 + 7 + 3);
 });

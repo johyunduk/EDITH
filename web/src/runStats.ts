@@ -7,7 +7,7 @@ export type Tok = { input: number; output: number; cacheRead: number; cacheWrite
 export type StatNode = {
   key: string; title: string; place: string; phase?: string; kind: string; fixOnly: boolean; state: string; attempts: number; fails: number; rewound: number;
   time: { work: number; human: number; stop: number } | null; tokens: Tok | null; claude: ClaudeUsed | null;
-  inside: { first: number; last: number; tools: Record<string, number>; busy: number; turns?: number; reads?: Record<string, number>; readChars?: number } | null;
+  inside: { first: number; last: number; tools: Record<string, number>; busy: number; turns?: number; reads?: Record<string, number>; readChars?: number; agents?: { n: number; ms: number; turns: number } } | null;
 };
 export type Stats = {
   id: number; elapsed: number; timed: boolean; rewinds: unknown[]; records: Record<string, unknown>[]; nodes: StatNode[];

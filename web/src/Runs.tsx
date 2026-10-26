@@ -739,6 +739,7 @@ function Inside({ a }: { a: Stats }) {
             </div>
             <p className="mt-0.5 text-muted-foreground">모델 {dur(model)} · 도구 {dur(tool)}{ask ? ` · 질문 창(사람) ${dur(ask)}` : ''}{tools.length ? ` — ${tools.map(([k, v]) => `${k} ${dur(v)}`).join(' · ')}` : ''}</p>
             {(i.turns || i.readChars) ? <p className="text-muted-foreground">대화 {i.turns ?? 0}번 · 읽은 글 {big(i.readChars ?? 0)}자{reads.length ? ` — ${reads.map(([f, n]) => `${f} ${big(n)}`).join(' · ')}` : ''}</p> : null}
+            {i.agents && <p className="text-muted-foreground">하위 에이전트 {i.agents.n}개 · {dur(i.agents.ms)} · 대화 {i.agents.turns}번(토큰은 이 노드에 더함)</p>}
           </div>
         );
       })}
