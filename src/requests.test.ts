@@ -30,6 +30,11 @@ test('요청 meta — 객체 4KB 까지만 런으로 넘기고, 거절 사유는
   try {
     writeFileSync(join(root, 'm1.json'), JSON.stringify({ engine: 'dev', title: '메모 칸 추가', tag: 'TICKET-1', meta: { room: 's1', message: 'm9', author: '마크' } }));
     assert.deepEqual([readRequest('m1', root)?.title, readRequest('m1', root)?.tag], ['메모 칸 추가', 'TICKET-1']);
+    // 상위(예: 이슈의 안건) — 글이 하나라도 있는 객체만
+    writeFileSync(join(root, 'p1.json'), JSON.stringify({ engine: 'dev', parent: { tag: 'PROJ-1', title: '포인트 지급', extra: 1 } }));
+    writeFileSync(join(root, 'p2.json'), JSON.stringify({ engine: 'dev', parent: '글' }));
+    writeFileSync(join(root, 'p3.json'), JSON.stringify({ engine: 'dev', parent: { tag: ' ' } }));
+    assert.deepEqual(['p1', 'p2', 'p3'].map(id => readRequest(id, root)?.parent), [{ tag: 'PROJ-1', title: '포인트 지급' }, undefined, undefined]);
     writeFileSync(join(root, 'm2.json'), JSON.stringify({ engine: 'dev', meta: ['배열'] }));
     writeFileSync(join(root, 'm3.json'), JSON.stringify({ engine: 'dev', meta: { big: 'x'.repeat(5000) } }));
     assert.deepEqual(['m1', 'm2', 'm3'].map(id => readRequest(id, root)?.meta), [{ room: 's1', message: 'm9', author: '마크' }, undefined, undefined]);

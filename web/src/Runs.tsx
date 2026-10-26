@@ -41,7 +41,7 @@ type Summary = {
 };
 type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
 type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number; tag?: string; title?: string; agenda?: string };
-type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; at: number };
+type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; at: number };
 
 const RUN_LABEL: Record<RunState, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝' };
 const RUN_TONE: Record<RunState, string> = {
@@ -119,6 +119,14 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
             {r.tag && <span className="min-w-0 truncate rounded bg-muted px-1.5 py-px text-[0.6875rem] font-medium text-muted-foreground" title={r.tag}>{r.tag}</span>}
             <span className="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground tabular-nums" title={r.id}>{when(r.at)}</span>
           </p>
+          {/* 상위 안건(요청이 parent 를 줄 때) — 제목 위 한 줄 */}
+          {r.parent && (
+            <p className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground" title={`안건 ${[r.parent.tag, r.parent.title].filter(Boolean).join(' ')}`}>
+              <span className="shrink-0 font-semibold text-sky-700 dark:text-sky-400">안건</span>
+              {r.parent.tag && <span className="shrink-0 tabular-nums text-sky-700 dark:text-sky-400">{r.parent.tag}</span>}
+              {r.parent.title && <span className="min-w-0 truncate">{r.parent.title}</span>}
+            </p>
+          )}
           {head && <p className="line-clamp-2 text-[0.8125rem] font-semibold leading-snug" title={r.input}>{head}</p>}
           <p className="flex items-center gap-1.5 text-muted-foreground">
             <span className="min-w-0 truncate">{nameOf(r.engine)}{r.from ? ` · ${r.from}` : ''}{r.room ? ` · ${r.room}` : ''}{r.unattended ? ' · 무인' : ''}</span>
