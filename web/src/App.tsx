@@ -1,4 +1,4 @@
-// EDITH 화면 — 위에서 「오늘」·「herdr」·「스킬」·「공방」·「런」·「배포」·「설정」 을 고른다. 주소는 #/today, #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/deploy(옛 #/results — 배포가 결과를 품었다), #/settings. 오른쪽 위 종은 알림함.
+// EDITH 화면 — 위에서 「herdr」·「스킬」·「공방」·「런」·「배포」·「오늘」·「설정」 을 고른다. 주소는 #/today, #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/deploy(옛 #/results — 배포가 결과를 품었다), #/settings. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -27,6 +27,7 @@ const PLAY = <><circle cx="12" cy="12" r="10" /><path d="m10 8 6 4-6 4z" /></>; 
 const TODAY = <><path d="M8 2v4" /><path d="M16 2v4" /><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M3 10h18" /><path d="m9 16 2 2 4-4" /></>;   // 오늘 탭(lucide calendar-check)
 const ROCKET = <><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" /><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" /><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" /><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" /></>;   // 배포 탭(lucide rocket)
 
+const MENU = { herdr: 'herdr', skills: '스킬', workshop: '공방', runs: '런', deploy: '배포', today: '오늘', settings: '설정' };
 const route = () => {
   const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/), ws = h.match(/^#\/workshop(?:\/(.+))?/), runs = h.match(/^#\/runs(?:\/(.+))?/);
   if (h.startsWith('#/settings')) return { view: 'settings' as const, id: undefined };
@@ -49,7 +50,11 @@ export default function App() {
     return () => removeEventListener('hashchange', f);
   }, []);
   const herdr = useHerdr(), view = useView().data, remote = view?.remote ? view.host : null;
-  useBlockedAlert(APP_NAME, herdr.data, remote);
+  // 탭 제목 — herdr 는 보고 있는 pane 의 워크스페이스 이름, 나머지(pane 을 안 열었을 때도)는 「EDITH | 메뉴」, 런 하나를 열었으면 「EDITH | 런 #12」
+  const pane = r.view === 'herdr' ? herdr.data?.panes.find(p => p.id === r.id) : undefined;
+  const menu = r.view === 'runs' && /^\d+$/.test(r.id ?? '') ? `${MENU.runs} #${r.id}` : MENU[r.view];
+  const title = herdr.data?.workspaces.find(w => w.workspace_id === pane?.workspace)?.label || `${APP_NAME} | ${menu}`;
+  useBlockedAlert(title, herdr.data, remote);
   const alerts = useAlerts(herdr.data);
   // 받은 요청 수 — 런 화면 목록과 같은 쿼리(시작 · 거절로 답하면 목록에서 빠지고 수도 같이 준다)
   const asked = useQuery({ queryKey: ['requests'], queryFn: () => get<unknown[]>('/api/requests'), refetchInterval: 5000 }).data?.length ?? 0;
@@ -86,13 +91,13 @@ export default function App() {
         </span>
         {/* 좁은 화면에선 탭 줄만 옆으로 밀린다(페이지는 가로로 안 밀리게) */}
         <nav className="-my-px flex max-w-full min-w-0 self-stretch overflow-x-auto [scrollbar-width:none]">
-          <a href="#/today" className={nav(r.view === 'today')}><Icon className="size-4">{TODAY}</Icon>오늘</a>
           <a href="#/herdr" className={nav(r.view === 'herdr')}><Icon className="size-4">{TERMINAL}</Icon>herdr</a>
           <a href="#/skills" className={nav(r.view === 'skills')}><Icon className="size-4">{GRID}</Icon>스킬</a>
           <a href="#/workshop" className={nav(r.view === 'workshop')}><Icon className="size-4">{FLOW}</Icon>공방</a>
           <a href="#/runs" className={`relative ${nav(r.view === 'runs')}`}><Icon className="size-4">{PLAY}</Icon>런
             {asked > 0 && <span title={`받은 요청 ${asked} — 런 시작 · 거절 전까지 보인다`} className="absolute top-3 right-1.5 min-w-3 rounded-full bg-red-500 px-0.5 text-center text-[0.5rem] leading-3 font-bold text-white tabular-nums ring-2 ring-card">{asked}</span>}</a>
           <a href="#/deploy" className={nav(r.view === 'deploy')}><Icon className="size-4">{ROCKET}</Icon>배포</a>
+          <a href="#/today" className={nav(r.view === 'today')}><Icon className="size-4">{TODAY}</Icon>오늘</a>
           <a href="#/settings" className={nav(r.view === 'settings')}><Icon className="size-4">{GEAR}</Icon>설정</a>
         </nav>
         {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}

@@ -62,6 +62,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `web/src/Workshop.tsx` · `Runs.tsx` · `AgentPane.tsx` | 공방 화면(체인 · 엔진 목록 — 트리, 서버 목록의 `uses` 로 짠다, 캔버스 React Flow `@xyflow/react`, 노드 · 화살표 칸, 엔진의 「흐름 지도」 `EngineMap.tsx` — 칸 · 줄은 서버 `src/engineMap.ts`(map.json · 기본 지도 · 「전체 보기」 파일 읽기는 공방 폴더 안만)), 런 화면(런 목록 · 새 런, 타임라인 카드 덱 `RunTimeline.tsx` — 체인마다 지금 · 끝 · 남음 나누기는 `runFlow.ts` 의 `chainView`, 「캔버스」 = 런 흐름 `RunFlow.tsx` — 큰 단계 상자 · 갈래 줄 묶기는 `runFlow.ts`, 「분석」 의 먼저 볼 것 · 단계별 묶기는 `runStats.ts`), 공방 「펼쳐 보기」 의 펼친 캔버스(`StepFlow.tsx` — 자리는 `stepFlow.ts`, 런 기록의 `boxes` 로 상자를 짠다), 둘이 같이 쓰는 오른쪽 Claude 칸 |
 | `web/src/api.ts` · `ui.tsx` · `Menu.tsx` · `copy.ts` | 서버 호출(`get`·`post`)·응답 타입, 작은 공용 조각, 우클릭 메뉴, 복사·알림 한 줄 |
 | `web/src/index.css` | 색·글꼴(밝은·어두운 화면 변수) |
+| `web/public/favicon.svg` | 브라우저 탭 아이콘 — `web/index.html`에서 연결, 빌드하면 `web/dist/favicon.svg`로 복사 |
 | `install.sh` · `install.ps1` | 설치 스크립트(macOS·Linux / Windows) |
 | `plugins/` · `.claude-plugin/marketplace.json` | Claude Code 플러그인(mod) — `rc-keepalive`(끊긴 Remote Control 다시 켜기), `commit-guard`(git commit·push 전에 묻기), `peer-message`(Claude 끼리는 SendMessage). 레포가 마켓플레이스 `edith` |
 | `workshop/engine-skill.md` | 공방 Claude 의 만들기 스킬(체인 · 엔진) — 묻기 · 노드 나누기 · 스킬 쓰기 · 초안(`draft.json`). 공방 폴더 `CLAUDE.md` 가 이 파일을 경로로 가리킨다(플러그인 아님 — 공방에서만 쓴다) |
