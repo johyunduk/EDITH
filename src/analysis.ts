@@ -331,6 +331,40 @@ function records(id: number) {
   } catch { return []; }
 }
 
+// 여러 런 모아 보기 — 같은 엔진의 최근 런마다 요약(노드별 일한 시간 · 헛돈 노드 · 레포 판단)을 모아 레포 판단 맞힘률, 노드별 헛도는 비율, 노드별 보통 시간(지난 런 중앙값)
+export type RunSum = { id: number; work: Record<string, number>; same: string[]; pick: ReturnType<typeof repoPick> };
+export function acrossOf(sums: RunSum[], current: number) {
+  const others = sums.filter(x => x.id !== current), med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor((xs.length - 1) / 2)];   // 아래 중앙값
+  // 보통 시간은 그 노드가 돈 지난 런이 3개 넘을 때만 — 적으면 「보통」 이라 하기 어렵다
+  const medians = Object.fromEntries([...new Set(others.flatMap(x => Object.keys(x.work)))].flatMap(k => {
+    const xs = others.map(x => x.work[k] ?? 0).filter(v => v > 0);
+    return xs.length >= 3 ? [[k, { ms: med(xs), n: xs.length }]] : [];
+  }));
+  const flaky = [...new Set(sums.flatMap(x => x.same))].map(k => ({ key: k, same: sums.filter(x => x.same.includes(k)).length, ran: sums.filter(x => (x.work[k] ?? 0) > 0).length }))
+    .sort((a, b) => b.same - a.same || b.ran - a.ran);
+  // 레포 판단은 커밋이 있는 런만 — 커밋한 레포가 모두 확실(또는 확실 + 확인) 칸에 있었나, 사람이 판단에 없던 레포를 더했나
+  const picks = sums.flatMap(x => x.pick?.picked.some(p => (p.commits ?? 0) > 0) ? [x.pick] : []);
+  const covered = (p: NonNullable<RunSum['pick']>, set: string[]) => p.picked.filter(x => (x.commits ?? 0) > 0).every(x => set.includes(x.repo));
+  const repo = picks.length ? { runs: picks.length, must: picks.filter(p => covered(p, p.must)).length, check: picks.filter(p => covered(p, [...p.must, ...p.check])).length,
+    added: picks.filter(p => p.picked.some(x => !p.must.includes(x.repo) && !p.check.includes(x.repo))).length } : null;
+  return { runs: sums.length, medians, flaky, repo };
+}
+// 런 요약 — 끝난 런은 events.jsonl 이 그대로면 다시 계산하지 않는다(레포 판단의 git 호출이 런마다 든다)
+const sums = new Map<number, { key: string; sum: RunSum }>();
+function runSum(id: number): RunSum | null {
+  const r = loadRun(id);
+  if (!r) return null;
+  let key = '';
+  try { const e = statSync(join(RUNS, String(id), 'events.jsonl')); key = `${r.state}:${e.size}:${e.mtimeMs}`; } catch { return null; }
+  const c = sums.get(id);
+  if (c?.key === key && ['done', 'dropped'].includes(r.state)) return c.sum;
+  const ev = readEvents(id), t = timings(ev, Date.now());
+  const sum: RunSum = { id, work: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.work])), same: sameCode(ev).map(x => x.key), pick: repoPick(id, records(id)) };
+  sums.set(id, { key, sum });
+  return sum;
+}
+const across = (r: Run) => acrossOf(listRuns().filter(x => x.engine === r.engine).slice(0, 30).flatMap(x => runSum(x.id) ?? []), r.id);
+
 export function runAnalysis(id: number) {
   const r = loadRun(id);
   if (!r) return null;
@@ -356,5 +390,5 @@ export function runAnalysis(id: number) {
   const end = r.state === 'done' ? last : Date.now(), recs = records(id);
   return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created, timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
     flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: use, compare: compare(r),
-    sameCode: sameCode(events), repoPick: repoPick(id, recs) };
+    sameCode: sameCode(events), repoPick: repoPick(id, recs), across: across(r) };
 }

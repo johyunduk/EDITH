@@ -19,6 +19,8 @@ export type Stats = {
   compare: { id: number; state: string; created: number; elapsed: number; human: number; phases: { name: string; ms: number }[] }[];
   sameCode?: { key: string; attempts: number; same: number; lost: number; passed: boolean }[];   // 옛 서버는 없다
   repoPick?: { must: string[]; check: string[]; human: boolean; picked: { repo: string; commits: number | null }[] } | null;
+  // 같은 엔진 최근 런 모아 보기 — medians 는 지난 런(이 런 빼고)에서 그 노드가 일한 시간의 중앙값(3런 넘을 때만)
+  across?: { runs: number; medians: Record<string, { ms: number; n: number }>; flaky: { key: string; same: number; ran: number }[]; repo: { runs: number; must: number; check: number; added: number } | null };
 };
 
 export const inTok = (t: Tok) => t.input + t.cacheRead + t.cacheWrite;

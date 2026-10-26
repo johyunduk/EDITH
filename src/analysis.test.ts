@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { codexUsage, flow, lanes, mergePart, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, type Ev, type Inside } from './analysis.ts';
+import { acrossOf, codexUsage, flow, lanes, mergePart, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, type Ev, type Inside, type RunSum } from './analysis.ts';
 import { codeFp } from './runner.ts';
 
 test('런 분석 시간 — 도는 중은 일한 시간, 답 기다림 · 확인 필요는 사람 대기, 끝나면 멈춘다', () => {
@@ -129,4 +129,19 @@ test('런 분석 파일별 결과 더하기 — 토큰 · 노드 안쪽을 더�
   assert.deepEqual(out.into, { n: { input: 2, output: 4, cacheRead: 6, cacheWrite: 8, models: ['m1'] } });
   assert.deepEqual(out.inside, { n: { first: 10, last: 20, tools: { Read: 10 }, busy: 10, turns: 4, readChars: 14, reads: { 'a/b.md': 14 }, agents: { n: 2, ms: 18, turns: 6 } } });
   assert.deepEqual(part, keep);
+});
+
+test('여러 런 모아 보기 — 지난 런 중앙값(3런 넘을 때), 헛도는 노드 비율, 커밋한 런의 레포 판단 맞힘', () => {
+  const pick = (must: string[], check: string[], picked: [string, number][]) => ({ must, check, human: false, picked: picked.map(([repo, commits]) => ({ repo, commits })) });
+  const sums: RunSum[] = [
+    { id: 1, work: { a: 10, v: 5 }, same: ['v'], pick: pick(['x'], ['y'], [['x', 2]]) },
+    { id: 2, work: { a: 30, v: 5 }, same: [], pick: pick(['x'], ['y'], [['x', 1], ['y', 3]]) },
+    { id: 3, work: { a: 20 }, same: ['v'], pick: pick(['x'], [], [['x', 1], ['z', 1]]) },
+    { id: 4, work: { a: 99 }, same: [], pick: pick(['x'], [], [['x', 0]]) },   // 커밋이 없으면 맞힘에서 뺀다
+    { id: 9, work: { a: 500 }, same: [], pick: null },
+  ];
+  const x = acrossOf(sums, 9);
+  assert.deepEqual(x.medians, { a: { ms: 20, n: 4 } });   // 이 런(9)은 빼고, v 는 2런뿐이라 없음
+  assert.deepEqual(x.flaky, [{ key: 'v', same: 2, ran: 2 }]);
+  assert.deepEqual(x.repo, { runs: 3, must: 1, check: 2, added: 1 });
 });

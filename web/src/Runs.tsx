@@ -771,6 +771,24 @@ function RepoPick({ p }: { p: NonNullable<Stats['repoPick']> }) {
   );
 }
 
+// 여러 런 모아 보기 — 같은 엔진 최근 런들의 레포 판단 맞힘률과 헛도는 검사가 잦은 노드
+function Across({ a }: { a: Stats }) {
+  const x = a.across!, name = (k: string) => a.nodes.find(n => n.key === k)?.title ?? k;
+  return (
+    <div className="space-y-2 text-xs">
+      <p><span className="font-semibold">레포 판단</span> — {x.repo
+        ? `커밋한 런 ${x.repo.runs}개 중 확실 칸이 다 담은 런 ${x.repo.must} · 확인 칸까지 ${x.repo.check} · 사람이 판단에 없던 레포를 더한 런 ${x.repo.added}`
+        : '엔진의 레포 판단 기록(repo-pick)과 커밋이 함께 있는 런이 아직 없다'}</p>
+      <div>
+        <p className="font-semibold">헛도는 검사가 있었던 노드</p>
+        {x.flaky.length ? <ul className="mt-0.5 space-y-0.5">{x.flaky.slice(0, 6).map(f => <li key={f.key}>{name(f.key)} <span className="text-muted-foreground">— {f.ran}런 중 {f.same}런에서 코드 그대로 다시 돎</span></li>)}</ul>
+          : <p className="text-muted-foreground">없음(실행기가 코드 지문을 적기 시작한 뒤의 런만 센다)</p>}
+      </div>
+      <p className="text-muted-foreground">노드 보통 시간(지난 런 중앙값)이 있는 노드 {Object.keys(x.medians).length}개 — 「먼저 볼 것」 의 「평소보다 느림」 이 쓴다</p>
+    </div>
+  );
+}
+
 // 자세히 — 접어 둔 칸. 제목 옆에 이 칸이 무엇에 답하는지
 function Fold({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
   return (
@@ -879,6 +897,7 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
         {a.lanes.length > 0 && <Fold title="갈래" hint={`갈래마다 시작 · 끝, 먼저 끝난 갈래가 합치는 노드${a.lanes[0].join ? `(${a.nodes.find(x => x.key === a.lanes[0].join)?.title ?? a.lanes[0].join})` : ''} 앞에서 기다린 시간`}><Lanes a={a} /></Fold>}
         {insideTop(a).length > 0 && <Fold title="노드 안쪽" hint="오래 걸린 노드에서 Claude 가 생각한 시간과 도구가 돈 시간, 대화 수 · 읽은 글"><Inside a={a} /></Fold>}
         {a.repoPick && <Fold title="레포 판단" hint="엔진이 고른 레포(확실 · 확인)와 런이 실제로 쓰고 커밋한 레포"><RepoPick p={a.repoPick} /></Fold>}
+        {a.across && a.across.runs > 1 && <Fold title="여러 런 모아 보기" hint={`같은 엔진 최근 ${a.across.runs}런 — 레포 판단 맞힘률, 헛도는 검사가 잦은 노드`}><Across a={a} /></Fold>}
         {a.compare.length > 1 && <Fold title="같은 엔진 런 비교" hint={`최근 ${a.compare.length}개 런의 단계별 걸린 시간`}><Compare a={a} cut={cut} /></Fold>}
         <Fold title="노드 표" hint={`돈 노드 ${rows.length}개의 시도 · 시간 · 토큰 · Claude 설정(안 돈 ${a.nodes.length - rows.length}개는 뺐다)`}>
           <div className="overflow-x-auto">
