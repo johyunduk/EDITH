@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { codexUsage, flow, lanes, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, type Ev, type Inside } from './analysis.ts';
+import { codexUsage, flow, lanes, mergePart, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, type Ev, type Inside } from './analysis.ts';
 import { codeFp } from './runner.ts';
 
 test('런 분석 시간 — 도는 중은 일한 시간, 답 기다림 · 확인 필요는 사람 대기, 끝나면 멈춘다', () => {
@@ -119,4 +119,14 @@ test('런 분석 claude -p 사용량 — 명령 노드가 남긴 usage 줄의 cl
     { kind: 'usage', node: 'c', codex: { in: 5, out: 6, cacheR: 7 } }]);
   assert.deepEqual(u.claude, { r: { in: 40, out: 51, cacheR: 400, cost: 0.002 } });
   assert.deepEqual(u.nodes, { c: { in: 5, out: 6, cacheR: 7 } });
+});
+
+test('런 분석 파일별 결과 더하기 — 토큰 · 노드 안쪽을 더하고, 기억해 둔 결과는 고치지 않는다', () => {
+  const part = { into: { n: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, models: ['m1'] } },
+    inside: { n: { first: 10, last: 20, tools: { Read: 5 }, busy: 5, turns: 2, readChars: 7, reads: { 'a/b.md': 7 }, agents: { n: 1, ms: 9, turns: 3 } } } };
+  const keep = structuredClone(part), out = { into: {}, inside: {} };
+  mergePart(out, part); mergePart(out, part);
+  assert.deepEqual(out.into, { n: { input: 2, output: 4, cacheRead: 6, cacheWrite: 8, models: ['m1'] } });
+  assert.deepEqual(out.inside, { n: { first: 10, last: 20, tools: { Read: 10 }, busy: 10, turns: 4, readChars: 14, reads: { 'a/b.md': 14 }, agents: { n: 2, ms: 18, turns: 6 } } });
+  assert.deepEqual(part, keep);
 });

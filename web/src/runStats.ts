@@ -10,7 +10,7 @@ export type StatNode = {
   inside: { first: number; last: number; tools: Record<string, number>; busy: number; turns?: number; reads?: Record<string, number>; readChars?: number; agents?: { n: number; ms: number; turns: number } } | null;
 };
 export type Stats = {
-  id: number; elapsed: number; timed: boolean; rewinds: unknown[]; records: Record<string, unknown>[]; nodes: StatNode[];
+  id: number; state?: string; elapsed: number; timed: boolean; rewinds: unknown[]; records: Record<string, unknown>[]; nodes: StatNode[];
   flow: { work: number; human: number; stop: number; idle: number; spans: { from: number; to: number; kind: 'human' | 'idle' | 'stop'; keys: string[] }[] } | null;
   phases?: { name: string; ms: number }[];   // 옛 서버는 없다
   lanes: { track: string; first: number | null; last: number | null; work: number; human: number; waited: number | null; join: string | null }[];

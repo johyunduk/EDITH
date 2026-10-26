@@ -787,7 +787,8 @@ const big = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$
 // 엔진 기록 칸 — 밀리초 시각처럼 보이는 수(2001~2096년)는 시:분:초로
 const cellText = (v: unknown) => typeof v === 'string' ? v : typeof v === 'number' && v > 1e12 && v < 4e12 ? new Date(v).toLocaleTimeString('ko-KR', { hour12: false }) : v === undefined ? '' : JSON.stringify(v);
 function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; pick: (k: string) => void; detail: () => ReactNode }) {
-  const q = useQuery({ queryKey: ['run-stats', id], queryFn: () => get<Stats>(`/api/runs/${id}/analysis`), refetchInterval: 10_000 });
+  // 끝난 런(끝남 · 버림)은 분석이 더 바뀌지 않아 다시 묻지 않는다
+  const q = useQuery({ queryKey: ['run-stats', id], queryFn: () => get<Stats>(`/api/runs/${id}/analysis`), refetchInterval: x => ['done', 'dropped'].includes(x.state.data?.state ?? '') ? false : 10_000 });
   const [open, setOpen] = useState<Set<string>>(new Set());
   // 「먼저 볼 것」 에서 노드를 고르면 그 노드 줄로 — 단계는 고른 노드가 들어 있으면 펼친다
   useEffect(() => { if (sel) document.getElementById(`stat-${sel}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [sel]);

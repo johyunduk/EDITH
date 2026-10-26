@@ -269,18 +269,55 @@ function subagents(session: string, agents: Map<string, string>, into: Record<st
     } catch { /* 깨진 기록은 건너뛴다 */ }
   }
 }
-function tokens(r: Run, inside: Record<string, Inside>) {
-  const out: Record<string, Tok> = {}, dir = transcriptDir(r.cwd);
-  let files: string[] = [];
-  try { files = readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => join(dir, f)).filter(f => statSync(f).mtimeMs >= r.created); } catch { return out; }
-  for (const f of files) {
-    const t = readFileSync(f, 'utf8');
-    if (!t.includes(`[EDITH 런 #${r.id} ·`)) continue;
+// 세션 파일 하나를 읽은 결과 — (크기 · 수정 시각 · 하위 에이전트 파일)이 그대로면 다시 읽지 않는다(분석 칸이 10초마다 다시 묻는다).
+// 이 런 글이 없는 파일도 빈 결과로 기억한다. shortcut: 기억은 서버를 다시 켤 때까지 쌓인다 — 런 · 세션이 아주 많아지면 오래된 런부터 지운다
+type Part = { into: Record<string, Tok>; inside: Record<string, Inside> };
+const parsed = new Map<string, { key: string; part: Part }>();
+function filePart(run: number, f: string, size: number, mtime: number): Part {
+  const sd = join(f.replace(/\.jsonl$/, ''), 'subagents');
+  let sub = '';
+  try { sub = readdirSync(sd).map(x => `${x}:${statSync(join(sd, x)).size}`).join(); } catch { /* 하위 에이전트 없음 */ }
+  const id = `${run}|${f}`, key = `${size}:${mtime}:${sub}`, c = parsed.get(id);
+  if (c?.key === key) return c.part;
+  const part: Part = { into: {}, inside: {} }, t = readFileSync(f, 'utf8');
+  if (t.includes(`[EDITH 런 #${run} ·`)) {
     const agents = new Map<string, string>();
-    tokensIn(t.split('\n'), r.id, out, inside, agents);
-    if (agents.size) subagents(f, agents, out, inside);
+    tokensIn(t.split('\n'), run, part.into, part.inside, agents);
+    if (agents.size) subagents(f, agents, part.into, part.inside);
   }
-  return out;
+  parsed.set(id, { key, part });
+  return part;
+}
+// 파일마다의 결과를 더한다 — 기억해 둔 결과는 고치지 않는다(처음 넣을 때 복사)
+export function mergePart(out: Part, p: Part) {
+  for (const [k, t] of Object.entries(p.into)) {
+    const o = out.into[k] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
+    o.input += t.input; o.output += t.output; o.cacheRead += t.cacheRead; o.cacheWrite += t.cacheWrite;
+    for (const m of t.models) if (!o.models.includes(m)) o.models.push(m);
+  }
+  for (const [k, x] of Object.entries(p.inside)) {
+    const o = out.inside[k];
+    if (!o) { out.inside[k] = structuredClone(x); continue; }
+    o.first = Math.min(o.first, x.first); o.last = Math.max(o.last, x.last); o.busy += x.busy;
+    for (const [n, v] of Object.entries(x.tools)) o.tools[n] = (o.tools[n] ?? 0) + v;
+    if (x.turns) o.turns = (o.turns ?? 0) + x.turns;
+    if (x.readChars) o.readChars = (o.readChars ?? 0) + x.readChars;
+    for (const [n, v] of Object.entries(x.reads ?? {})) (o.reads ??= {})[n] = (o.reads[n] ?? 0) + v;
+    if (x.agents) { const a = o.agents ??= { n: 0, ms: 0, turns: 0 }; a.n += x.agents.n; a.ms += x.agents.ms; a.turns += x.agents.turns; }
+  }
+}
+// 이 런의 세션 파일 — 런이 시작된 뒤 바뀐 것. 끝난 런이면 끝나고 5분 넘어 생긴 파일(다른 런 · 다른 일)은 건너뛴다(생긴 시각을 모르는 파일 시스템이면 안 거른다)
+function tokens(r: Run, inside: Record<string, Inside>, end: number) {
+  const out: Part = { into: {}, inside }, dir = transcriptDir(r.cwd);
+  let files: { f: string; size: number; mtime: number }[] = [];
+  try {
+    files = readdirSync(dir).filter(f => f.endsWith('.jsonl')).flatMap(n => {
+      const f = join(dir, n), s = statSync(f);
+      return s.mtimeMs >= r.created && !(s.birthtimeMs > 0 && s.birthtimeMs > end + 300_000) ? [{ f, size: s.size, mtime: s.mtimeMs }] : [];
+    });
+  } catch { return out.into; }
+  for (const x of files) mergePart(out, filePart(r.id, x.f, x.size, x.mtime));
+  return out.into;
 }
 
 // 엔진이 남긴 기록 — 작업 문서의 edith-records.jsonl(링크면 런 폴더 안을 가리킬 때만). 끝 500줄.
@@ -298,7 +335,8 @@ export function runAnalysis(id: number) {
   const r = loadRun(id);
   if (!r) return null;
   const inside: Record<string, Inside> = {};
-  const events = readEvents(id), time = timings(events, Date.now()), tok = tokens(r, inside), use = codexUsage(records(id));   // 옛 런은 기록이 없어 시간 없음
+  const events = readEvents(id), finished = ['done', 'dropped'].includes(r.state);
+  const time = timings(events, Date.now()), tok = tokens(r, inside, finished ? Math.max(r.created, ...events.map(e => e.t)) : Infinity), use = codexUsage(records(id));   // 옛 런은 기록이 없어 시간 없음
   // 명령 노드의 claude -p 사용량을 그 노드 토큰에(모델 칸에는 「claude -p」)
   for (const [k, c] of Object.entries(use.claude)) {
     const t = tok[k] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
