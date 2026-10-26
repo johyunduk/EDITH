@@ -30,7 +30,8 @@ import { livePort, stream } from './live.ts';
 import { runAnalysis } from './analysis.ts';
 import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
 import { brief, dayAi, todoOp, todoState } from './today.ts';
-import { addItem, checkTask, deployBoard, deployDone, deployFetch, editItems, prepareMerge, promoteMany } from './deploy.ts';
+import { addItem, addTask, checkTask, deployBoard, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteMany } from './deploy.ts';
+import { cleanRun, cleanStart, cleanState } from './cleanup.ts';
 import { withAgenda } from './agenda.ts';
 
 const WEB = join(REPO, 'web', 'dist');
@@ -233,16 +234,23 @@ export function serve(port: number) {
         try { return reply(res, 200, todoOp(b)); } catch (e) { return fail(e); }
       }
       // 끝난 런의 코드가 어느 브랜치까지 갔나(src/reach.ts) · 「새로 받기」 — 그 레포들을 origin 에서 fetch
-      // 배포 목록(src/deploy.ts) — 보기(항목 + 그 브랜치의 런) · 최신화(fetch) · 배포일 · 연기 · 보관 · 메모 · 할 일 체크 · 항목 더하기 · 다음 환경에 올리기(레포마다 push) · 그 머지 준비(충돌은 Claude pane)
+      // 배포 목록(src/deploy.ts) — 보기(항목 + 그 브랜치의 런) · 최신화(fetch) · 배포일 · 연기 · 보관 · 메모 · 할 일 체크 · 직접 한 일 적기 · 항목 더하기 · 다음 환경에 올리기(레포마다 push) · 그 머지 준비(충돌은 Claude pane)
+      // · 배포 조치 뽑기(공방 훅 on: prep — 기다리지 않는다) · 정리 미리보기 · 정리(src/cleanup.ts — 워크트리 · 워크스페이스 · 로컬 브랜치, 공방 훅 on: cleanup)
       if (path === '/api/deploy' && req.method === 'GET') return reply(res, 200, await deployBoard());
+      if (path === '/api/deploy/clean-plan' && req.method === 'GET') return reply(res, 200, cleanState(url.searchParams.get('ids') ?? ''));
+      if (path === '/api/deploy/file' && req.method === 'GET') { try { return reply(res, 200, deployFile(url.searchParams.get('id'), url.searchParams.get('name'))); } catch (e) { return reply(res, 404, { error: (e as Error).message }); } }
       if (path === '/api/deploy/done' && req.method === 'GET') return reply(res, 200, deployDone(url.searchParams.get('q') ?? '', url.searchParams.get('before') ?? undefined));
-      const dp = path.match(/^\/api\/deploy\/(fetch|edit|task|add|promote|prepare)$/);
+      const dp = path.match(/^\/api\/deploy\/(fetch|edit|task|task-add|add|promote|prepare|prep|clean-plan|clean)$/);
       if (dp && req.method === 'POST') {
         const b = (await body(req) ?? {}) as Record<string, unknown>;
         try {
           if (dp[1] === 'fetch') return reply(res, 200, await deployFetch(b.ids));
           if (dp[1] === 'edit') return reply(res, 200, editItems(b));
           if (dp[1] === 'task') return reply(res, 200, checkTask(b));
+          if (dp[1] === 'task-add') return reply(res, 200, addTask(b));
+          if (dp[1] === 'prep') return reply(res, 200, prepItems(b));
+          if (dp[1] === 'clean-plan') return reply(res, 200, cleanStart(b));
+          if (dp[1] === 'clean') return reply(res, 200, await cleanRun(b));
           if (dp[1] === 'add') return reply(res, 200, await addItem(b));
           if (dp[1] === 'prepare') return reply(res, 200, await prepareMerge(b));
           return reply(res, 200, await promoteMany(b));

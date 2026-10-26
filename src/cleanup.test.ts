@@ -1,0 +1,122 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { cleanPlan, cleanRun, cleanStart, cleanState, contentIn, parseLines, spacesOf, type Space } from './cleanup.ts';
+import { importItems, loadStore } from './deploy.ts';
+
+// 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
+const cfg = mkdtempSync(join(tmpdir(), 'edith-clean-cfg-'));
+writeFileSync(join(cfg, 'gitconfig'), '');
+Object.assign(process.env, { GIT_CONFIG_GLOBAL: join(cfg, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' });
+
+// 시험 레포 — feature 는 master 에 머지됨(워크트리 wt 에 꺼내 둠), merge/feature 는 feature + dev(dev 에 올라감),
+// pick 은 master 에 체리픽으로만 들어감(해시가 다르다), early 는 아직 어디에도 없다
+function repo() {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), 'edith-clean-test-'))), o = join(d, 'origin.git'), r = join(d, 'repo'), wt = join(d, 'wt');
+  const g = (...a: string[]) => execFileSync('git', ['-C', r, ...a], { encoding: 'utf8' }).trim();
+  const put = (f: string, t: string) => writeFileSync(join(r, f), t);
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'master', o]);
+  execFileSync('git', ['clone', '-q', o, r], { stdio: 'ignore' });
+  put('a.txt', 'a\n'); g('add', '.'); g('commit', '-qm', 'base'); g('push', '-q', 'origin', 'master');
+  g('branch', 'dev'); g('branch', 'stage');
+  g('checkout', '-qb', 'feature'); put('f.txt', 'f\n'); g('add', '.'); g('commit', '-qm', 'feat');
+  g('checkout', '-qb', 'pick', 'master'); put('p.txt', 'p\n'); g('add', '.'); g('commit', '-qm', 'pick');
+  g('checkout', '-qb', 'early', 'master'); put('e.txt', 'e\n'); g('add', '.'); g('commit', '-qm', 'early');
+  g('checkout', '-qb', 'merge/feature', 'dev'); g('merge', '-q', '--no-ff', '-m', 'feature → dev', 'feature');
+  g('checkout', '-q', 'dev'); g('merge', '-q', '--ff-only', 'merge/feature');
+  g('checkout', '-q', 'master'); g('merge', '-q', '--no-ff', '-m', 'feature → master', 'feature'); g('cherry-pick', 'pick');
+  g('push', '-q', 'origin', 'master', 'dev', 'stage');
+  g('worktree', 'add', '-q', wt, 'feature');
+  return { d, r, wt, file: join(d, 'deploy.json'), done: () => rmSync(d, { recursive: true, force: true }) };
+}
+
+test('contentIn — 해시가 아니라 내용으로: 머지 · 체리픽은 들어감, 안 들어간 브랜치 · 없는 곳은 아니다', async () => {
+  const r = repo();
+  try {
+    assert.equal(await contentIn(r.r, 'origin/master', 'feature'), true);
+    assert.equal(await contentIn(r.r, 'origin/master', 'pick'), true, '체리픽은 해시가 달라도 들어간 것');
+    assert.equal(await contentIn(r.r, 'origin/master', 'early'), false);
+    assert.equal(await contentIn(r.r, 'origin/dev', 'merge/feature'), true);
+    assert.equal(await contentIn(r.r, 'origin/nope', 'feature'), null);
+  } finally { r.done(); }
+});
+
+test('spacesOf — 워크트리 자리이거나 pane 이 모두 안이면 그 워크스페이스, 일부만 안이면 섞인 것', () => {
+  const all: Space[] = [
+    { id: 'a', label: '기능', busy: false, home: '/w/feature', cwds: ['/w/feature'] },
+    { id: 'b', label: '셸', busy: false, cwds: ['/w/feature/src', '/w/feature'] },
+    { id: 'c', label: '여럿', busy: false, cwds: ['/w/feature', '/home'] },
+    { id: 'd', label: '옆', busy: false, cwds: ['/w/feature-2'] },
+  ];
+  const { mine, mixed } = spacesOf(all, '/w/feature');
+  assert.deepEqual(mine.map(s => s.id), ['a', 'b']);
+  assert.deepEqual(mixed.map(s => s.id), ['c']);
+});
+
+test('parseLines — 마지막 줄의 JSON 만, 틀린 줄은 버린다', () => {
+  assert.deepEqual(parseLines('진행 글\n{"lines":[{"what":"작업 문서","ref":"x.notes","ok":true,"check":"문서에 다 있음"},{"what":"틀림","ok":"yes"}]}\n'),
+    [{ what: '작업 문서', ref: 'x.notes', ok: true, check: '문서에 다 있음' }]);
+  assert.deepEqual(parseLines('JSON 아님'), []);
+});
+
+test('정리 — 미리보기에서 걸리면 아무것도 안 지우고, 통과하면 워크스페이스 · 워크트리 · 로컬 브랜치를 치우고 보관한다', async () => {
+  const r = repo();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature', tag: '기능' }, { repo: r.r, branch: 'early', tag: '이른' }] }), r.file);
+    const [feat, early] = loadStore(r.file).items.map(x => x.id);
+    const ws = async (): Promise<Space[]> => [{ id: 'w1', label: '기능', busy: false, home: r.wt, cwds: [r.wt] }];
+    // 커밋 안 한 파일이 있으면 멈춘다
+    writeFileSync(join(r.wt, 'tmp.txt'), 'x');
+    let [p] = await cleanPlan({ ids: [feat] }, r.file, ws, null);
+    assert.equal(p.ok, false);
+    assert.match(p.lines.find(l => l.what === '원본')!.check, /커밋 안 한 파일 1/);
+    rmSync(join(r.wt, 'tmp.txt'));
+    // 엔진 훅이 막으면 멈춘다(확인 출력의 ok:false)
+    const hook = { dir: r.d, action: { label: '정리', command: `echo '{"lines":[{"what":"작업 문서","ref":"feature.notes","ok":false,"check":"문서에 없음"}]}'` } };
+    [p] = await cleanPlan({ ids: [feat] }, r.file, ws, hook);
+    assert.deepEqual([p.ok, p.lines.at(-1)!.check], [false, '문서에 없음']);
+    // 안 들어간 브랜치는 멈춘다
+    const [e] = await cleanPlan({ ids: [early] }, r.file, ws, null);
+    assert.match(e.lines[0].check, /master 에 아직 없는 변경/);
+    // 통과 — 원본(워크트리 · 워크스페이스 · 브랜치)과 dev 머지 브랜치
+    [p] = await cleanPlan({ ids: [feat] }, r.file, ws, null);
+    assert.equal(p.ok, true);
+    assert.deepEqual(p.lines.map(l => [l.what, l.ref, l.check]), [['원본', 'feature', '코드 master 에 있음'], ['dev 머지', 'merge/feature', '코드 dev 에 있음']]);
+    const closed: string[] = [];
+    const res = await cleanRun({ ids: [feat, early] }, r.file, ws, async id => { closed.push(id); }, null);
+    assert.deepEqual(closed, ['w1']);
+    assert.equal(existsSync(r.wt), false, '워크트리를 지웠다');
+    const heads = execFileSync('git', ['-C', r.r, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' }).split('\n').filter(Boolean).sort();
+    assert.deepEqual(heads, ['dev', 'early', 'master', 'pick', 'stage'], 'feature · merge/feature 만 지웠다(원격은 그대로)');
+    assert.equal(res.done.length, 1);
+    assert.match(res.stopped[0], /early — master 에 아직 없는 변경/);
+    const s = loadStore(r.file).items;
+    assert.ok(s.find(x => x.id === feat)!.done, '보관했다');
+    assert.equal(s.find(x => x.id === early)!.done, undefined);
+    assert.match(s.find(x => x.id === feat)!.log.at(-1)!.text, /^정리 — 워크트리 1 · 워크스페이스 1 · 로컬 브랜치 2/);
+  } finally { r.done(); }
+});
+
+test('미리보기는 뒤에서 — 시작하면 바로 돌아오고 상태로 받는다, 정리는 그 훅 확인을 다시 쓴다(느린 확인은 한 번)', async () => {
+  const r = repo();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature', tag: '기능' }] }), r.file);
+    const id = loadStore(r.file).items[0].id, count = join(r.d, 'checks');
+    const ws = async (): Promise<Space[]> => [];
+    // check 때마다 한 줄 남기고 통과, run 은 그냥 끝
+    const hook = { dir: r.d, action: { label: '정리', command: `if [ "$EDITH_CLEAN_MODE" = check ]; then echo x >> "${count}"; echo '{"lines":[{"what":"작업 문서","ref":"a.notes","ok":true,"check":"문서에 다 있음"}]}'; fi` } };
+    assert.deepEqual(cleanState(id), { missing: true });
+    cleanStart({ ids: [id] }, r.file, ws, hook);
+    assert.equal(cleanStart({ ids: [id] }, r.file, ws, hook).key, id, '보는 중이면 같은 일');
+    let st = cleanState(id);
+    for (let i = 0; i < 100 && !st.done; i++) { await new Promise(ok => setTimeout(ok, 50)); st = cleanState(id); }
+    assert.equal(st.plans?.[0].ok, true);
+    assert.equal(st.plans?.[0].lines.at(-1)?.check, '문서에 다 있음');
+    const res = await cleanRun({ ids: [id] }, r.file, ws, async () => {}, hook);
+    assert.equal(res.done.length, 1);
+    assert.equal(readFileSync(count, 'utf8').trim().split('\n').length, 1, '정리 때 훅 확인을 다시 돌리지 않았다');
+  } finally { r.done(); }
+});

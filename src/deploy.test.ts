@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkTask, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, checkTask, deployFile, filesDir, prepItems, prepOf, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -204,5 +204,48 @@ test('CLI — 티켓 · 안건 키(같은 안건은 한 카드) 등록 · 바꾸
     assert.deepEqual([x.tag, x.ticket, x.agenda], [undefined, 'ISSUE-7', 'PROJ-1']);
     assert.match(await cliSet(t.r, 'early', {}, t.file), /그대로/);
     await assert.rejects(cliSet(t.r, 'early', { ticket: 'x' }, t.file), /티켓 키 꼴/);
+  } finally { t.done(); }
+});
+
+test('직접 한 일 적기 — 「배포 전 · 후 — 글」 로 체크된 채 더하고, 다시 뽑아도(block) 남긴다', async () => {
+  const t = repo();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: realpathSync(t.r), branch: 'feature', tag: '기능' }] }), t.file);
+    const s = loadStore(t.file), id = s.items[0].id;
+    assert.throws(() => addTask({ rev: s.rev, id, env: 'prod', when: '중', text: '백필' }, t.file), /배포 전 · 배포 후/);
+    addTask({ rev: s.rev, id, env: 'prod', when: '후', text: './backfill.sh' }, t.file);
+    assert.deepEqual(loadStore(t.file).items[0].tasks, [{ env: 'prod', text: '배포 후 — ./backfill.sh', done: true, hand: true }]);
+    const head = execFileSync('git', ['-C', t.r, 'rev-parse', 'feature'], { encoding: 'utf8' }).trim();
+    await cliBlock(t.r, 'feature', JSON.stringify({ base: head, end: head, tasks: { prod: ['배포 전 DB — migration 1개'] } }), t.file);
+    assert.deepEqual(loadStore(t.file).items[0].tasks.map(k => k.text), ['배포 후 — ./backfill.sh', '배포 전 DB — migration 1개']);
+  } finally { t.done(); }
+});
+
+test('배포 조치 뽑기 — 훅을 항목마다 환경 변수로 돌리고, 도는 중 · 끝 코드 · 까닭을 남긴다', async () => {
+  const t = repo();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: t.r, branch: 'feature', tag: '기능' }] }), t.file);
+    const id = loadStore(t.file).items[0].id;
+    assert.throws(() => prepItems({ ids: [id] }, t.file, null), /훅이 없다/);
+    const hook = { dir: t.d, action: { label: '뽑기', command: 'echo "브랜치 $EDITH_DEPLOY_BRANCH 범위가 없다"; exit 3' } };
+    prepItems({ ids: [id] }, t.file, hook);
+    assert.equal(prepOf(id)?.code, null);
+    assert.throws(() => prepItems({ ids: [id] }, t.file, hook), /이미 뽑는 중/);
+    for (let i = 0; i < 50 && prepOf(id)?.code === null; i++) await new Promise(ok => setTimeout(ok, 50));
+    assert.deepEqual([prepOf(id)?.code, prepOf(id)?.note], [3, '브랜치 feature 범위가 없다']);
+  } finally { t.done(); }
+});
+
+test('복사 파일 보기 — 그 항목 자리 안의 글 파일만, 경로 · 링크로 밖을 가리키면 없는 것', async () => {
+  const t = repo();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: t.r, branch: 'feature/a', tag: '기능' }] }), t.file);
+    const id = loadStore(t.file).items[0].id, dir = filesDir(t.r, 'feature/a', t.file);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'mysql-1a2b3c4d.sql'), 'ALTER TABLE t ADD COLUMN c INT;\n');
+    symlinkSync(t.file, join(dir, 'out.sql'));
+    assert.deepEqual(deployFile(id, 'mysql-1a2b3c4d.sql', t.file), { name: 'mysql-1a2b3c4d.sql', text: 'ALTER TABLE t ADD COLUMN c INT;\n' });
+    for (const bad of ['../../deploy.json', 'out.sql', '.hidden', 'none.sql']) assert.throws(() => deployFile(id, bad, t.file), /없는 파일/, bad);
+    assert.throws(() => deployFile('nope', 'mysql-1a2b3c4d.sql', t.file), /없는 파일/);
   } finally { t.done(); }
 });

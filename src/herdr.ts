@@ -380,6 +380,17 @@ export async function workspaceAction(id: string, what: string, b: { label?: unk
   throw new Error(`모르는 동작: ${what}`);
 }
 
+// 배포 화면 「정리」 — 워크트리를 지우기 전에 그 워크트리 워크스페이스를 닫는다(메뉴에는 닫기를 두지 않지만, 정리는 사람이 미리보기를 보고 누른다).
+// 워크스페이스마다 폴더(herdr 워크트리 자리 · pane 들의 cwd)와 일하는 중인지
+export async function spaces() {
+  const s = await snapshot();
+  return (s.workspaces as { workspace_id: string; label?: string; agent_status?: string; worktree?: { checkout_path: string } }[]).map(w => ({
+    id: w.workspace_id, label: w.label ?? w.workspace_id, busy: w.agent_status === 'working',
+    home: w.worktree?.checkout_path, cwds: s.panes.filter(p => p.workspace === w.workspace_id).map(p => p.cwd).filter(Boolean),
+  }));
+}
+export const closeWorkspace = (id: string) => api('workspace.close', { workspace_id: id });
+
 // 탭 이름 바꾸기
 export function renameTab(tab: string, label: unknown) {
   if (typeof label !== 'string' || !label.trim() || label.length > 100) throw new Error('이름이 비었거나 너무 길다');

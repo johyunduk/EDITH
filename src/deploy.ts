@@ -7,17 +7,18 @@
 // 쓰기는 화면(배포일 · 메모 · 연기 · 보관 · 할 일 체크 · 항목 더하기 · 다음 환경에 올리기 — 파일 판(rev)이 화면이 본 것과 같을 때만)과
 // CLI(edith deploy … — 스킬 · 엔진이 등록 · 메모 · 배포 조치 · 보관 · 지우기). 둘이 겹치지 않게 쓰기마다 잠금(deploy.json.lock).
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { DATA_DIR } from './config.ts';
 import { sh } from './sh.ts';
 import { each, reachOf, runActions, runRepos, runTag, runTitle, type Reach, type ReachAction, type ReachRepo } from './reach.ts';
 import { readRefs } from './repos.ts';
-import { acted, listRuns, loadRun, RUNS, type Run } from './runner.ts';
+import { acted, deployHook, listRuns, loadRun, runHook, RUNS, type Run } from './runner.ts';
+import { lastLine } from './timeline.ts';
 
 export const DEPLOY_FILE = join(DATA_DIR, 'deploy.json');
 export type Env = { name: string; ref: string };
-export type Task = { env: string; text: string; done: boolean };
+export type Task = { env: string; text: string; done: boolean; hand?: true };   // hand — 사람이 화면에서 적은 줄(다시 뽑아도 남긴다)
 export type Item = {
   id: string; repo: string; branch: string; start?: string; tag?: string; ticket?: string; agenda?: string; notes: string[]; date?: string; deferred?: boolean; done?: string;
   tasks: Task[]; block?: { base: string; end: string; made: string; notes?: string[] }; log: { t: number; text: string }[];
@@ -44,7 +45,7 @@ function parseItem(x: Record<string, unknown>, envs: Env[], id = typeof x.id ===
     ...(x.deferred === true ? { deferred: true } : {}),
     ...(typeof x.done === 'string' && DAY.test(x.done) ? { done: x.done } : {}),
     tasks: Array.isArray(x.tasks) ? (x.tasks as Record<string, unknown>[]).flatMap(t => typeof t?.env === 'string' && names.has(t.env) && text(t.text, 1000)
-      ? [{ env: t.env, text: text(t.text, 1000)!, done: t.done === true }] : []).slice(0, 100) : [],
+      ? [{ env: t.env, text: text(t.text, 1000)!, done: t.done === true, ...(t.hand === true ? { hand: true as const } : {}) }] : []).slice(0, 100) : [],
     ...(b && typeof b.base === 'string' && SHA.test(b.base) && typeof b.end === 'string' && SHA.test(b.end) ? { block: { base: b.base, end: b.end, made: text(b.made, 40) ?? '',
       ...(Array.isArray(b.notes) && b.notes.length ? { notes: b.notes.flatMap(n => text(n, 1000) ?? []).slice(0, 30) } : {}) } } : {}),
     log: Array.isArray(x.log) ? (x.log as Record<string, unknown>[]).flatMap(l => typeof l?.t === 'number' && text(l.text, 300) ? [{ t: l.t, text: text(l.text, 300)! }] : []).slice(-100) : [],
@@ -82,8 +83,8 @@ function locked<T>(file: string, f: () => T): T {
   try { return f(); } finally { rmSync(lock, { force: true }); }
 }
 // 읽고 고쳐 쓰기(잠금 안에서) — 화면은 자기가 본 판(rev)과 같을 때만(그사이 다른 화면 · CLI 가 썼으면 고치지 않는다), CLI 는 ANY(지금 판에 바로)
-const ANY = Symbol('아무 판');
-function change(file: string, rev: unknown, f: (s: Store) => void) {
+export const ANY = Symbol('아무 판');
+export function change(file: string, rev: unknown, f: (s: Store) => void) {
   return locked(file, () => {
     const s = loadStore(file);
     if (rev !== ANY && rev !== s.rev) throw new Error('그사이 배포 목록이 바뀌었다 — 화면이 다시 읽은 뒤 다시');
@@ -93,12 +94,12 @@ function change(file: string, rev: unknown, f: (s: Store) => void) {
     return { rev: s.rev };
   });
 }
-const note = (x: Item, t: string) => { x.log.push({ t: Date.now(), text: t }); if (x.log.length > 100) x.log.splice(0, x.log.length - 100); };
+export const note = (x: Item, t: string) => { x.log.push({ t: Date.now(), text: t }); if (x.log.length > 100) x.log.splice(0, x.log.length - 100); };
 
-const git = (repo: string, args: string[], timeoutMs = 20_000) => sh('git', ['-C', repo, ...args], { ok: true, timeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
-const out = async (repo: string, args: string[]) => { const r = await git(repo, args); return r.code === 0 ? r.stdout.trim() : null; };
-const commit = (repo: string, ref: string) => out(repo, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
-const reached = (r?: Reach) => r?.state === 'in' || r?.state === 'content';
+export const git = (repo: string, args: string[], timeoutMs = 20_000) => sh('git', ['-C', repo, ...args], { ok: true, timeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+export const out = async (repo: string, args: string[]) => { const r = await git(repo, args); return r.code === 0 ? r.stdout.trim() : null; };
+export const commit = (repo: string, ref: string) => out(repo, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+export const reached = (r?: Reach) => r?.state === 'in' || r?.state === 'content';
 
 // 브랜치 끝 — 이 맥의 브랜치, 없으면 origin 의 것(워크트리를 지운 뒤에도 원격에 남은 브랜치)
 async function tipOf(x: Item) {
@@ -106,7 +107,7 @@ async function tipOf(x: Item) {
   return { local, remote, tip: local ?? remote };
 }
 // 그 브랜치를 꺼내 둔 워크트리(본 체크아웃 포함)
-async function worktreeOf(repo: string, branch: string) {
+export async function worktreeOf(repo: string, branch: string) {
   const t = await out(repo, ['worktree', 'list', '--porcelain']);
   return t?.split('\n\n').find(b => b.split('\n').includes(`branch refs/heads/${branch}`))?.match(/^worktree (.+)$/m)?.[1] ?? null;
 }
@@ -153,7 +154,14 @@ export async function deployView(file = DEPLOY_FILE) {
   const s = loadStore(file), active = s.items.filter(x => !x.done), repos = [...new Set(active.map(x => x.repo))];
   const [states, fetched] = await Promise.all([each(active, 4, x => stateOf(x, s.envs)), Promise.all(repos.map(fetchedAt))]);
   const st = new Map(active.map((x, i) => [x.id, states[i]]));
-  return { rev: s.rev, envs: s.envs, items: active.map(x => ({ ...x, state: st.get(x.id) })), done: s.items.length - active.length, repos: repos.map((r, i) => ({ path: r, name: basename(r), fetched: fetched[i] })) };
+  return { rev: s.rev, envs: s.envs, items: active.map(x => ({ ...x, state: st.get(x.id), ...(prepping.has(x.id) ? { prep: prepping.get(x.id) } : {}) })), done: s.items.length - active.length,
+    repos: repos.map((r, i) => ({ path: r, name: basename(r), fetched: fetched[i] })), hooks: { prep: !!deployHook('prep'), cleanup: !!deployHook('cleanup') }, leftover: await leftOf(s) };
+}
+// 보관했는데 이 맥에 브랜치가 남은 것(정리 안 한 것) — 「Complete」 의 「남은 n개 정리」. 레포마다 브랜치 목록 한 번
+async function leftOf(s: Store) {
+  const old = s.items.filter(x => x.done), repos = [...new Set(old.map(x => x.repo))];
+  const heads = new Map(await each(repos, 4, async r => [r, new Set((await out(r, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']))?.split('\n') ?? [])] as const));
+  return old.filter(x => heads.get(x.repo)?.has(x.branch)).map(x => ({ id: x.id, repo: x.repo, branch: x.branch, ...(x.tag ? { tag: x.tag } : {}), ...(x.agenda ? { agenda: x.agenda } : {}), done: x.done! }));
 }
 // 보관한 항목(화면 「COMPLETE」 창) — 보관한 날 최근부터 limit 개쯤. 「더 보기」 는 before(이 날보다 앞) — 날짜로 넘기니 같은 날(같은 안건 묶음)은 자르지 않는다.
 // q 는 안건 · 브랜치 · 레포 · 메모에서 찾기
@@ -281,6 +289,46 @@ export function checkTask(b: { rev?: unknown; id?: unknown; env?: unknown; text?
     note(x, `${t.env} 할 일 ${t.done ? '체크' : '체크 풂'} — ${t.text.slice(0, 60)}`);
   });
 }
+// 사람이 한 일 한 줄 더하기(패널 「직접 한 일 적기」) — 「배포 전 · 배포 후 — <글>」 로, 이미 한 일이라 체크된 채. 다시 뽑아도 남는다(hand)
+export function addTask(b: { rev?: unknown; id?: unknown; env?: unknown; when?: unknown; text?: unknown }, file = DEPLOY_FILE) {
+  const t = text(b.text, 900);
+  if (!t) throw new Error('적을 글이 비었다');
+  if (b.when !== '전' && b.when !== '후') throw new Error('배포 전 · 배포 후 중 하나');
+  return change(file, b.rev, s => {
+    const x = s.items.find(i => i.id === b.id);
+    if (!x) throw new Error('없는 항목이다 — 화면이 다시 읽은 뒤 다시');
+    if (!s.envs.some(e => e.name === b.env)) throw new Error(`없는 환경: ${String(b.env)}`);
+    const line = `배포 ${b.when} — ${t}`;
+    if (x.tasks.some(k => k.env === b.env && k.text === line)) throw new Error('이미 있는 줄이다');
+    x.tasks.push({ env: b.env as string, text: line, done: true, hand: true });
+    note(x, `${b.env} 할 일 적음 — ${line.slice(0, 60)}`);
+  });
+}
+
+// ── 배포 조치 뽑기(카드 단추) — 항목마다 공방 훅 on: "prep" 을 돌린다(훅이 deploy-prep 같은 것으로 edith deploy range · block 을 부른다 — 레포마다 몇 분).
+// 기다리지 않는다. 도는 중 · 마지막 끝(끝 코드 · 까닭)은 화면이 board 의 prep 으로 본다(EDITH 를 다시 켜면 잊는다). 출력은 DATA_DIR/deploy-logs ──
+export type Prep = { at: number; code: number | null; note?: string };
+const prepping = new Map<string, Prep>();
+export const prepOf = (id: string) => prepping.get(id);
+export function prepItems(b: { ids?: unknown }, file = DEPLOY_FILE, hook: ReturnType<typeof deployHook> | null = deployHook('prep')) {   // null — 훅 없음(시험)
+  if (!Array.isArray(b.ids) || !b.ids.length || b.ids.length > 20) throw new Error('뽑을 항목이 없다');
+  const s = loadStore(file), xs = b.ids.map(id => s.items.find(i => i.id === id && !i.done));
+  if (xs.some(x => !x)) throw new Error('없거나 보관한 항목이 있다 — 화면이 다시 읽은 뒤 다시');
+  if (!hook) throw new Error('배포 조치를 뽑는 훅이 없다 — 공방 엔진 actions.json 에 on: "prep" 명령을 둔다');
+  if ((xs as Item[]).some(x => prepping.get(x.id)?.code === null)) throw new Error('이미 뽑는 중이다');
+  const dir = join(dirname(file), 'deploy-logs'), at = Date.now();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const x of xs as Item[]) prepping.set(x.id, { at, code: null });
+  void each(xs as Item[], 2, async x => {
+    const log = join(dir, `${x.id}-prep-${at}.log`);
+    const r = await runHook(hook, { EDITH_DEPLOY_REPO: x.repo, EDITH_DEPLOY_BRANCH: x.branch, EDITH_DEPLOY_ID: x.id }, log, 20 * 60_000);
+    let why: string | undefined;
+    if (r.code) try { why = lastLine(readFileSync(log, 'utf8')); } catch { /* 기록 없음 */ }
+    prepping.set(x.id, { at, code: r.code, ...(why ? { note: why } : {}) });
+  });
+  return { ok: true, text: `${xs.length}개 레포의 배포 조치를 뽑는 중 — 끝나면 카드에 뜬다` };
+}
+
 // 항목 더하기 — 레포는 목록에 이미 있는 레포만(브라우저가 보낸 경로로 git 을 돌리지 않게). 시작 커밋은 지금 운영 브랜치와 갈라진 곳
 export async function addItem(b: { rev?: unknown; repo?: unknown; branch?: unknown; tag?: unknown; note?: unknown }, file = DEPLOY_FILE) {
   const s = loadStore(file);
@@ -431,7 +479,7 @@ export async function mainRepo(path: string) {
   return dirname(d);
 }
 const find = (s: Store, repo: string, branch: string) => s.items.find(x => !x.done && x.repo === repo && x.branch === branch);
-const named = (repo: string, branch: string) => `${basename(repo)} ${branch}`;
+export const named = (repo: string, branch: string) => `${basename(repo)} ${branch}`;
 // 그 레포 · 브랜치 항목을 잠금 안에서 고친다 — 없으면 오류(먼저 add)
 async function onItem(path: string, branch: string, f: (x: Item, s: Store) => string, file: string) {
   const repo = await mainRepo(path);
@@ -507,9 +555,22 @@ export async function cliRange(path: string, branch: string, file = DEPLOY_FILE)
     base = await out(repo, ['merge-base', prod, tip]) ?? undefined;
     if (!base) throw new Error(`${prod} 와 공통 조상이 없다`);
   }
-  const dir = join(dirname(file), 'deploy-files', basename(repo), branch.replaceAll('/', '__'));
+  const dir = filesDir(repo, branch, file);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   return { path: repo, ref: local ? branch : `origin/${branch}`, base, end: tip, dir };
+}
+// 배포 조치 복사 파일(SQL 등 — deploy-prep 이 cliRange 의 dir 에 쓴다)의 자리
+export const filesDir = (repo: string, branch: string, file = DEPLOY_FILE) => join(dirname(file), 'deploy-files', basename(repo), branch.replaceAll('/', '__'));
+// 그 항목의 복사 파일 하나(패널 「보기」 — 사람이 DB 에 직접 넣는 SQL). 이름만 받아 그 항목 자리 안의 것만(realpath), 글 파일 1MB 까지
+export function deployFile(id: unknown, name: unknown, file = DEPLOY_FILE) {
+  const x = loadStore(file).items.find(i => i.id === id), gone = () => new Error('없는 파일이다');
+  if (!x || typeof name !== 'string' || !/^[\w-][\w.-]{0,99}$/.test(name)) throw gone();
+  let dir: string, p: string;
+  try { dir = realpathSync(filesDir(x.repo, x.branch, file)); p = realpathSync(join(dir, name)); } catch { throw gone(); }
+  if (!p.startsWith(dir + sep) || !statSync(p).isFile() || statSync(p).size > 1024 * 1024) throw gone();
+  const t = readFileSync(p, 'utf8');
+  if (t.includes('\0')) throw gone();
+  return { name, text: t };
 }
 // 배포 조치 바꾸기(deploy-prep) — 블록 파일 {"base", "end", "tasks": {"<env>": ["<할 일>"]}, "notes"?: ["<메모>"]}. 준 환경의 할 일을 통째로 바꾸고, 같은 환경 · 같은 글이면 체크를 살린다
 export async function cliBlock(path: string, branch: string, raw: string, file = DEPLOY_FILE) {
@@ -523,7 +584,7 @@ export async function cliBlock(path: string, branch: string, raw: string, file =
     if (bad.length) throw new Error(`없는 환경이거나 목록이 아니다: ${bad.join(', ')}`);
     const was = new Set(x.tasks.filter(t => t.done).map(t => `${t.env}\n${t.text}`));
     const next = Object.entries(tasks).flatMap(([env, xs]) => (xs as unknown[]).flatMap(t => text(t, 1000) ?? []).map(t => ({ env, text: t, done: was.has(`${env}\n${t}`) })));
-    x.tasks = [...x.tasks.filter(t => !(t.env in tasks)), ...next].slice(0, 100);
+    x.tasks = [...x.tasks.filter(t => !(t.env in tasks) || (t.hand && !next.some(n => n.env === t.env && n.text === t.text))), ...next].slice(0, 100);
     x.block = { base: b.base as string, end: b.end as string, made: md(today()), ...(notes.length ? { notes: notes.flatMap(n => text(n, 1000) ?? []).slice(0, 30) } : {}) };
     note(x, `배포 조치 다시 뽑음 — ${Object.entries(tasks).map(([e, xs]) => `${e} ${(xs as unknown[]).length}`).join(' · ')}`);
     return `${named(x.repo, x.branch)} 배포 조치 — ${next.length}줄(살린 체크 ${next.filter(t => t.done).length})`;

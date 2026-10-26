@@ -26,7 +26,7 @@ edith --no-open             # 서버 코드를 바꿨으면 다시 켠다 — �
 - 쓰기는 같은 출처의 JSON `POST` 만 받는다(CSRF). CORS 머리를 달지 않는다. `x-frame-options: DENY`·`frame-ancestors 'none'` 을 지우지 않는다.
 - 파일을 읽어 주는 API 는 정해 둔 폴더 안만 준다(`realpath` 뒤 경로 확인 — `skillFile`·`taskOutput` 참고). 브라우저가 보낸 경로를 그대로 열지 않는다.
 - 프로세스를 띄울 때는 인자 배열로(`sh(cmd, args)`) — 셸 문자열로 이어 붙이지 않는다.
-  예외는 공방 명령 노드와 런 단추: `engine.json` · 맨 위 엔진 폴더의 `actions.json`(결과 체크 때 도는 `on: "results"` 포함)에 사용자가 적은 명령을 그대로 셸로 돌린다(`src/runner.ts`). 다른 값(런 입력 · 경로 · 단추에 넣은 글 · 체크한 할 일)은 그 문자열에 붙이지 않고 환경 변수로 넘긴다.
+  예외는 공방 명령 노드와 런 단추: `engine.json` · 맨 위 엔진 폴더의 `actions.json`(고르기 · 받은 요청 · 배포 화면 훅 `on: "picks" · "request" · "prep" · "cleanup"` 포함)에 사용자가 적은 명령을 그대로 셸로 돌린다(`src/runner.ts`). 다른 값(런 입력 · 경로 · 단추에 넣은 글 · 체크한 할 일 · 배포 항목의 레포 · 브랜치)은 그 문자열에 붙이지 않고 환경 변수로 넘긴다.
 - 열쇠를 로그·화면·URL 에 남기지 않는다(시작 때 찍는 주소 빼고).
 
 **코드 꼴**

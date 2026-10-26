@@ -787,8 +787,9 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // flow — 배포 화면이 단추 설명 앞에 붙이는 브랜치 흐름(「{branch} → origin/{branch}」 — {branch} 원본 · {issue} 이슈 브랜치 · {tail} 원본 끝 토막을 그 줄 브랜치로 채운다)
 // ready — 배포 화면이 이 단추를 켜는 조건: 그 브랜치(「merge/{tail}」 — {branch} · {tail})에 원본 최신과 단추 칸(reach 가 브랜치면)이 다 들어 있을 때(src/deploy.ts markWait)
 // until — 거꾸로, 그 브랜치에 다 들어 있으면 막는다(이미 한 준비 단추)
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
-// reach — 결과 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · clean(정리) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
+// on: "prep" · "cleanup" — 배포 화면 훅(deployHook — 배포 조치 뽑기 · 정리 때 엔진 몫의 일)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+// reach — 배포 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
 // copy — 명령의 출력을 사람이 복사해 직접 돌릴 글로 돌려준다(결과 화면 확인 창 · 런 화면 단추 기록에 복사 단추). 이 명령은 아무것도 바꾸지 않아야 한다 — 바꾸는 일은 사람이 그 글로
 // 런 설정 사본(run/)에 단추가 있으면 그것, 없으면 엔진 사본의 것
 function allActions(r: Run): RunAction[] {
@@ -799,7 +800,7 @@ function parseActions(text: () => string): RunAction[] {
   try {
     const a = JSON.parse(text()) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
-      && (x.on === undefined || x.on === 'results' || x.on === 'picks' || x.on === 'request') && (x.when === undefined || x.when === 'done')
+      && (x.on === undefined || ['results', 'picks', 'request', 'prep', 'cleanup'].includes(x.on)) && (x.when === undefined || x.when === 'done')
       && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean') && (x.flow === undefined || typeof x.flow === 'string') && [x.ready, x.until].every(t => t === undefined || (typeof t === 'string' && /^[\w{][\w{}./-]{0,120}$/.test(t)))).slice(0, 16) : [];
   } catch { return []; }
 }
@@ -824,7 +825,7 @@ export async function runAction(id: number, n: unknown, text: unknown): Promise<
 }
 // 새 런 칸의 고르기 목록 — 공방 엔진 폴더(사본이 아니라 공방 것) actions.json 의 on: "picks" 명령(예: 일감 목록에서 고르면 입력칸에 그 주소).
 // 사람이 「고르기」 를 열 때만 그 엔진 폴더에서 돈다(런이 없다 — 환경 변수는 EDITH_ENGINE · EDITH_WORKSHOP). 표준 출력의 JSON [{label, note?, input}] 만 받는다
-export function pickAction(engine: string, on: 'picks' | 'request' = 'picks'): RunAction | undefined {
+export function pickAction(engine: string, on: NonNullable<RunAction['on']> = 'picks'): RunAction | undefined {
   if (!NAME.test(engine)) return undefined;
   try {
     const a = JSON.parse(readFileSync(join(actionsHome(engine), 'actions.json'), 'utf8')) as RunAction[];
@@ -852,6 +853,28 @@ export function requestHook(engine: string, env: Record<string, string>, log: st
   const dir = actionsHome(engine);
   shell(a.command, dir, { EDITH_ENGINE: dir, EDITH_WORKSHOP: WORKSHOP, ...env }, createWriteStream(log, { mode: 0o600 }));
   return true;
+}
+// 배포 화면 훅 — 공방 맨 위 엔진 폴더 actions.json 의 on: "prep"(배포 조치 뽑기) · on: "cleanup"(정리 때 엔진 몫 — 작업 문서 등). 그 on 을 가진 첫 폴더(이름 순)의 것
+// shortcut: 엔진 여럿이 같은 훅을 가지면 이름 순 첫 것만 — 엔진마다 달라야 하면 항목에 이어진 런의 엔진으로 고른다
+export function deployHook(on: 'prep' | 'cleanup') {
+  let names: string[] = [];
+  try { names = readdirSync(WORKSHOP, { withFileTypes: true }).filter(d => d.isDirectory() && NAME.test(d.name)).map(d => d.name).sort(); } catch { return undefined; }
+  for (const n of names) { const a = pickAction(n, on); if (a) return { dir: actionsHome(n), action: a }; }
+  return undefined;
+}
+// 훅을 그 엔진 폴더의 셸로 — 값은 환경 변수로만 넘긴다(명령 글에 붙이지 않는다). 끝 코드와 표준 출력(1MB 까지)을 돌려주고, 출력 · 오류는 log 파일에 다
+export function runHook(h: { dir: string; action: RunAction }, env: Record<string, string>, log: string, timeoutMs: number): Promise<{ code: number; out: string }> {
+  const [cmd, args] = process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', h.action.command]] : [process.env.SHELL || '/bin/sh', ['-c', h.action.command]];
+  return new Promise(ok => {
+    const w = createWriteStream(log, { mode: 0o600 });
+    let out = '', ended = false;
+    const end = (code: number) => { if (ended) return; ended = true; w.end(); ok({ code, out }); };
+    const child = spawn(cmd, args, { cwd: h.dir, env: { ...process.env, EDITH_ENGINE: h.dir, EDITH_WORKSHOP: WORKSHOP, ...env }, stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs });
+    child.stdout.on('data', (d: Buffer) => { if (out.length < 1024 * 1024) out += d; w.write(d); });
+    child.stderr.on('data', (d: Buffer) => w.write(d));
+    child.on('error', e => { w.write(`\n[EDITH] 띄우지 못했다 — ${e.message}\n`); end(1); });
+    child.on('close', code => end(code ?? 1));
+  });
 }
 // title · tag 가 있으면 고른 런이 받은 요청처럼 그 제목 · 꼬리표를 갖는다(결과 화면 등 — pickRequest)
 export type Pick = { label: string; note?: string; input: string; title?: string; tag?: string };

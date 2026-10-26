@@ -1,7 +1,8 @@
 // 배포 — 안건(tag)마다 꺾쇠 카드, 레포마다 단계 선(커밋 → 올림 → dev → stage → prod), 그 브랜치를 다루는 런이 붙는다(서버 src/deploy.ts deployBoard). 주소는 #/deploy(옛 #/results 도).
 // 결과 화면을 품었다(2026-10-26): 런이 워크트리를 만들면 바로 「작업」 칸이 빛나고(지금 노드), 런이 끝나면 그 런 단추(커밋하러 가기 · 푸시 · 안건에 합치기 · dev …)가 그 단계 칸에.
 // 안건 QA 이슈 런은 레포 밑 「↳ 이슈」 줄(작업 → 커밋 → 안건에 합침). stage 올리기는 EDITH 단추 하나 — 안건의 레포를 모두 먼저 보고 하나라도 안 되면 아무것도 안 올린다. 운영은 런의 명령 복사만.
-// 배포일은 카드 머리, 배포 조치 · 메모 · 기록 · 연기 · 보관은 오른쪽 패널. 목록에 없는 런 일은 「목록에 없음」 카드로.
+// 배포일 · 배포 조치 뽑기(공방 훅 on: prep) · 정리(운영까지 다 나가면 — 워크트리 · 워크스페이스 · 로컬 브랜치, src/cleanup.ts)는 카드 머리, 배포 조치(환경마다 배포 전 · 후) · 메모 · 기록 · 연기 · 보관은 오른쪽 패널.
+// 단계 선의 환경 칸 밑에 남은 배포 조치 수, 올릴 때 배포 전 할 일이 남았으면 확인 창에서 한 번 더. 목록에 없는 런 일은 「목록에 없음」 카드로.
 // 보관한 것은 쌓이니 화면은 수만 받고, 「COMPLETE」 창을 열 때 최근부터 조금씩(찾기 · 더 보기 — /api/deploy/done).
 import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -20,10 +21,13 @@ type Act = { label: string; at: number; code: number | null; note?: string };   
 type RunLink = { id: number; title: string; tag?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; acting?: Act; last?: Act };
 // 런 단추가 도는지 · 마지막 결과 — 카드 깊숙한 단계 칸이 읽는다(DeployPage 가 1.5초마다 /api/runs/<번호>/acted 로 채운다)
 const ActCtx = createContext<{ busy: (run: number) => Act | null; last: (run: number) => Act | null; now: number }>({ busy: () => null, last: () => null, now: 0 });
-type Task = { env: string; text: string; done: boolean };
+type Task = { env: string; text: string; done: boolean; hand?: boolean };   // hand — 사람이 패널에서 적은 줄
+type Prep = { at: number; code: number | null; note?: string };   // 배포 조치 뽑기 — code null 이면 도는 중
 type Item = { id: string; repo: string; branch: string; tag?: string; ticket?: string; agenda?: string; notes: string[]; date?: string; deferred?: boolean; done?: string; tasks: Task[];
-  block?: { base: string; end: string; made: string; notes?: string[] }; log: { t: number; text: string }[]; state?: ItemState; runs?: RunLink[] };   // runs · state 는 보관 안 한 것만
-type Board = { rev: number; envs: { name: string; ref: string }[]; items: Item[]; done: number; repos: { path: string; name: string; fetched?: number }[]; extra: { run: RunLink; repos: RepoReach[] }[] };
+  block?: { base: string; end: string; made: string; notes?: string[] }; log: { t: number; text: string }[]; state?: ItemState; runs?: RunLink[]; prep?: Prep };   // runs · state · prep 는 보관 안 한 것만
+type Left = { id: string; repo: string; branch: string; tag?: string; agenda?: string; done: string };   // 보관했는데 이 맥에 브랜치가 남은 것
+type Board = { rev: number; envs: { name: string; ref: string }[]; items: Item[]; done: number; repos: { path: string; name: string; fetched?: number }[]; extra: { run: RunLink; repos: RepoReach[] }[];
+  hooks: { prep: boolean; cleanup: boolean }; leftover: Left[] };
 type Group = { key: string; tag: string; agenda?: string; items: Item[]; date?: string; deferred: boolean; done?: string };
 type Pick = { run: RunLink; action: Action };
 type Send = (path: string, b: Record<string, unknown>, ok?: string) => Promise<boolean>;
@@ -42,6 +46,11 @@ const TICKET = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 const tickets = (g: Group) => g.agenda ? [g.agenda] : [...new Set(g.items.flatMap(x => x.notes.join(' ').match(TICKET) ?? []))].slice(0, 4);
 // 안건 자기 항목(티켓이 안건 키거나 티켓 없음) — 아니면 그 안건에 든 이슈 항목(줄에 제 티켓 · 이름)
 const own = (x: Item) => !x.ticket || x.ticket === x.agenda;
+// 배포 조치 줄의 때 — 「배포 후 …」 면 후, 나머지(「배포 전 …」 · 앞머리 없는 줄)는 전. 보일 때는 앞머리를 뗀다(「배포 전 DB — …」 → 「DB — …」)
+const whenOf = (t: string) => /^배포 후/.test(t) ? '후' : '전';
+const plain = (t: string) => t.replace(/^배포 [전후]\s*(?:—\s*)?/, '');
+const copyName = (t: string) => t.match(/\(복사: ([\w-][\w.-]*)\)/)?.[1];   // 줄에 적힌 복사 파일(SQL 등 — 「보기」)
+const leftIn = (xs: Item[], env: string, w: '전' | '후') => xs.flatMap(x => x.tasks.filter(t => t.env === env && whenOf(t.text) === w && !t.done));
 // 숫자로 친 날 — 1030 · 10/30 · 10-30. 두 달 넘게 지난 날이면 내년(연말에 넣는 1월 배포)
 function typedDay(s: string, now = new Date()) {
   const m = s.trim().match(/^(\d{1,2})[/.-]?(\d{2})$/);
@@ -63,7 +72,7 @@ function groupsOf(items: Item[]): Group[] {
 
 // ── 단계 — 처음 안 끝난 칸이 「지금 차례」(빛나는 고리). 런이 그 브랜치에서 도는 동안은 맨 앞 「작업」 칸이 하는 중이라 차례를 매기지 않는다 ──
 type SState = 'done' | 'partial' | 'check' | 'next' | 'todo' | 'work';
-type Step = { key: string; name: string; state: SState; reach?: Reach; note?: string; act?: boolean; conflicts?: number; env?: string; last?: boolean };
+type Step = { key: string; name: string; state: SState; reach?: Reach; note?: string; act?: boolean; conflicts?: number; env?: string; last?: boolean; todo?: string };   // todo — 그 환경 남은 배포 조치
 const envState = (e: Reach): SState => reached(e) ? 'done' : e.state === 'partial' ? 'partial' : e.state === 'subject' ? 'check' : 'todo';
 function mark(all: Step[]) {
   if (all.some(s => s.state === 'work')) return all;
@@ -80,7 +89,11 @@ function itemSteps(x: Item, envs: Board['envs']): Step[] {
     ...(run ? [work(run)] : []),
     { key: 'commit', name: '커밋', state: s.dirty ? 'todo' : 'done', ...(s.dirty ? { note: `커밋 안 한 파일 ${s.dirty}` } : {}) },
     { key: 'push', name: '올림', state: s.pushed || s.remote || out ? 'done' : 'todo', ...(s.pushed || s.remote ? {} : { note: out ? 'origin 에 브랜치 없음' : '아직 안 올림' }) },
-    ...es.map(({ e, r }) => ({ key: e.ref, name: e.name, state: envState(r), reach: r, conflicts: r.conflicts, env: e.name, last: e === envs.at(-1) })),
+    ...es.map(({ e, r }) => {
+      // 들어가기 전이면 배포 전, 들어간 뒤면 배포 후 할 일
+      const st = envState(r), n = leftIn([x], e.name, st === 'done' ? '후' : '전').length;
+      return { key: e.ref, name: e.name, state: st, reach: r, conflicts: r.conflicts, env: e.name, last: e === envs.at(-1), ...(n ? { todo: `배포 ${st === 'done' ? '후' : '전'} ${n} 남음` } : {}) };
+    }),
   ]);
 }
 function issueSteps(r: RunLink): Step[] {
@@ -141,10 +154,11 @@ const leads = (x: Item) => {
 };
 
 export function DeployPage() {
-  const qc = useQueryClient(), q = useQuery({ queryKey: ['deploy'], queryFn: () => get<Board>('/api/deploy'), refetchInterval: 30_000 });
+  const qc = useQueryClient(), q = useQuery({ queryKey: ['deploy'], queryFn: () => get<Board>('/api/deploy'), refetchInterval: q => q.state.data?.items.some(x => x.prep?.code === null) ? 3000 : 30_000 });
   const [filter, setFilter] = useState<Filter>('all'), [byDate, setByDate] = useState(false), [find, setFind] = useState('');
   const [panel, setPanel] = useState<string | null>(null), [pick, setPick] = useState<Pick | null>(null), [push, setPush] = useState<{ g: Group; env: string; items: Item[] } | null>(null);
   const [files, setFiles] = useState<{ title: string; list: string[] } | null>(null), [adding, setAdding] = useState(false), [fetching, setFetching] = useState(false), [archive, setArchive] = useState(false), [old, setOld] = useState<Group | null>(null);
+  const [clean, setClean] = useState<{ ids: string[]; title: string } | null>(null);
   const v = q.data;
   const all = useMemo(() => v ? groupsOf(v.items) : [], [v]);
   // 런 단추 — 누른 것(pressed)과 서버가 도는 중이라 한 것을 1.5초마다 보고, 끝 코드가 차면 토스트 · 다시 읽기. 명령이 몇십 초 걸려도 눌렸는지 보이게
@@ -241,7 +255,7 @@ export function DeployPage() {
           return (
             <div key={h ?? 'all'} className="space-y-4">
               {h !== null && <div className="flex items-baseline gap-2.5 pt-1"><span className="font-mono text-xs font-bold tracking-[0.2em] text-primary uppercase">{h ? dayLabel(h) : '날짜 미정'}</span><span className="text-xs text-muted-foreground">안건 {gs.length}</span><span className="h-px flex-1 bg-border" /></div>}
-              {gs.map(g => <Card key={g.key} g={g} v={v} all={all} send={send} onPanel={() => setPanel(g.key)} onPick={setPick} onPush={(env, x) => setPush({ g, env, items: [x] })} onFiles={setFiles} />)}
+              {gs.map(g => <Card key={g.key} g={g} v={v} all={all} send={send} onPanel={() => setPanel(g.key)} onPick={setPick} onPush={(env, x) => setPush({ g, env, items: [x] })} onFiles={setFiles} onClean={() => setClean({ ids: g.items.map(x => x.id), title: g.tag })} />)}
             </div>
           );
         })}
@@ -260,9 +274,16 @@ export function DeployPage() {
         )}
         {v.done > 0 && (
           <Bracketed className="px-5 py-3">
-            <button type="button" aria-haspopup="dialog" onClick={() => setArchive(true)} className="flex w-full items-center gap-2 py-1 text-left font-semibold">
-              <span className="font-mono text-[0.6875rem] tracking-[0.2em] text-primary uppercase">Complete</span>끝까지 다 나감 · 보관 {v.done}<span className="ml-auto text-sm font-normal text-primary">열기 ›</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 py-1">
+              <button type="button" aria-haspopup="dialog" onClick={() => setArchive(true)} className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold">
+                <span className="font-mono text-[0.6875rem] tracking-[0.2em] text-primary uppercase">Complete</span>끝까지 다 나감 · 보관 {v.done}
+              </button>
+              {v.leftover.length > 0 && <>
+                <span className="rounded-full bg-amber-500/12 px-2 text-xs leading-5 font-semibold text-amber-800 dark:text-amber-300" title={v.leftover.map(x => `${repoName(x.repo)} · ${x.branch}`).join('\n')}>브랜치 남은 것 {v.leftover.length}</span>
+                <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => setClean({ ids: v.leftover.slice(0, 20).map(x => x.id), title: '보관했는데 남은 것' })}>남은 {Math.min(20, v.leftover.length)}개 정리</Button>
+              </>}
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setArchive(true)}>열기</Button>
+            </div>
           </Bracketed>
         )}
       </div>
@@ -270,16 +291,17 @@ export function DeployPage() {
       {archive && <DoneSheet onOpen={setOld} onClose={() => setArchive(false)} />}
       {old && <Panel g={old} v={v} all={all} send={async (p, b, ok) => { const r = await send(p, b, ok); if (r) setOld(null); return r; }} onClose={() => setOld(null)} />}
       {pick && <ActionDialog pick={pick} onClose={() => setPick(null)} onStarted={() => setPressed(ps => [...ps.filter(x => x.run !== pick.run.id), { run: pick.run.id, label: pick.action.label, at: Date.now() }])} />}
-      {push && <PushDialog g={push.g} env={push.env} items={push.items} onClose={() => setPush(null)} />}
+      {push && <PushDialog g={push.g} env={push.env} items={push.items} prep={v.hooks.prep} onClose={() => setPush(null)} />}
       {files && <Sheet title={files.title} onClose={() => setFiles(null)}><ul className="space-y-1 font-mono text-xs">{files.list.map(f => <li key={f}>{f}</li>)}</ul></Sheet>}
       {adding && <AddSheet v={v} onClose={() => setAdding(false)} send={send} />}
+      {clean && <CleanSheet ids={clean.ids} title={clean.title} onClose={() => setClean(null)} />}
     </main>
     </ActCtx.Provider>
   );
 }
 
 // 안건 카드 — 머리(티켓 · 이름 · 작업 중 · 배포일 · 배포 조치), 걸리는 것 한 줄, 레포마다 단계 선(밑에 이슈 줄), 메모 첫 줄
-function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles }: { g: Group; v: Board; all: Group[]; send: Send; onPanel: () => void; onPick: (p: Pick) => void; onPush: (env: string, x: Item) => void; onFiles: (x: { title: string; list: string[] }) => void }) {
+function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { g: Group; v: Board; all: Group[]; send: Send; onPanel: () => void; onPick: (p: Pick) => void; onPush: (env: string, x: Item) => void; onFiles: (x: { title: string; list: string[] }) => void; onClean: () => void }) {
   const qc = useQueryClient(), [preparing, setPreparing] = useState<string | null>(null);
   // 머지 준비 — 서버가 머지 브랜치에서 합치고, 충돌이면 새 Claude pane 을 연다(몇십 초). 끝나면 다시 읽기
   const prep = async (x: Item, env: string) => {
@@ -292,7 +314,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles }: { g: Group;
   const ids = g.items.map(x => x.id), tasks = g.items.flatMap(x => x.tasks), working = g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done'));
   const warn = g.items.flatMap(x => {
     const s = x.state, n = repoName(x.repo);
-    return s?.error ? [`${n} — ${s.error}`] : [...(s?.stale ? [`${n} 배포 조치를 뽑은 뒤 커밋이 더 생겼다 — /deploy-prep 으로 다시`] : []), ...(s?.behind ? [`${n} origin 에만 있는 커밋 ${s.behind}`] : [])];
+    return s?.error ? [`${n} — ${s.error}`] : [...(s?.stale ? [`${n} 배포 조치를 뽑은 뒤 커밋이 더 생겼다 — ${v.hooks.prep ? '「다시 뽑기」' : '/deploy-prep 으로 다시'}`] : []), ...(s?.behind ? [`${n} origin 에만 있는 커밋 ${s.behind}`] : [])];
   });
   // 같은 런 단추는 카드에 한 번 — 그 단계가 지금 차례인 첫 줄에만(런 단추는 런 전체에 돈다)
   const used = new Set<string>(), place = (runs: RunLink[], s: Step, branch: string, list = true) => runs.flatMap(r => r.actions.filter(a => fits(a, s) && !(list && a.reach === 'origin/stage') && !used.has(`${r.id}:${a.n}`)).map(a => (used.add(`${r.id}:${a.n}`), { run: r, action: withFlow(a, branch, r.issue?.branch) })));
@@ -320,7 +342,10 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles }: { g: Group;
       </div>
     );
   };
-  const clean = flagsClean(g, v) ? g.items.flatMap(x => (x.runs ?? []).flatMap(r => r.actions.filter(a => a.reach === 'clean').map(a => ({ run: r, action: a })))) : [];
+  // 운영까지 다 나갔으면 「정리」, 배포 조치를 아직 안 뽑았으면 「배포 조치 뽑기」(공방 훅이 있을 때) — 뽑는 동안 · 실패는 그 자리에
+  const finished = flagsClean(g, v), pulling = g.items.filter(x => x.prep?.code === null), failed = pulling.length ? [] : g.items.filter(x => x.prep?.code);
+  const blank = !tasks.length && !g.items.some(x => x.block), stale = g.items.some(x => x.state?.stale), glow = { boxShadow: `0 4px 12px ${mix(30)}` };
+  const pull = () => pullPrep(ids, () => qc.invalidateQueries({ queryKey: ['deploy'] }));
   return (
     <Bracketed label={g.tag}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -328,9 +353,14 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles }: { g: Group;
         <span className="text-base font-bold">{g.tag}</span>
         {working && <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 px-2 text-xs leading-5 font-semibold text-sky-800 dark:text-sky-300"><span className="size-1.5 rounded-full bg-sky-500" />작업 중</span>}
         <span className="ml-auto flex flex-wrap items-center gap-2">
-          {clean.map(c => <RunButton key={`${c.run.id}:${c.action.n}`} p={c} onPick={onPick} small />)}
+          {failed.length > 0 && <span className="max-w-72 truncate text-xs text-rose-700 dark:text-rose-300" title={failed.map(x => `${repoName(x.repo)} — ${x.prep!.note ?? `끝 코드 ${x.prep!.code}`}`).join('\n')}>뽑기 실패 — {failed[0].prep!.note ?? `끝 코드 ${failed[0].prep!.code}`}</span>}
+          {pulling.length > 0 && <Button size="sm" variant="outline" className="h-8 text-primary" disabled><span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-current" />뽑는 중 · 레포 {pulling.length}개</Button>}
+          {v.hooks.prep && !pulling.length && blank && !finished && <><span className="text-xs text-amber-800 dark:text-amber-300">아직 안 뽑음 — 레포 {g.items.length}개</span>
+            <Button size="sm" className="h-8 font-bold" style={glow} onClick={() => void pull()}>배포 조치 뽑기</Button></>}
+          {v.hooks.prep && !pulling.length && !blank && stale && <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => void pull()}>다시 뽑기</Button>}
           <DateField g={g} all={all} onPick={date => void send('edit', { ids, date })} />
-          <Button size="sm" variant="outline" className="h-8 text-primary" aria-haspopup="dialog" onClick={onPanel}>{tasks.length ? `배포 조치 ${tasks.filter(t => t.done).length}/${tasks.length}` : '배포 조치 없음'}</Button>
+          {(!blank || !v.hooks.prep || finished) && <Button size="sm" variant="outline" className="h-8 text-primary" aria-haspopup="dialog" onClick={onPanel}>{tasks.length ? `배포 조치 ${tasks.filter(t => t.done).length}/${tasks.length}` : '배포 조치 없음'}</Button>}
+          {finished && <><span className="text-xs text-muted-foreground">운영까지 다 나감</span><Button size="sm" className="h-8 font-bold" style={glow} aria-haspopup="dialog" onClick={onClean}>정리</Button></>}
         </span>
       </div>
       {warn.length > 0 && <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{warn.join(' · ')}</p>}
@@ -355,6 +385,12 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles }: { g: Group;
       </div>
     </Bracketed>
   );
+}
+// 배포 조치 뽑기 — 서버가 공방 훅을 레포마다 돌린다(기다리지 않는다 — 카드가 3초마다 「뽑는 중」 을 다시 본다)
+async function pullPrep(ids: string[], again: () => Promise<unknown>) {
+  try { toast((await post<{ text: string }>('/api/deploy/prep', { ids })).text, 4000); }
+  catch (e) { toast(`뽑지 못했다 — ${(e as Error).message}`, 7000); }
+  await again();
 }
 const flagsClean = (g: Group, v: Board) => g.items.every(x => reached(x.state?.envs.at(-1)) && !x.tasks.some(t => t.env === v.envs.at(-1)!.name && !t.done));
 
@@ -411,6 +447,7 @@ function Track({ steps, acts, extra, onPick, name, onFiles }: { steps: Step[]; a
           </div>
           <span className={`font-mono text-[0.6875rem] tracking-[0.14em] uppercase ${s.state === 'next' ? 'font-bold text-primary' : s.state === 'work' ? 'font-bold text-sky-700 dark:text-sky-300' : s.state === 'partial' ? 'font-bold text-amber-700 dark:text-amber-400' : s.state === 'check' ? 'font-bold text-blue-700 dark:text-blue-400' : s.state === 'todo' ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>{s.name}</span>
           <Note s={s} name={name} onFiles={onFiles} />
+          {s.todo && <span className="rounded-full bg-amber-500/12 px-2 text-[0.6875rem] leading-5 font-semibold text-amber-800 dark:text-amber-300">{s.todo}</span>}
           {acts(s).map(p => <RunButton key={`${p.run.id}:${p.action.n}`} p={p} onPick={onPick} />)}
           {extra?.(s)}
         </li>
@@ -490,9 +527,10 @@ function DoneSheet({ onOpen, onClose }: { onOpen: (g: Group) => void; onClose: (
   );
 }
 
-// 오른쪽 패널 — 배포일 · 연기 · 보관, 배포 조치(환경별 체크 · 뽑은 범위 메모), 메모, 기록, 런
+// 오른쪽 패널 — 배포일 · 연기 · 보관, 배포 조치(환경마다 배포 전 · 후 체크 · 다시 뽑기 · 직접 한 일 적기 · 뽑은 범위 메모), 메모, 기록, 런
 function Panel({ g, v, all, send, onClose }: { g: Group; v: Board; all: Group[]; send: Send; onClose: () => void }) {
-  const ids = g.items.map(x => x.id), [arm, setArm] = useState(false);
+  const ids = g.items.map(x => x.id), [arm, setArm] = useState(false), qc = useQueryClient(), pulling = g.items.some(x => x.prep?.code === null);
+  const [view, setView] = useState<{ id: string; name: string } | null>(null);
   const log = g.items.flatMap(x => x.log.map(l => ({ ...l, repo: repoName(x.repo) }))).sort((a, b) => b.t - a.t).slice(0, 30);
   const envs = v.envs.filter(e => g.items.some(x => x.tasks.some(t => t.env === e.name))), runs = [...new Map(g.items.flatMap(x => x.runs ?? []).map(r => [r.id, r])).values()];
   const open = g.done ? false : !flagsClean(g, v);
@@ -511,19 +549,34 @@ function Panel({ g, v, all, send, onClose }: { g: Group; v: Board; all: Group[];
         {g.done && <div className="flex items-center gap-2 text-sm"><span className="text-muted-foreground">{dayLabel(g.done)} 배포 끝(보관)</span><span className="flex-1" /><Button size="sm" variant="outline" onClick={() => void send('edit', { ids, done: false })}>보관에서 되돌리기</Button></div>}
 
         <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-muted-foreground">배포 조치 {g.items.find(x => x.block)?.block?.made ? `· ${g.items.find(x => x.block)!.block!.made} 뽑음` : ''}</h3>
-          {!envs.length ? <Empty>아직 없다 — /deploy-prep 이 코드에서 뽑아 넣는다(edith deploy block).</Empty> : envs.map(e => (
-            <div key={e.name} className="space-y-0.5">
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-xs font-semibold text-muted-foreground">배포 조치 {g.items.find(x => x.block)?.block?.made ? `· ${g.items.find(x => x.block)!.block!.made} 뽑음` : ''}</h3><span className="flex-1" />
+            {v.hooks.prep && !g.done && <button type="button" className="text-xs text-primary hover:underline disabled:opacity-50" disabled={pulling} onClick={() => void pullPrep(ids, () => qc.invalidateQueries({ queryKey: ['deploy'] }))}>{pulling ? '뽑는 중…' : g.items.some(x => x.block) ? '다시 뽑기' : '뽑기'}</button>}
+          </div>
+          {!envs.length ? <Empty>아직 없다 — {v.hooks.prep ? '「배포 조치 뽑기」 가 코드에서 뽑아 넣는다' : '/deploy-prep 이 코드에서 뽑아 넣는다(edith deploy block)'}. 손으로 한 일은 아래에 적는다.</Empty> : envs.map(e => (
+            <div key={e.name} className="space-y-1">
               <p className="font-mono text-[0.6875rem] font-semibold tracking-[0.16em] text-primary uppercase">{e.name}</p>
-              {g.items.flatMap(x => x.tasks.filter(t => t.env === e.name).map(t => (
-                <label key={`${x.id}${t.text}`} className="-mx-2 flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/60">
-                  <input type="checkbox" className="mt-1 accent-[var(--primary)]" checked={t.done} onChange={() => void send('task', { id: x.id, env: t.env, text: t.text, was: t.done })} />
-                  <span className={`text-sm ${t.done ? 'text-muted-foreground line-through' : ''}`}>{g.items.length > 1 && <span className="mr-1 text-xs text-muted-foreground">{repoName(x.repo)}</span>}{t.text}</span>
-                </label>
-              )))}
+              {(['전', '후'] as const).map(w => {
+                const rows = g.items.flatMap(x => x.tasks.filter(t => t.env === e.name && whenOf(t.text) === w).map(t => ({ x, t })));
+                return (
+                  <div key={w}>
+                    <p className="text-xs font-semibold">배포 {w} <span className="font-normal text-muted-foreground">{rows.filter(r => r.t.done).length}/{rows.length}</span></p>
+                    {!rows.length ? <p className="py-1 text-xs text-muted-foreground">없다</p> : rows.map(({ x, t }) => (
+                      <label key={`${x.id}${t.text}`} className="-mx-2 flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/60">
+                        <input type="checkbox" className="mt-1 accent-[var(--primary)]" checked={t.done} onChange={() => void send('task', { id: x.id, env: t.env, text: t.text, was: t.done })} />
+                        {g.items.length > 1 && <span className="w-24 shrink-0 truncate pt-0.5 text-xs text-muted-foreground" title={repoName(x.repo)}>{repoName(x.repo)}</span>}
+                        <span className={`min-w-0 flex-1 text-sm break-words ${t.done ? 'text-muted-foreground line-through' : ''}`}>{plain(t.text)}</span>
+                        {copyName(t.text) && <button type="button" className="shrink-0 rounded border px-1.5 text-xs leading-5 text-primary hover:border-primary" onClick={e => { e.preventDefault(); setView({ id: x.id, name: copyName(t.text)! }); }}>보기</button>}
+                        {t.hand && <span className="shrink-0 rounded bg-muted px-1.5 text-[0.6875rem] leading-5 text-muted-foreground">직접 적음</span>}
+                      </label>))}
+                  </div>
+                );
+              })}
             </div>
           ))}
           {g.items.flatMap(x => x.block?.notes ?? []).map((n, i) => <p key={i} className="text-xs text-muted-foreground">· {n}</p>)}
+          {!g.done && <HandTask g={g} v={v} send={send} />}
+          {view && <FileSheet id={view.id} name={view.name} onClose={() => setView(null)} />}
         </section>
 
         <section className="space-y-2"><h3 className="text-xs font-semibold text-muted-foreground">메모</h3>{g.items.map(x => <Notes key={x.id} x={x} many={g.items.length > 1} send={send} />)}</section>
@@ -531,6 +584,110 @@ function Panel({ g, v, all, send, onClose }: { g: Group; v: Board; all: Group[];
           {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} className="flex gap-2 text-sm hover:underline"><span className="font-mono text-primary">#{r.id}</span><span className="min-w-0 flex-1 truncate">{r.title}</span><span className="text-xs text-muted-foreground">{r.state === 'done' ? '끝' : r.now ?? r.state}</span></a>)}</section>}
         <section className="space-y-1"><h3 className="text-xs font-semibold text-muted-foreground">기록</h3>
           {log.length ? <ul className="space-y-1 text-xs">{log.map((l, i) => <li key={i}><span className="font-mono text-muted-foreground">{at(l.t)}</span> · {g.items.length > 1 ? `${l.repo} ` : ''}{l.text}</li>)}</ul> : <Empty>기록이 없다.</Empty>}</section>
+      </div>
+    </Sheet>
+  );
+}
+
+// 배포 조치 복사 파일 — 사람이 DB 에 직접 넣는 SQL 등(deploy-prep 이 만든다). 보기 · 복사만, EDITH 는 돌리지 않는다
+function FileSheet({ id, name, onClose }: { id: string; name: string; onClose: () => void }) {
+  const q = useQuery({ queryKey: ['deploy-file', id, name], queryFn: () => get<{ name: string; text: string }>(`/api/deploy/file?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`) });
+  const [copied, setCopied] = useState(false);
+  return (
+    <Sheet title={name} sub="DB 에 직접 넣는 글 — EDITH 는 돌리지 않는다" onClose={onClose}>
+      <div className="space-y-3">
+        {q.data ? <pre className="max-h-[55vh] overflow-auto rounded-lg bg-[var(--code)] px-3 py-2.5 font-mono text-xs whitespace-pre text-[var(--code-foreground)]">{q.data.text}</pre>
+          : <Empty>{q.error ? `읽지 못했다 — ${String(q.error)}` : '불러오는 중…'}</Empty>}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>닫기</Button>
+          <Button disabled={!q.data} onClick={() => void copyText(q.data!.text).then(() => setCopied(true))}>{copied ? '복사됨' : '복사'}</Button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+// 직접 한 일 적기 — 백필처럼 사람이 한 일을 체크된 채 한 줄(「배포 전 · 후 — 글」). 다시 뽑아도 남는다(서버 addTask)
+function HandTask({ g, v, send }: { g: Group; v: Board; send: Send }) {
+  const envs = v.envs.slice(1), [id, setId] = useState(g.items[0].id), [env, setEnv] = useState(envs.at(-1)!.name), [w, setW] = useState<'전' | '후'>('후'), [t, setT] = useState('');
+  const field = 'h-8 rounded-md border bg-card px-2 text-sm outline-none focus:ring-2 focus:ring-ring/40';
+  return (
+    <form className="space-y-2 rounded-lg border border-dashed p-3" onSubmit={async e => { e.preventDefault(); if (await send('task-add', { id, env, when: w, text: t.trim() }, '적었다')) setT(''); }}>
+      <p className="text-xs font-semibold">직접 한 일 적기 <span className="font-normal text-muted-foreground">— 체크된 채 들어가고, 다시 뽑아도 남는다</span></p>
+      <div className="flex flex-wrap gap-2">
+        {g.items.length > 1 && <select aria-label="레포" value={id} onChange={e => setId(e.target.value)} className={field}>{g.items.map(x => <option key={x.id} value={x.id}>{repoName(x.repo)}</option>)}</select>}
+        <select aria-label="환경" value={env} onChange={e => setEnv(e.target.value)} className={field}>{envs.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}</select>
+        <div role="group" aria-label="언제" className="flex overflow-hidden rounded-md border">
+          {(['전', '후'] as const).map(k => <button key={k} type="button" aria-pressed={w === k} onClick={() => setW(k)} className={`h-8 px-2.5 text-xs ${w === k ? 'bg-accent font-semibold' : 'text-muted-foreground hover:bg-muted'}`}>배포 {k}</button>)}
+        </div>
+        <input value={t} onChange={e => setT(e.target.value)} aria-label="한 일" placeholder="예: 과거 데이터 백필 명령 돌림" className={`${field} min-w-0 flex-1 basis-48`} />
+        <Button size="sm" type="submit" variant="outline" className="h-8 text-primary" disabled={!t.trim()}>적기</Button>
+      </div>
+    </form>
+  );
+}
+
+// 정리 — 미리보기(서버가 레포마다 코드가 들어갔나 · 커밋 안 한 변경 · 워크스페이스 · 공방 훅으로 확인 — 훅에 따라 1분쯤 걸린다)를 보고, 통과한 레포만 치운다(src/cleanup.ts)
+type Line = { what: string; ref: string; parts?: string; ok: boolean; check: string };
+type CleanPlan = { id: string; name: string; branch: string; lines: Line[]; ok: boolean };
+type CleanState = { missing?: true; done?: boolean; since?: number; plans?: CleanPlan[]; error?: string };
+// 확인은 서버가 뒤에서 하고(몇 분 걸릴 수 있다) 화면은 2초마다 본다 — 그사이 EDITH 를 다시 켜면 서버가 잊으니(missing) 「다시 확인」
+function CleanSheet({ ids, title, onClose }: { ids: string[]; title: string; onClose: () => void }) {
+  const qc = useQueryClient(), [plans, setPlans] = useState<CleanPlan[] | null>(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [res, setRes] = useState<string | null>(null);
+  const [since, setSince] = useState(0), [now, setNow] = useState(Date.now()), round = useRef(0);
+  const look = async () => {
+    const n = ++round.current;
+    setPlans(null); setErr(''); setSince(Date.now());
+    try { await post('/api/deploy/clean-plan', { ids }); } catch (e) { setErr(`EDITH 에 닿지 않았다 — ${(e as Error).message}`); return; }
+    for (;;) {
+      await new Promise(ok => setTimeout(ok, 2000));
+      if (n !== round.current) return;
+      let s: CleanState;
+      try { s = await get<CleanState>(`/api/deploy/clean-plan?ids=${encodeURIComponent(ids.join(','))}`); } catch { continue; }   // 다시 켜는 중이면 잠깐 닿지 않는다
+      if (n !== round.current) return;
+      if (s.missing) { setErr('확인이 끊겼다 — 그사이 EDITH 를 다시 켰다. 「다시 확인」'); return; }
+      if (s.done) { if (s.error) setErr(s.error); else setPlans(s.plans ?? []); return; }
+    }
+  };
+  useEffect(() => { void look(); return () => { round.current++; }; }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (plans || err) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [plans, err]);
+  const pass = plans?.filter(p => p.ok) ?? [];
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await post<{ text: string; done: string[]; stopped: string[] }>('/api/deploy/clean', { ids: pass.map(p => p.id) });
+      setRes(r.text); toast(r.stopped.length ? `정리 ${r.done.length} · 남음 ${r.stopped.length}` : `${r.done.length}개 레포를 정리했다`, 4000);
+    } catch (e) { toast(`정리하지 못했다 — ${(e as Error).message}`, 8000); }
+    setBusy(false);
+    await Promise.all(['deploy', 'deploy-done'].map(k => qc.invalidateQueries({ queryKey: [k] })));
+  };
+  return (
+    <Sheet side title={`정리 — ${title}`} sub="통과한 레포만 치운다 · 걸린 레포는 그대로 두고 까닭을 남긴다" onClose={onClose}>
+      <div className="space-y-3">
+        {err ? <p className="text-sm text-rose-700 dark:text-rose-300">{err}</p>
+          : !plans ? <Empty>확인하는 중… {Math.max(0, Math.round((now - since) / 1000))}초 — 코드가 들어갔나 · 커밋 안 한 변경 · 워크스페이스 · 엔진 훅(몇 분 걸릴 수 있다 — 창을 닫아도 서버는 계속 본다)</Empty>
+          : plans.map(p => (
+            <section key={p.id} className={`space-y-1 rounded-lg border px-3 py-2.5 ${p.ok ? '' : 'border-amber-400'}`}>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">{p.name}</span><span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{p.branch}</span><span className="flex-1" />
+                <span className={`shrink-0 rounded-full px-2 text-xs leading-5 font-semibold ${p.ok ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-300' : 'bg-amber-500/12 text-amber-800 dark:text-amber-300'}`}>{p.ok ? '통과' : '멈춤'}</span>
+              </div>
+              {p.lines.map((l, i) => (
+                <div key={i} className="grid grid-cols-[4.5rem_minmax(0,1fr)_9rem] items-start gap-x-3 border-t border-border/60 py-1.5 text-sm">
+                  <span className="text-muted-foreground">{l.what}</span>
+                  <span className="min-w-0"><span className="block font-mono text-xs break-all">{l.ref}</span>{l.parts && <span className="block text-xs text-muted-foreground">{l.parts}</span>}</span>
+                  <span className={`text-xs font-semibold ${l.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-300'}`}>{l.ok ? '✓' : '✕'} {l.check}</span>
+                </div>
+              ))}
+            </section>
+          ))}
+        <p className="text-xs leading-relaxed text-muted-foreground">원격 브랜치(origin/…)는 남긴다 · 레포 본 체크아웃은 건드리지 않는다 · 이어진 런 기록은 런 화면에 남는다 · 레포를 다 치우면 보관한다.</p>
+        {res && <pre role="status" className="rounded-lg border border-primary/50 bg-primary/5 px-3 py-2 text-xs whitespace-pre-wrap">{res}</pre>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" onClick={onClose}>{res ? '닫기' : '취소'}</Button>
+          {!res && (plans || err) && <Button variant="outline" onClick={() => void look()}>다시 확인</Button>}
+          {!res && <Button disabled={busy || !pass.length} onClick={() => void go()}>{busy ? '정리하는 중…' : `통과한 ${pass.length}개 레포 정리`}</Button>}
+        </div>
       </div>
     </Sheet>
   );
@@ -580,9 +737,11 @@ function Notes({ x, many, send }: { x: Item; many: boolean; send: Send }) {
 }
 
 // 다음 환경에 올리기 — 레포 줄 하나(서버는 여럿도 받는다 — 모두 먼저 보고 하나라도 안 되면 아무것도 안 올린다)
-function PushDialog({ g, env, items, onClose }: { g: Group; env: string; items: Item[]; onClose: () => void }) {
+function PushDialog({ g, env, items, prep, onClose }: { g: Group; env: string; items: Item[]; prep: boolean; onClose: () => void }) {
   const [busy, setBusy] = useState(false), qc = useQueryClient(), i = items[0]?.state?.envs.findIndex(e => e.name === env) ?? -1;
-  const prepped = items.filter(x => x.state?.envs[i]?.conflicts && x.state.envs[i].prep?.ready).map(x => x.state!.envs[i].prep!.branch);
+  const prepped = items.filter(x => x.state?.envs[i]?.conflicts && x.state.envs[i].prep?.ready).map(x => x.state!.envs[i].prep!.branch), before = leftIn(items, env, '전');
+  // 배포 조치를 한 번도 안 뽑은 레포 — 할 일이 없는지 모르는 것(뽑으면 할 일이 없어도 「따로 할 일 없음」 한 줄이 생긴다)
+  const unpicked = prep ? items.filter(x => !x.block && !x.tasks.length) : [];
   const go = async () => {
     setBusy(true);
     try { const r = await post<{ text: string }>('/api/deploy/promote', { ids: items.map(x => x.id), env }); toast(r.text, 6000); onClose(); }
@@ -595,8 +754,17 @@ function PushDialog({ g, env, items, onClose }: { g: Group; env: string; items: 
         {prepped.length
           ? <p>충돌을 푼 머지 브랜치 <span className="font-mono">{prepped.join(', ')}</span> 를 <span className="font-mono">{env}</span> 로 그대로 올립니다(앞당기기, 강제 push 아님).</p>
           : <p>브랜치를 <span className="font-mono">{env}</span> 에 머지 커밋으로 합쳐 올립니다(작업 트리 없이, 강제 push 아님). 이미 들어갔으면 건너뜁니다.</p>}
+        {unpicked.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-400 bg-amber-500/10 px-3 py-2.5">
+          <p className="min-w-0 flex-1 basis-60"><span className="font-semibold text-amber-800 dark:text-amber-300">배포 조치를 아직 안 뽑았다</span> — DB · 환경변수 같은 할 일이 있는지 모른다.</p>
+          <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => void pullPrep(unpicked.map(x => x.id), () => qc.invalidateQueries({ queryKey: ['deploy'] })).then(onClose)}>배포 조치 뽑기</Button>
+        </div>}
+        {before.length > 0 && <div className="space-y-1.5 rounded-lg border border-amber-400 bg-amber-500/10 px-3 py-2.5">
+          <p className="font-semibold text-amber-800 dark:text-amber-300">{env} 배포 전 할 일 {before.length}개가 아직 체크 안 됐다</p>
+          <ul className="list-disc space-y-0.5 pl-5">{before.map((t, k) => <li key={k} className="break-words">{plain(t.text)}</li>)}</ul>
+          <p className="text-xs text-muted-foreground">먼저 하고 패널에서 체크하거나, 이미 했으면 그대로 올린다.</p>
+        </div>}
         <p className="text-muted-foreground">올리기 직전에 origin 을 다시 받고 봅니다 — 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋. 걸리면 올리지 않습니다. 팀이 같이 쓰는 브랜치라 되돌리려면 따로 되돌림 커밋이 필요합니다.</p>
-        <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button disabled={busy} onClick={() => void go()}>{busy ? '올리는 중…' : `${env} 에 올리기`}</Button></div>
+        <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button disabled={busy} onClick={() => void go()}>{busy ? '올리는 중…' : `${before.length || unpicked.length ? '그래도 ' : ''}${env} 에 올리기`}</Button></div>
       </div>
     </Sheet>
   );
