@@ -46,3 +46,10 @@ test('옛 서버 답 — phase · phases 없이 자리 첫 상자와 비교 표�
   const a = stats([node('a', '기획', M, { phase: undefined, place: '기획 › 받기' })], { phases: undefined, compare: [{ id: 1, state: 'done', created: 0, elapsed: 0, human: 0, phases: [{ name: '기획', ms: 3 * M }] }] });
   assert.deepEqual(byPhase(a).map(p => [p.name, p.ms]), [['기획', 3 * M]]);
 });
+
+test('먼저 볼 것 — 헛도는 검사(코드 그대로 다시 돈 노드), 없으면 줄 없음', () => {
+  const a = stats([node('v', '구현', 5 * M, { title: 'BE 검증', attempts: 4, fails: 3 })], { sameCode: [{ key: 'v', attempts: 4, same: 1, lost: 12 * M, passed: true }] });
+  const h = Object.fromEntries(highlights(a).map(r => [r.label, r]));
+  assert.deepEqual(h['헛도는 검사'].items, [{ text: 'BE 검증', key: 'v', sub: '코드 그대로 1번 다시 · 12분 0초 · 코드를 안 고쳤는데 통과 — 거짓 경보 의심' }]);
+  assert.equal(Object.fromEntries(highlights(stats([])).map(r => [r.label, r]))['헛도는 검사'], undefined);
+});

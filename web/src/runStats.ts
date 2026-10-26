@@ -6,7 +6,8 @@ export type Tok = { input: number; output: number; cacheRead: number; cacheWrite
 // state 는 NodeState(StepFlow.tsx) — 서버 tsc 가 .tsx 를 못 읽어 글자로 둔다
 export type StatNode = {
   key: string; title: string; place: string; phase?: string; kind: string; fixOnly: boolean; state: string; attempts: number; fails: number; rewound: number;
-  time: { work: number; human: number; stop: number } | null; tokens: Tok | null; claude: ClaudeUsed | null; inside: { first: number; last: number; tools: Record<string, number>; busy: number } | null;
+  time: { work: number; human: number; stop: number } | null; tokens: Tok | null; claude: ClaudeUsed | null;
+  inside: { first: number; last: number; tools: Record<string, number>; busy: number; turns?: number; reads?: Record<string, number>; readChars?: number } | null;
 };
 export type Stats = {
   id: number; elapsed: number; timed: boolean; rewinds: unknown[]; records: Record<string, unknown>[]; nodes: StatNode[];
@@ -16,6 +17,8 @@ export type Stats = {
   redo: { again: number; fixing: number };
   codex: { nodes: Record<string, { in: number; out: number; cacheR: number }>; weekly: [number, number] | null };
   compare: { id: number; state: string; created: number; elapsed: number; human: number; phases: { name: string; ms: number }[] }[];
+  sameCode?: { key: string; attempts: number; same: number; lost: number; passed: boolean }[];   // 옛 서버는 없다
+  repoPick?: { must: string[]; check: string[]; human: boolean; picked: { repo: string; commits: number | null }[] } | null;
 };
 
 export const inTok = (t: Tok) => t.input + t.cacheRead + t.cacheWrite;
@@ -43,6 +46,10 @@ export function highlights(a: Stats, cut = (n: string) => n): Row[] {
     { label: '다시 돈 노드', none: '없음 — 모든 노드가 한 번에 끝났다',
       items: again.map(x => ({ text: x.title, sub: [x.attempts > 1 && `시도 ${x.attempts}`, x.fails && `고침 ${x.fails}`, x.rewound && `되돌려 옴 ${x.rewound}`].filter(Boolean).join(' · '), key: x.key })) },
   ];
+  // 헛도는 검사 — 실패 뒤 코드가 그대로인 채 다시 돈 노드(실행기가 시도마다 코드 지문을 적은 런만)
+  const same = a.sameCode ?? [];
+  if (same.length) rows.push({ label: '헛도는 검사', items: same.map(x => ({ text: name(x.key), key: x.key,
+    sub: `코드 그대로 ${x.same}번 다시 · ${dur(x.lost)}${x.passed ? ' · 코드를 안 고쳤는데 통과 — 거짓 경보 의심' : ''}` })) });
   // 갈래가 여럿이면 늦게 끝난 갈래가 병목 — 먼저 끝난 갈래가 합침 앞에서 기다린 시간
   const late = Math.max(...a.lanes.map(l => l.last ?? 0)), slow = a.lanes.find(l => l.last === late), waited = a.lanes.filter(l => (l.waited ?? 0) >= 60_000);
   if (a.lanes.length > 1 && slow && waited.length) rows.push({ label: '병목 갈래', items: [{ text: `${slow.track} 갈래가 늦게 끝났다`, sub: waited.map(l => `${l.track} 가 합침 앞에서 ${dur(l.waited!)} 기다림`).join(' · ') }] });

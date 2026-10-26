@@ -2,7 +2,8 @@
 // 노드를 하나씩: 스킬 노드는 런 pane 의 Claude 에게 새 대화(/clear)로 보내고(일은 Claude 가 한다), 명령 노드는 실행기가 직접 돌린다.
 // 노드 사이는 작업 문서(work/) 파일로만 넘긴다. 진행은 runs/<번호>/run.json 에 적고(쓰는 쪽은 실행기 하나), EDITH 를 다시 켜면 이어 간다.
 // 확실하지 않은 일(보냈는지 모름 · 결과 없이 멈춤 · pane 사라짐)은 다시 보내지 않고 「확인 필요」로 멈춰 사람에게 넘긴다.
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFileSync, cpSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, sep } from 'node:path';
@@ -360,9 +361,24 @@ function saveRun(r: Run) {
   renameSync(tmp, f);
   // 노드 상태가 바뀐 때를 events.jsonl 에 — 런 분석(걸린 시간 · 사람 대기)이 쓴다. EDITH 를 다시 켜면 처음 한 번은 모든 노드를 다시 적는다(구간이 나뉠 뿐).
   const was = saved.get(r.id), now = Object.fromEntries(r.steps.map(s => [s.key, `${r.nodes[s.key].state}:${r.nodes[s.key].attempt}`])), t = Date.now();
-  const ev = r.steps.filter(s => was?.[s.key] !== now[s.key]).map(s => JSON.stringify({ t, key: s.key, state: r.nodes[s.key].state, attempt: r.nodes[s.key].attempt }));
+  const changed = r.steps.filter(s => was?.[s.key] !== now[s.key]);
+  // 시도가 시작될 때 코드 지문 — 분석 「헛도는 검사」 가 실패 뒤 코드가 그대로인 채 다시 돈 시도를 찾는다
+  const fp = changed.some(s => r.nodes[s.key].state === 'running') ? codeFp(r) : undefined;
+  const ev = changed.map(s => JSON.stringify({ t, key: s.key, state: r.nodes[s.key].state, attempt: r.nodes[s.key].attempt, ...(fp && r.nodes[s.key].state === 'running' ? { fp } : {}) }));
   if (ev.length) appendFileSync(join(dirOf(r.id), 'events.jsonl'), `${ev.join('\n')}\n`, { mode: 0o600 });
   saved.set(r.id, now);
+}
+// 코드 지문 — 런의 레포(작업 문서 edith-repos.json 의 path, 없으면 작업 폴더가 git 이면 그것)마다 HEAD · 바뀐 파일 목록 · 커밋 안 한 diff 를 묶은 해시.
+// shortcut: 새 파일(untracked)은 이름만 본다 — 내용만 바뀐 새 파일은 같은 지문이 된다. 그런 헛돎을 놓치면 git add -N 을 더한다
+export function codeFp(r: { id: number; cwd?: string }) {
+  let dirs: string[] = [];
+  try { dirs = (JSON.parse(readFileSync(join(dirOf(r.id), 'work', 'edith-repos.json'), 'utf8')) as { path?: unknown }[]).flatMap(x => typeof x?.path === 'string' ? [x.path] : []); } catch { /* 레포 칸이 아직 없다 */ }
+  if (!dirs.length && r.cwd && existsSync(join(r.cwd, '.git'))) dirs = [r.cwd];
+  const h = createHash('sha1');
+  for (const d of dirs.filter(d => existsSync(d))) for (const args of [['rev-parse', 'HEAD'], ['status', '--porcelain'], ['diff', 'HEAD']]) {
+    h.update(spawnSync('git', ['-C', d, ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 64 << 20 }).stdout ?? '');
+  }
+  return dirs.length ? h.digest('hex').slice(0, 12) : undefined;
 }
 const ids = () => { try { return readdirSync(RUNS).filter(f => /^\d+$/.test(f)).map(Number).sort((a, b) => b - a); } catch { return []; } };
 // 런 이름표 — 티켓(받은 요청 · 고르기의 tag)과 짧은 제목(엔진 요약 → 요청 제목 → 입력 첫 줄, 주소뿐이면 없음). 앞의 이모지 · 기호는 뗀다

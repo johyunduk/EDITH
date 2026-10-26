@@ -1,13 +1,14 @@
 // 런 분석 — 노드마다 걸린 시간(일한 시간 · 사람 대기 · 멈춤) · 결과 · 시도 · 고침 · 되돌려 온 수 · Claude 토큰, 그리고 엔진이 남긴 기록 표.
 // 시간은 실행기가 노드 상태가 바뀔 때마다 적는 runs/<번호>/events.jsonl 에서, 토큰은 작업 폴더의 Claude 세션 기록에서 읽는다.
 // 엔진이 자기 기록(단계 · 사유 등)을 같이 보이고 싶으면 작업 문서의 edith-records.jsonl 에 한 줄에 JSON 하나씩 쓴다.
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
 import { transcriptDir } from './chat.ts';
 import { claudeOf, listRuns, loadRun, readEvents, RUNS, type NodeState, type Run } from './runner.ts';
 import { tries } from './timeline.ts';
 
-export type Ev = { t: number; key: string; state: NodeState; attempt: number };
+export type Ev = { t: number; key: string; state: NodeState; attempt: number; fp?: string };   // fp = 시도가 시작될 때 코드 지문(runner codeFp)
 type Time = { work: number; human: number; stop: number; first?: number; last?: number };
 type Tok = { input: number; output: number; cacheRead: number; cacheWrite: number; models: string[] };
 
@@ -93,6 +94,41 @@ export function codexUsage(records: Record<string, unknown>[]) {
   }
   return { nodes, weekly: weekly.length ? [weekly[0], weekly.at(-1)!] as [number, number] : null };
 }
+// 헛도는 검사 — 같은 노드의 다음 시도가 앞 시도와 같은 코드 지문(fp)으로 시작했다: 실패 · 고치기 · 사람 판단 뒤에도 코드가 그대로인 채 다시 돌았다.
+// lost = 그런 시도마다 앞 시도 시작부터 이 시도 시작까지(앞 시도 · 고치기 · 사람 대기), passed = 마지막 시도가 끝남(코드 그대로 통과면 거짓 경보 의심)
+export function sameCode(events: Ev[]) {
+  const starts = new Map<string, { attempt: number; fp: string; t: number }[]>();
+  for (const e of [...events].sort((a, b) => a.t - b.t)) {
+    if (e.state !== 'running' || !e.fp) continue;
+    const xs = starts.get(e.key) ?? [];
+    if (xs.at(-1)?.attempt === e.attempt) continue;   // EDITH 를 다시 켜면 같은 시도를 또 적는다
+    xs.push({ attempt: e.attempt, fp: e.fp, t: e.t });
+    starts.set(e.key, xs);
+  }
+  const ts = tries(events);
+  return [...starts].flatMap(([key, xs]) => {
+    const same = xs.flatMap((x, i) => i > 0 && x.fp === xs[i - 1].fp ? [x.t - xs[i - 1].t] : []);
+    if (!same.length) return [];
+    return [{ key, attempts: xs.length, same: same.length, lost: same.reduce((a, b) => a + b, 0), passed: ts.filter(x => x.key === key).at(-1)?.how === 'done' }];
+  });
+}
+// 레포 판단 — 엔진 기록의 마지막 {"kind":"repo-pick","must","check","human"} 을 런이 실제로 쓴 레포(작업 문서 edith-repos.json)와 그 레포에 커밋한 수에 견준다
+const repoName = (dir: string) => {
+  const g = spawnSync('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', timeout: 3000 }).stdout?.trim();
+  return g ? basename(dirname(g)) : basename(dir);
+};
+export function repoPick(id: number, records: Record<string, unknown>[]) {
+  const p = records.findLast(o => o.kind === 'repo-pick');
+  if (!p) return null;
+  const list = (v: unknown) => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  let used: { path?: unknown; start?: unknown }[] = [];
+  try { used = JSON.parse(readFileSync(join(RUNS, String(id), 'work', 'edith-repos.json'), 'utf8')); } catch { /* 워크트리를 아직 안 만들었다 */ }
+  const picked = (Array.isArray(used) ? used : []).flatMap(x => typeof x?.path === 'string' && existsSync(x.path) ? [x as { path: string; start?: unknown }] : []).map(x => ({
+    repo: repoName(x.path),
+    commits: typeof x.start === 'string' ? Number(spawnSync('git', ['-C', x.path, 'rev-list', '--count', `${x.start}..HEAD`], { encoding: 'utf8', timeout: 3000 }).stdout?.trim() || 0) : null,
+  }));
+  return { must: list(p.must), check: list(p.check), human: p.human === true, picked };
+}
 // 큰 단계(맨 위 엔진의 체인 · 엔진)마다 처음 시작부터 마지막 끝까지 — 런 비교 표가 쓴다
 export function phaseTimes(steps: { key: string; title: string; boxes?: { name: string }[] }[], events: Ev[]) {
   const name = new Map(steps.map(s => [s.key, s.boxes?.[0]?.name ?? s.title])), out = new Map<string, [number, number]>();
@@ -118,7 +154,17 @@ function compare(r: Run) {
 // 그 뒤의 답(같은 message.id 는 한 번)을 그 노드에 더한다. 노드마다 /clear 라 보통 노드 시도 하나가 세션 파일 하나다.
 // shortcut: 런 시작 뒤 바뀐 세션 파일을 통째로 읽는다 — 같은 폴더에서 다른 큰 세션이 돌면 느려진다. 그러면 (파일 · 크기) 로 캐시한다
 // 노드 안쪽 — 그 노드 대화의 처음 · 끝 시각과 도구별 걸린 시간(도구 호출 → 결과). 모델이 생각 · 글 쓴 시간은 나머지로 본다
-export type Inside = { first: number; last: number; tools: Record<string, number>; busy: number; spans?: [number, number][] };   // busy = 도구가 하나라도 돈 시간(겹친 것은 한 번)
+export type Inside = { first: number; last: number; tools: Record<string, number>; busy: number; spans?: [number, number][]; turns?: number; reads?: Record<string, number>; readChars?: number };   // busy = 도구가 하나라도 돈 시간(겹친 것은 한 번)
+// 읽기 — 읽은 파일(Read 도구, cat · head · sed 같은 Bash 가 연 파일)과 그 결과 글자 수. 경로는 끝 세 마디로
+const READ_CMD = /\b(cat|head|tail|sed|less)\b/, FILE = /[^\s'"`;|&>()]+\.[A-Za-z]{1,5}\b/g;   // 확장자가 있는 낱말(읽기 명령 안에서만)
+export function readPaths(name: string, input: unknown): string[] {
+  const i = (input ?? {}) as { file_path?: unknown; command?: unknown };
+  if (name === 'Read' && typeof i.file_path === 'string') return [i.file_path];
+  if (name === 'Bash' && typeof i.command === 'string' && READ_CMD.test(i.command)) return [...new Set(i.command.match(FILE) ?? [])];
+  return [];
+}
+const shortPath = (p: string) => p.split(/[\\/]/).filter(Boolean).slice(-3).join('/');
+const resultChars = (c: unknown) => typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((n, x) => n + (typeof x?.text === 'string' ? x.text.length : 0), 0) : 0;
 // 도구 이름 — Bash 는 부른 스크립트(없으면 첫 낱말), 질문 창은 사람, MCP 는 끝 이름
 export function toolLabel(name: string, input: unknown) {
   if (name === 'AskUserQuestion') return '질문 창(사람)';
@@ -131,13 +177,13 @@ export function toolLabel(name: string, input: unknown) {
 }
 export function tokensIn(lines: string[], run: number, into: Record<string, Tok>, inside: Record<string, Inside> = {}) {
   let cur: string | null = null;
-  const seen = new Set<string>(), head = `[EDITH 런 #${run} ·`, open = new Map<string, { t: number; label: string; node: string }>();
+  const seen = new Set<string>(), head = `[EDITH 런 #${run} ·`, open = new Map<string, { t: number; label: string; node: string; paths: string[] }>();
   const mark = (node: string, t: number) => { if (!Number.isFinite(t)) return; const x = inside[node] ??= { first: t, last: t, tools: {}, busy: 0 }; x.first = Math.min(x.first, t); x.last = Math.max(x.last, t); };
   for (const l of lines) {
     if (!l.includes('"type":"user"') && !(cur && l.includes('"type":"assistant"'))) continue;
     let o: { type?: string; timestamp?: string; message?: { id?: string; model?: string; content?: unknown; usage?: Record<string, number> } };
     try { o = JSON.parse(l); } catch { continue; }
-    const at = Date.parse(o.timestamp ?? ''), c = o.message?.content, blocks = Array.isArray(c) ? c as { type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; text?: string }[] : [];
+    const at = Date.parse(o.timestamp ?? ''), c = o.message?.content, blocks = Array.isArray(c) ? c as { type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; text?: string; content?: unknown }[] : [];
     if (o.type === 'user') {
       const raw = typeof c === 'string' ? c : blocks.map(x => x?.text ?? '').join('\n');
       const text = raw.replace(/^\s*<pasted_content[^>]*>\s*/, '');   // 긴 글은 herdr 가 붙여넣기로 보내 <pasted_content> 로 감싸인다
@@ -150,6 +196,11 @@ export function tokensIn(lines: string[], run: number, into: Record<string, Tok>
         const x = inside[p.node] ??= { first: p.t, last: at, tools: {}, busy: 0 };
         x.tools[p.label] = (x.tools[p.label] ?? 0) + Math.max(0, at - p.t);
         (x.spans ??= []).push([p.t, at]);
+        if (p.paths.length) {
+          const n = resultChars(b.content);
+          x.readChars = (x.readChars ?? 0) + n;
+          for (const f of p.paths) (x.reads ??= {})[shortPath(f)] = (x.reads[shortPath(f)] ?? 0) + Math.round(n / p.paths.length);
+        }
         mark(p.node, at);
       }
       if (cur) mark(cur, at);
@@ -157,10 +208,11 @@ export function tokensIn(lines: string[], run: number, into: Record<string, Tok>
     }
     if (!cur) continue;
     mark(cur, at);
-    for (const b of blocks) if (b?.type === 'tool_use' && b.id && !open.has(b.id) && Number.isFinite(at)) open.set(b.id, { t: at, label: toolLabel(b.name ?? '', b.input), node: cur });
+    for (const b of blocks) if (b?.type === 'tool_use' && b.id && !open.has(b.id) && Number.isFinite(at)) open.set(b.id, { t: at, label: toolLabel(b.name ?? '', b.input), node: cur, paths: readPaths(b.name ?? '', b.input) });
     const id = o.message?.id, u = o.message?.usage;
     if (!u || !id || seen.has(id)) continue;
     seen.add(id);
+    if (inside[cur]) inside[cur].turns = (inside[cur].turns ?? 0) + 1;   // 대화 턴 — 답 하나(같은 message.id 는 한 번)
     const t = into[cur] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
     t.input += u.input_tokens ?? 0; t.output += u.output_tokens ?? 0;
     t.cacheRead += u.cache_read_input_tokens ?? 0; t.cacheWrite += u.cache_creation_input_tokens ?? 0;
@@ -213,5 +265,6 @@ export function runAnalysis(id: number) {
   const last = Math.max(r.created, ...events.map(e => e.t));
   const end = r.state === 'done' ? last : Date.now(), recs = records(id);
   return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created, timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
-    flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: codexUsage(recs), compare: compare(r) };
+    flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: codexUsage(recs), compare: compare(r),
+    sameCode: sameCode(events), repoPick: repoPick(id, recs) };
 }

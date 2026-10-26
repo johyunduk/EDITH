@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codexUsage, flow, lanes, phaseTimes, redo, timings, toolLabel, tokensIn, type Ev } from './analysis.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { codexUsage, flow, lanes, phaseTimes, readPaths, redo, repoPick, sameCode, timings, toolLabel, tokensIn, type Ev, type Inside } from './analysis.ts';
+import { codeFp } from './runner.ts';
 
 test('런 분석 시간 — 도는 중은 일한 시간, 답 기다림 · 확인 필요는 사람 대기, 끝나면 멈춘다', () => {
   const ev = (t: number, key: string, state: Ev['state']): Ev => ({ t, key, state, attempt: 1 });
@@ -51,4 +56,48 @@ test('런 분석 다시 돈 시간 · Codex · 단계 시간 — 두 번째 이�
   assert.deepEqual(phaseTimes(steps, evs).map(p => [p.name, p.ms / 60_000]), [['단계 A', 9], ['B', 1]]);
   const u = codexUsage([{ kind: 'usage', node: 'a.x', codex: { in: 10, out: 5 }, weekly: 41 }, { kind: 'stage' }, { kind: 'usage', node: 'a.x', codex: { out: 7, cacheR: 100 }, weekly: 44 }]);
   assert.deepEqual([u.nodes['a.x'], u.weekly], [{ in: 10, out: 12, cacheR: 100 }, [41, 44]]);
+});
+
+test('런 분석 읽기 — 노드 대화 턴 수, Read 도구 · cat 류 Bash 가 연 파일과 결과 글자 수(경로는 끝 세 마디)', () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 9, 26, 0, 0, s)).toISOString();
+  const user = (s: number, content: unknown) => JSON.stringify({ type: 'user', timestamp: at(s), message: { content } });
+  const said = (s: number, id: string, blocks: unknown[]) => JSON.stringify({ type: 'assistant', timestamp: at(s), message: { id, usage: { input_tokens: 1, output_tokens: 1 }, content: blocks } });
+  const inside: Record<string, Inside> = {};
+  tokensIn([user(0, '[EDITH 런 #4 · 준비 › 「워크트리 준비」]\n결과 파일: /r/4/nodes/t.tree/1/result.json'),
+    said(1, 'a1', [{ type: 'tool_use', id: 'u1', name: 'Read', input: { file_path: '/w/bin/skills/prepare/SKILL.md' } }]),
+    user(3, [{ type: 'tool_result', tool_use_id: 'u1', content: 'x'.repeat(500) }]),
+    said(4, 'a2', [{ type: 'tool_use', id: 'u2', name: 'Bash', input: { command: 'W=/w; cat $W/brief.md; cat $W/source.md' } }]),
+    user(5, [{ type: 'tool_result', tool_use_id: 'u2', content: [{ type: 'text', text: 'y'.repeat(300) }] }]),
+    said(6, 'a3', [{ type: 'text', text: '끝' }]), said(6, 'a3', [{ type: 'text', text: '끝' }])], 4, {}, inside);
+  assert.equal(inside['t.tree'].turns, 3);   // 같은 message.id 는 한 번
+  assert.equal(inside['t.tree'].readChars, 800);
+  assert.deepEqual(inside['t.tree'].reads, { 'skills/prepare/SKILL.md': 500, '$W/brief.md': 150, '$W/source.md': 150 });
+  assert.deepEqual(readPaths('Bash', { command: 'git status' }), []);
+  assert.deepEqual(readPaths('Bash', { command: 'node bin/tool.ts mode' }), []);   // 읽기 명령이 아니면 파일 이름이 있어도 뺀다
+});
+
+test('런 분석 헛도는 검사 — 다음 시도가 같은 코드 지문으로 시작하면 센다(다시 켜기로 겹친 줄은 한 번)', () => {
+  const e = (t: number, key: string, state: Ev['state'], attempt: number, fp?: string): Ev => ({ t, key, state, attempt, ...(fp ? { fp } : {}) });
+  const evs = [e(0, 'v', 'running', 1, 'F1'), e(0, 'v', 'running', 1, 'F1'), e(2, 'v', 'wait', 1), e(10, 'v', 'running', 2, 'F1'), e(12, 'v', 'wait', 2), e(20, 'v', 'running', 3, 'F2'), e(25, 'v', 'done', 3),
+    e(0, 'b', 'running', 1, 'G'), e(5, 'b', 'wait', 1), e(9, 'b', 'running', 2, 'H'), e(11, 'b', 'done', 2), e(1, 'n', 'running', 1), e(3, 'n', 'running', 2)];
+  assert.deepEqual(sameCode(evs), [{ key: 'v', attempts: 3, same: 1, lost: 10, passed: true }]);
+});
+
+test('코드 지문 — 작업 폴더(git)의 HEAD · 바뀐 파일 · diff 가 같으면 같고, 고치면 바뀐다', () => {
+  const d = mkdtempSync(join(tmpdir(), 'edith-fp-')), git = (...a: string[]) => execFileSync('git', ['-C', d, ...a], { stdio: 'ignore' });
+  try {
+    git('init', '-q'); writeFileSync(join(d, 'a.txt'), '1\n'); git('add', '.'); git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'a');
+    const r = { id: -1, cwd: d }, f1 = codeFp(r);
+    assert.match(f1 ?? '', /^[0-9a-f]{12}$/);
+    writeFileSync(join(d, 'a.txt'), '2\n');
+    assert.notEqual(codeFp(r), f1);
+    writeFileSync(join(d, 'a.txt'), '1\n');
+    assert.equal(codeFp(r), f1);
+    assert.equal(codeFp({ id: -1, cwd: join(d, 'nope') }), undefined);   // 레포가 없으면 지문도 없다
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('런 분석 레포 판단 — 엔진 기록의 마지막 repo-pick 줄, 없으면 없음', () => {
+  assert.equal(repoPick(-1, [{ kind: 'stage' }]), null);
+  assert.deepEqual(repoPick(-1, [{ kind: 'repo-pick', must: ['a'], check: ['b'] }, { kind: 'repo-pick', must: ['c', 1], check: [], human: true }]), { must: ['c'], check: [], human: true, picked: [] });
 });

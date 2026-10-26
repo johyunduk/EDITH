@@ -728,6 +728,7 @@ function Inside({ a }: { a: Stats }) {
       {insideTop(a).map(x => {
         const i = x.inside!, span = i.last - i.first, ask = i.tools['질문 창(사람)'] ?? 0, tool = Math.max(0, i.busy - ask), model = Math.max(0, span - i.busy);
         const tools = Object.entries(i.tools).filter(([k, v]) => v >= 6000 && k !== '질문 창(사람)').sort((p, q) => q[1] - p[1]).slice(0, 3);
+        const reads = Object.entries(i.reads ?? {}).sort((p, q) => q[1] - p[1]).slice(0, 3);
         return (
           <div key={x.key} className="text-xs">
             <p className="flex items-baseline gap-2"><span className="min-w-0 truncate font-semibold">{x.title}</span><span className="text-muted-foreground">{x.place}</span><span className="ml-auto tabular-nums">{dur(span)}</span></p>
@@ -737,9 +738,34 @@ function Inside({ a }: { a: Stats }) {
               <span className="bg-amber-500" style={{ width: `${ask / span * 100}%` }} title={`질문 창(사람) ${dur(ask)}`} />
             </div>
             <p className="mt-0.5 text-muted-foreground">모델 {dur(model)} · 도구 {dur(tool)}{ask ? ` · 질문 창(사람) ${dur(ask)}` : ''}{tools.length ? ` — ${tools.map(([k, v]) => `${k} ${dur(v)}`).join(' · ')}` : ''}</p>
+            {(i.turns || i.readChars) ? <p className="text-muted-foreground">대화 {i.turns ?? 0}번 · 읽은 글 {big(i.readChars ?? 0)}자{reads.length ? ` — ${reads.map(([f, n]) => `${f} ${big(n)}`).join(' · ')}` : ''}</p> : null}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// 레포 판단 — 엔진이 고른 레포(확실 · 확인)와 런이 실제로 쓴 레포 · 커밋 수. 확실에 없는데 커밋한 레포가 「놓침」
+function RepoPick({ p }: { p: NonNullable<Stats['repoPick']> }) {
+  const used = new Map(p.picked.map(x => [x.repo, x.commits])), all = [...new Set([...p.must, ...p.check, ...used.keys()])];
+  const missed = [...used].filter(([r, n]) => (n ?? 0) > 0 && !p.must.includes(r)).map(([r]) => r), cell = 'px-2 py-1.5 whitespace-nowrap';
+  return (
+    <div className="space-y-2 text-xs">
+      <table className="w-full">
+        <thead className="border-b text-muted-foreground"><tr><th className={`${cell} text-left`}>레포</th><th className={`${cell} text-left`}>엔진 판단</th><th className={`${cell} text-left`}>런이 씀</th><th className={`${cell} text-right`}>커밋</th></tr></thead>
+        <tbody>
+          {all.map(r => (
+            <tr key={r} className="border-b last:border-0">
+              <td className={`${cell} font-mono`}>{r}</td>
+              <td className={cell}>{p.must.includes(r) ? '확실' : p.check.includes(r) ? '확인' : <span className="text-amber-700 dark:text-amber-400">없음</span>}</td>
+              <td className={cell}>{used.has(r) ? '씀' : ''}</td>
+              <td className={`${cell} text-right tabular-nums`}>{used.get(r) ?? ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-muted-foreground">{p.human ? '엔진이 「사람이 정함」 으로 넘겼다. ' : ''}{missed.length ? `확실 칸이 놓친 레포: ${missed.join(' · ')}` : p.picked.length ? '확실 칸이 커밋한 레포를 다 담았다' : '워크트리를 아직 만들지 않았다'}</p>
     </div>
   );
 }
@@ -848,7 +874,8 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
         <p className="text-xs font-semibold text-muted-foreground">자세히</p>
         {a.flow && <Fold title="흐름" hint="런 시간이 일 · 사람 대기 · 빈 시간으로 어떻게 나뉘었나, 긴 대기 구간"><Flow a={a} /></Fold>}
         {a.lanes.length > 0 && <Fold title="갈래" hint={`갈래마다 시작 · 끝, 먼저 끝난 갈래가 합치는 노드${a.lanes[0].join ? `(${a.nodes.find(x => x.key === a.lanes[0].join)?.title ?? a.lanes[0].join})` : ''} 앞에서 기다린 시간`}><Lanes a={a} /></Fold>}
-        {insideTop(a).length > 0 && <Fold title="노드 안쪽" hint="오래 걸린 노드에서 Claude 가 생각한 시간과 도구가 돈 시간"><Inside a={a} /></Fold>}
+        {insideTop(a).length > 0 && <Fold title="노드 안쪽" hint="오래 걸린 노드에서 Claude 가 생각한 시간과 도구가 돈 시간, 대화 수 · 읽은 글"><Inside a={a} /></Fold>}
+        {a.repoPick && <Fold title="레포 판단" hint="엔진이 고른 레포(확실 · 확인)와 런이 실제로 쓰고 커밋한 레포"><RepoPick p={a.repoPick} /></Fold>}
         {a.compare.length > 1 && <Fold title="같은 엔진 런 비교" hint={`최근 ${a.compare.length}개 런의 단계별 걸린 시간`}><Compare a={a} cut={cut} /></Fold>}
         <Fold title="노드 표" hint={`돈 노드 ${rows.length}개의 시도 · 시간 · 토큰 · Claude 설정(안 돈 ${a.nodes.length - rows.length}개는 뺐다)`}>
           <div className="overflow-x-auto">
