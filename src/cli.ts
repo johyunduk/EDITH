@@ -13,7 +13,15 @@ const USAGE = `사용: edith [serve] [--port N] [--no-open]   herdr 확인·시�
       edith update [--port N]                  받기(git pull)·화면 빌드 → 떠 있는 EDITH 를 새 코드로 다시 켜기
       edith setup                              설치 스크립트 다시 — 빠진 도구 설치, herdr 통합·스킬, 화면 빌드
       edith connect [이름 user@host]           다른 기기 잇기 — SSH 키 등록·machines.json(인자 없으면 Tailscale 기기에서 고른다)
-      edith request <id>                       요청(~/.local/share/edith/requests/<id>.json)의 진행 — 읽기만, JSON 으로`;
+      edith request <id>                       요청(~/.local/share/edith/requests/<id>.json)의 진행 — 읽기만, JSON 으로
+      edith deploy import <파일.json>          배포 목록을 {"items": [...]} 로 통째로 바꾼다(~/.local/share/edith/deploy.json — 형식은 src/deploy.ts 머리)
+      edith deploy add <레포 경로> <브랜치> [--tag 이름] [--ticket 티켓] [--agenda 안건 키] [--note 줄]…   배포 목록에 등록(레포는 워크트리 경로여도 된다, 같은 안건 키는 한 카드)
+      edith deploy set <레포 경로> <브랜치> [--tag] [--ticket] [--agenda]   이름 · 티켓 · 안건 키 바꾸기
+      edith deploy note|task <레포 경로> <브랜치> <글> [--env 환경]      메모 한 줄 · 배포 조치 한 줄 더하기(env 없으면 첫 환경 뺀 전부)
+      edith deploy range|block <레포 경로> <브랜치> [블록.json]          배포 조치를 뽑을 범위(JSON) · 뽑은 배포 조치로 바꾸기
+      edith deploy check <레포 경로> <브랜치> <환경> <할 일> [--undo]     할 일 체크
+      edith deploy done|drop <레포 경로> <브랜치> [--date YYYY-MM-DD]    보관(배포 끝) · 지우기(안 하기로 함)
+      edith deploy show [<레포 경로> [<브랜치>]]                         보관 안 한 항목(JSON)`;
 
 const win = process.platform === 'win32';
 const fail = (m: string): never => { console.error(m); process.exit(1); };
@@ -117,6 +125,37 @@ switch (argv[0] ?? 'serve') {
     const { requestStatus } = await import('./requests.ts'), st = argv[1] ? requestStatus(argv[1]) : null;
     if (!st) fail(`없는 요청: ${argv[1] ?? '(id 없음)'}`);
     console.log(JSON.stringify(st, null, 2));
+    break;
+  }
+  case 'deploy': {
+    const D = await import('./deploy.ts'), { readFileSync } = await import('node:fs'), { resolve } = await import('node:path');
+    // 「--이름 값」 옵션(--note 는 여러 번)과 나머지 인자. --undo 는 값 없이
+    const [sub, ...rest] = argv.slice(1), pos: string[] = [], opt: Record<string, string[]> = {};
+    for (let i = 0; i < rest.length; i++) {
+      const k = rest[i].startsWith('--') ? rest[i].slice(2) : null;
+      if (!k) pos.push(rest[i]); else (opt[k] ??= []).push(k === 'undo' ? '1' : rest[++i] ?? '');
+    }
+    const [path, branch] = [pos[0] ? resolve(pos[0]) : '', pos[1] ?? ''], need = (n: number, how: string) => { if (pos.length < n) fail(`사용: edith deploy ${sub} ${how}`); };
+    const say = (p: Promise<unknown>) => p.then(r => console.log(typeof r === 'string' ? r : JSON.stringify(r, null, 2)), (e: Error) => fail(e.message));
+    switch (sub) {
+      case 'import': {
+        need(1, '<파일.json>');
+        const r = await D.importItems(readFileSync(pos[0], 'utf8')).catch((e: Error) => fail(e.message));
+        console.log(`배포 목록 ${r.items}개(보관 안 한 것 ${r.active})를 ${D.DEPLOY_FILE} 에 넣었다${r.skipped ? ` — 레포 · 브랜치가 틀린 ${r.skipped}개는 뺐다` : ''}`);
+        break;
+      }
+      case 'add': need(2, '<레포 경로> <브랜치> [--tag <이름>] [--ticket <티켓>] [--agenda <안건 키>] [--note <메모 줄>]…'); await say(D.cliAdd(path, branch, { tag: opt.tag?.[0], notes: opt.note, ticket: opt.ticket?.[0], agenda: opt.agenda?.[0] })); break;
+      case 'set': need(2, '<레포 경로> <브랜치> [--tag <이름>] [--ticket <티켓>] [--agenda <안건 키>](빈 글이면 지움)'); await say(D.cliSet(path, branch, { tag: opt.tag?.[0], ticket: opt.ticket?.[0], agenda: opt.agenda?.[0] })); break;
+      case 'note': need(3, '<레포 경로> <브랜치> <메모 줄>'); await say(D.cliNote(path, branch, pos[2])); break;
+      case 'task': need(3, '<레포 경로> <브랜치> <할 일> [--env <환경>]'); await say(D.cliTask(path, branch, pos[2], opt.env?.[0])); break;
+      case 'range': need(2, '<레포 경로> <브랜치>'); await say(D.cliRange(path, branch)); break;
+      case 'block': need(3, '<레포 경로> <브랜치> <블록.json>'); await say(D.cliBlock(path, branch, readFileSync(pos[2], 'utf8'))); break;
+      case 'check': need(4, '<레포 경로> <브랜치> <환경> <할 일> [--undo]'); await say(D.cliCheck(path, branch, pos[2], pos[3], !opt.undo)); break;
+      case 'done': need(2, '<레포 경로> <브랜치> [--date YYYY-MM-DD]'); await say(D.cliDone(path, branch, opt.date?.[0])); break;
+      case 'drop': need(2, '<레포 경로> <브랜치>'); await say(D.cliDrop(path, branch)); break;
+      case 'show': await say(D.cliShow(path || undefined, branch || undefined)); break;
+      default: fail('사용: edith deploy import|add|set|note|task|range|block|check|done|drop|show — edith help');
+    }
     break;
   }
   case 'serve': await serve(argv.slice(1)); break;

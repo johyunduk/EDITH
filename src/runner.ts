@@ -33,6 +33,7 @@ export type NodeState = 'wait' | 'sending' | 'running' | 'blocked' | 'done' | 's
 export type NodeRun = { state: NodeState; attempt: number; fails: number; summary?: string; line?: string; reason?: string; idle?: number; nudged?: boolean; wake?: number; auto?: number };   // line = 사람용 한 줄(결과 파일 「한줄」), wake = 사용량 한도가 풀려 이어 갈 시각, auto = 무인 런이 다시 돌린 횟수
 export type Run = {
   id: number; engine: string; name: string; cwd: string; input: string; created: number; branch?: string;   // branch = 새 워크트리로 돌 때 그 브랜치
+  def?: string;   // 공방 런(kind run)으로 시작했으면 그 폴더 — 런 설정 사본은 run/, engine 은 그 런이 돌린 엔진
   unattended?: boolean;   // 무인 — 사람을 기다리지 않는다(unattend). 엔진은 run.json · $EDITH_UNATTENDED 로 안다
   state: 'queued' | 'running' | 'check' | 'stopped' | 'done'; reason?: string;   // queued = 동시 런 한도에 걸려 줄 서 있다
   owner?: { pid: number; port: number }; pane?: string;
@@ -55,7 +56,7 @@ export function flatten(top: string, load: Load, resolve: Resolve): Step[] | str
     if (typeof e === 'string') { errs.push(`체인 ${id}: ${e}`); return none; }
     if (!e.nodes.length) { errs.push(`「${e.name}」에 노드가 없다`); return none; }
     let common = inherited;
-    const boxes = prefix ? [...trail!, { name: e.name, kind: e.kind ?? 'chain' }] : [];
+    const boxes = prefix ? [...trail!, { name: e.name, kind: e.kind === 'engine' ? 'engine' as const : 'chain' as const }] : [];   // 런은 노드가 없어 위에서 멈춘다
     if (e.common) { const c = resolve(id, e.common); if (c) common = c; else errs.push(`「${e.name}」: 공통 규칙 스킬 ${e.common.id} 이 없다`); }
     const ends = new Map<string, { entries: Step[]; exits: Step[] }>();
     for (const n of e.nodes) {
@@ -364,12 +365,24 @@ function saveRun(r: Run) {
   saved.set(r.id, now);
 }
 const ids = () => { try { return readdirSync(RUNS).filter(f => /^\d+$/.test(f)).map(Number).sort((a, b) => b - a); } catch { return []; } };
+// 런 이름표 — 티켓(받은 요청 · 고르기의 tag)과 짧은 제목(엔진 요약 → 요청 제목 → 입력 첫 줄, 주소뿐이면 없음). 앞의 이모지 · 기호는 뗀다
+const clean = (v: unknown, n: number) => typeof v === 'string' && v.trim() ? v.trim().replace(/^[^\p{L}\p{N}[(]+/u, '').slice(0, n) || undefined : undefined;
+export function runLabel(req: { tag?: unknown; title?: unknown } | null, summary: string | undefined, input: string) {
+  const line = input.split('\n')[0].trim(), tag = clean(req?.tag, 40);
+  const title = clean(summary, 120) ?? clean(req?.title, 120) ?? (line && !/^https?:\/\/\S+$/.test(line) ? clean(line, 120) : undefined);
+  return { ...(tag ? { tag } : {}), ...(title ? { title } : {}) };
+}
+// 작업 문서 안의 요청 파일만(링크로 밖을 가리키면 없는 것으로)
+function requestOf(id: number) {
+  try { const w = realpathSync(join(dirOf(id), 'work')), f = realpathSync(join(w, 'edith-request.json')); return f.startsWith(w + sep) ? JSON.parse(readFileSync(f, 'utf8')) as { tag?: unknown; title?: unknown } : null; } catch { return null; }
+}
+const labelOf = (r: Run) => runLabel(requestOf(r.id), readSummary(join(dirOf(r.id), 'work'))?.title, r.input);
 export function listRuns() {
   return ids().flatMap(id => {
     const r = loadRun(id);
     if (!r) return [];
     const live = r.steps.filter(s => !s.fixOnly);
-    return [{ id, name: r.name, engine: r.engine, state: r.state, reason: r.reason, created: r.created, total: live.length, done: live.filter(s => ok(r, s.key)).length }];
+    return [{ id, name: r.name, engine: r.engine, ...(r.def ? { def: r.def } : {}), state: r.state, reason: r.reason, created: r.created, total: live.length, done: live.filter(s => ok(r, s.key)).length, ...labelOf(r) }];
   });
 }
 // 화면에 줄 것 — run 과 노드마다 보낸 글 · 명령 출력 끝(실행 폴더 안에서 서버가 정한 경로만)
@@ -396,7 +409,7 @@ export function runView(id: number) {
     const claude = claudeOf(id, key, a) ?? undefined;
     return typeof o === 'string' ? { claude } : { summary: o.summary, line: o.line, claude };
   };
-  return { ...r, detail, timeline: timeline(r, readEvents(id), got), dir: dirOf(id), actions: readActions(r), acted: acted(id), live: livePort(join(dirOf(id), 'work')) !== null,
+  return { ...r, ...labelOf(r), detail, timeline: timeline(r, readEvents(id), got), dir: dirOf(id), actions: readActions(r), acted: acted(id), live: livePort(join(dirOf(id), 'work')) !== null,
     summary: r.state === 'done' ? readSummary(join(dirOf(id), 'work')) : null };   // 끝난 런만 — 「요약」 보기(src/runSummary.ts)
 }
 
@@ -435,11 +448,19 @@ const folderOf = (v: unknown, what: string) => {
   return f;
 };
 // request — 받은 요청에서 연 런이면 그 요청(요청자 · 방 · meta)을 작업 문서 edith-request.json 에 두고 시작한다(노드가 요청 쪽에 알릴 때 쓴다)
-export async function startRun(engine: unknown, cwd: unknown, input: unknown, branch: unknown, port: number, unattended?: unknown, request?: object) {
-  if (typeof engine !== 'string' || !NAME.test(engine) || !existsSync(join(WORKSHOP, engine, 'engine.json'))) throw new Error('공방에 없다');
-  const top0 = check(JSON.parse(readFileSync(join(WORKSHOP, engine, 'engine.json'), 'utf8')));
-  if (Array.isArray(top0)) throw new Error(top0.join(' · '));
-  const wd = top0.workdir ?? { kind: 'ask' as const };
+// what — 공방 런(kind run — 그 런이 정한 엔진을 그 설정으로) 또는 엔진 · 체인(시험 — 그 엔진 설정으로)
+export async function startRun(what: unknown, cwd: unknown, input: unknown, branch: unknown, port: number, unattended?: unknown, request?: object) {
+  const read = (id: unknown) => {
+    if (typeof id !== 'string' || !NAME.test(id) || !existsSync(join(WORKSHOP, id, 'engine.json'))) throw new Error('공방에 없다');
+    const e = check(JSON.parse(readFileSync(join(WORKSHOP, id, 'engine.json'), 'utf8')));
+    if (Array.isArray(e)) throw new Error(e.join(' · '));
+    return e;
+  };
+  const def = read(what), run = def.kind === 'run' ? def : null, engine = run ? run.engine! : what as string;
+  const top0 = run ? read(engine) : def;
+  if (top0.kind === 'run') throw new Error(`런 「${def.name}」 이 돌릴 것이 또 런이다 — 엔진 · 체인을 고른다`);
+  // 작업 폴더 — 런에 있으면 런 것, 없으면 엔진 것(런으로 옮기기 전 엔진에 적어 둔 것)
+  const wd = run?.workdir ?? top0.workdir ?? { kind: 'ask' as const };
   let folder = wd.kind === 'ask' ? folderOf(cwd, '작업 폴더') : wd.kind === 'fixed' ? folderOf(wd.dir, '공방 설정의 작업 폴더') : '';
   const repo = wd.kind === 'worktree' ? folderOf(wd.repo, '공방 설정의 레포 폴더') : '';
   if (wd.kind === 'worktree' && (typeof branch !== 'string' || !BRANCH.test(branch.trim()))) throw new Error('브랜치 이름을 넣는다(영문 · 숫자 · 한글 · . _ / -, - 로 시작하지 않게)');
@@ -447,6 +468,7 @@ export async function startRun(engine: unknown, cwd: unknown, input: unknown, br
   const id = (ids()[0] ?? 0) + 1, dir = dirOf(id);
   mkdirSync(join(dir, 'work'), { recursive: true, mode: 0o700 });
   copyEngines(engine, join(dir, 'engine'));
+  if (run) cpSync(join(WORKSHOP, what as string), join(dir, 'run'), { recursive: true });   // 런 설정 · 단추도 시작할 때의 사본으로
   const load: Load = e => {
     try { const r = check(JSON.parse(readFileSync(join(dir, 'engine', e, 'engine.json'), 'utf8'))); return Array.isArray(r) ? r.join(' · ') : r; } catch { return '공방에 없다'; }
   };
@@ -456,11 +478,11 @@ export async function startRun(engine: unknown, cwd: unknown, input: unknown, br
   let pane: string | undefined, br: string | undefined;
   if (wd.kind === 'worktree') {
     br = (branch as string).trim();
-    try { ({ path: folder, pane } = await newWorktree(repo, br, wd.base, `▶ ${top.name} #${id} · ${br}`)); }
+    try { ({ path: folder, pane } = await newWorktree(repo, br, wd.base, `▶ ${run?.name ?? top.name} #${id} · ${br}`)); }
     catch (e) { rmSync(dir, { recursive: true, force: true }); throw new Error(`워크트리를 만들지 못했다 — ${firstLine(e)}`); }
   }
   const r: Run = {
-    id, engine, name: top.name, cwd: folder, input: (input as string | undefined)?.trim() ?? '', created: Date.now(), state: 'running', owner: { pid: process.pid, port },
+    id, engine, ...(run ? { def: what as string } : {}), name: run?.name ?? top.name, cwd: folder, input: (input as string | undefined)?.trim() ?? '', created: Date.now(), state: 'running', owner: { pid: process.pid, port },
     ...(br ? { branch: br } : {}), ...(pane ? { pane } : {}), ...(unattended === true ? { unattended: true } : {}),
     steps: steps as Step[], nodes: Object.fromEntries((steps as Step[]).map(s => [s.key, { state: 'wait', attempt: 0, fails: 0 } as NodeRun])),
   };
@@ -760,17 +782,25 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // ── 런 단추 — 맨 위 엔진 폴더(사본)의 actions.json [{label, command, ask?, hint?, danger?}] 을 런 화면 단추로. 누르면 명령 노드처럼 작업 폴더의 셸로
 // (런 env + ask 로 받은 글은 EDITH_ACTION_TEXT). 끝 코드 0 에 $EDITH_REWIND 가 있으면 되돌린다 — 도는 중이면 도는 노드를 멈추고.
 // 목록을 작업 문서가 아니라 엔진 폴더에 두는 것은, 런의 Claude 가 단추를 지어내 사람이 누르게 하지 못하게.
-// on: "results" — 단추가 아니라 결과 화면에서 체크가 바뀔 때 도는 명령(resultHook). on: "picks" — 새 런 칸의 고르기 목록(runPicks).
+// on: "results" — 옛 결과 화면의 체크 훅(배포 화면이 품은 뒤로 부르지 않는다 — 옛 엔진의 actions.json 을 읽어도 단추로 보이지 않게만). on: "picks" — 새 런 칸의 고르기 목록(runPicks).
 // when: "done" — 런이 끝난 뒤에만 보이고 눌린다
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+// flow — 배포 화면이 단추 설명 앞에 붙이는 브랜치 흐름(「{branch} → origin/{branch}」 — {branch} 원본 · {issue} 이슈 브랜치 · {tail} 원본 끝 토막을 그 줄 브랜치로 채운다)
+// ready — 배포 화면이 이 단추를 켜는 조건: 그 브랜치(「merge/{tail}」 — {branch} · {tail})에 원본 최신과 단추 칸(reach 가 브랜치면)이 다 들어 있을 때(src/deploy.ts markWait)
+// until — 거꾸로, 그 브랜치에 다 들어 있으면 막는다(이미 한 준비 단추)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
 // reach — 결과 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · clean(정리) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
 // copy — 명령의 출력을 사람이 복사해 직접 돌릴 글로 돌려준다(결과 화면 확인 창 · 런 화면 단추 기록에 복사 단추). 이 명령은 아무것도 바꾸지 않아야 한다 — 바꾸는 일은 사람이 그 글로
+// 런 설정 사본(run/)에 단추가 있으면 그것, 없으면 엔진 사본의 것
 function allActions(r: Run): RunAction[] {
+  const own = join(dirOf(r.id), 'run', 'actions.json');
+  return parseActions(() => readFileSync(existsSync(own) ? own : join(dirOf(r.id), 'engine', r.engine, 'actions.json'), 'utf8'));
+}
+function parseActions(text: () => string): RunAction[] {
   try {
-    const a = JSON.parse(readFileSync(join(dirOf(r.id), 'engine', r.engine, 'actions.json'), 'utf8')) as RunAction[];
+    const a = JSON.parse(text()) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
       && (x.on === undefined || x.on === 'results' || x.on === 'picks' || x.on === 'request') && (x.when === undefined || x.when === 'done')
-      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean')).slice(0, 16) : [];
+      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean') && (x.flow === undefined || typeof x.flow === 'string') && [x.ready, x.until].every(t => t === undefined || (typeof t === 'string' && /^[\w{][\w{}./-]{0,120}$/.test(t)))).slice(0, 16) : [];
   } catch { return []; }
 }
 export const readActions = (r: Run) => allActions(r).filter(x => !x.on).slice(0, 12);
@@ -797,16 +827,29 @@ export async function runAction(id: number, n: unknown, text: unknown): Promise<
 export function pickAction(engine: string, on: 'picks' | 'request' = 'picks'): RunAction | undefined {
   if (!NAME.test(engine)) return undefined;
   try {
-    const a = JSON.parse(readFileSync(join(WORKSHOP, engine, 'actions.json'), 'utf8')) as RunAction[];
+    const a = JSON.parse(readFileSync(join(actionsHome(engine), 'actions.json'), 'utf8')) as RunAction[];
     return Array.isArray(a) ? a.find(x => x?.on === on && typeof x.label === 'string' && typeof x.command === 'string') : undefined;
   } catch { return undefined; }
+}
+// 공방 폴더의 단추 자리 — 그 폴더에 actions.json 이 있으면 거기, 런(kind run)인데 없으면 그 런이 돌릴 엔진 폴더(명령은 그 폴더에서 돈다)
+function actionsHome(id: string) {
+  const own = join(WORKSHOP, id);
+  if (existsSync(join(own, 'actions.json'))) return own;
+  try { const e = readEngine(id).engine; if (e?.kind === 'run' && e.engine && NAME.test(e.engine)) return join(WORKSHOP, e.engine); } catch { /* 없음 */ }
+  return own;
+}
+// 공방 화면 — 그 폴더(런이면 단추를 빌려 쓰는 엔진까지)의 단추 목록과 어느 폴더 것인지
+export function actionsOf(id: string) {
+  if (!NAME.test(id)) return { from: id, list: [] as RunAction[] };
+  const home = actionsHome(id);
+  return { from: home.slice(WORKSHOP.length + 1), list: parseActions(() => readFileSync(join(home, 'actions.json'), 'utf8')) };
 }
 // 받은 요청에 답했을 때(열어서 시작 · 거절) — 공방 엔진 actions.json 의 on: "request" 명령을 그 엔진 폴더에서(요청 쪽에 알리는 일 — 대화방 글 등).
 // 요청 파일 · 답은 환경 변수로 넘긴다(EDITH_REQUEST_FILE · EDITH_REQUEST_STATE started|rejected · EDITH_REQUEST_RUN · EDITH_REQUEST_REASON). 기다리지 않고, 출력은 log 에
 export function requestHook(engine: string, env: Record<string, string>, log: string) {
   const a = pickAction(engine, 'request');
   if (!a) return false;
-  const dir = join(WORKSHOP, engine);
+  const dir = actionsHome(engine);
   shell(a.command, dir, { EDITH_ENGINE: dir, EDITH_WORKSHOP: WORKSHOP, ...env }, createWriteStream(log, { mode: 0o600 }));
   return true;
 }
@@ -828,7 +871,7 @@ export function pickRequest(engine: unknown, input: unknown, p: unknown): Record
 export function runPicks(engine: unknown): Promise<Pick[]> {
   const a = typeof engine === 'string' ? pickAction(engine) : undefined;
   if (!a) return Promise.reject(new Error('이 엔진에는 고르기 목록이 없다'));
-  const dir = join(WORKSHOP, engine as string), [cmd, args] = process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', a.command]] : [process.env.SHELL || '/bin/sh', ['-c', a.command]];
+  const dir = actionsHome(engine as string), [cmd, args] = process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', a.command]] : [process.env.SHELL || '/bin/sh', ['-c', a.command]];
   return new Promise((ok, no) => {
     const child = spawn(cmd, args, { cwd: dir, env: { ...process.env, EDITH_ENGINE: dir, EDITH_WORKSHOP: WORKSHOP }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
     let out = '', err = '';
@@ -871,17 +914,8 @@ function launch(r: Run, a: RunAction, t: string, env: Record<string, string>, do
       put();
     });
 }
-// 결과 반영 — 결과 화면에서 체크가 바뀌면 그 런 엔진의 on: "results" 명령을 체크 내용과 함께. 런마다 하나씩 차례로(같은 문서를 동시에 고치지 않게)
-const hooks = new Map<number, Promise<void>>();
-export function resultHook(id: number, x: { tag: string; title: string; group: string; text: string; done: boolean }) {
-  const r = loadRun(id), a = r && allActions(r).find(y => y.on === 'results');
-  if (!r || !a) return false;
-  const env = { EDITH_RESULT_TAG: x.tag, EDITH_RESULT_TITLE: x.title, EDITH_RESULT_GROUP: x.group, EDITH_RESULT_TEXT: x.text, EDITH_RESULT_DONE: x.done ? '1' : '0' };
-  hooks.set(id, (hooks.get(id) ?? Promise.resolve()).then(() => new Promise<void>(ok => launch(r, a, `${x.done ? '✓' : '☐'} ${x.title} · ${x.text}`, env, () => ok()))));
-  return true;
-}
 // 최근 단추 기록 5개 — 화면에 출력 끝과 함께
-function acted(id: number) {
+export function acted(id: number) {   // 최근 단추 기록 5개(최근 것부터) — code null 이면 도는 중. 런 화면 · 배포 화면이 쓴다
   const d = join(dirOf(id), 'actions');
   let files: string[] = [];
   try { files = readdirSync(d).filter(f => /^\d+\.json$/.test(f)).sort().slice(-5).reverse(); } catch { /* 아직 없다 */ }

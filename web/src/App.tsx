@@ -1,4 +1,4 @@
-// EDITH 화면 — 위에서 「herdr」·「스킬」·「공방」·「런」·「결과」·「설정」 을 고른다. 주소는 #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/results, #/settings. 오른쪽 위 종은 알림함.
+// EDITH 화면 — 위에서 「오늘」·「herdr」·「스킬」·「공방」·「런」·「배포」·「설정」 을 고른다. 주소는 #/today, #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/deploy(옛 #/results — 배포가 결과를 품었다), #/settings. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -11,7 +11,8 @@ import { SettingsPage } from './Settings.tsx';
 const WorkshopPage = lazy(() => import('./Workshop.tsx').then(m => ({ default: m.WorkshopPage })));
 const RunsPage = lazy(() => import('./Runs.tsx').then(m => ({ default: m.RunsPage })));
 import { copyOnSelect, toast } from './copy.ts';
-import { ResultsPage } from './Results.tsx';
+import { DeployPage } from './Deploy.tsx';
+import { TodayPage } from './Today.tsx';
 import { Icon, TERMINAL } from './ui.tsx';
 import { APP_NAME, applyTheme, readTheme } from './theme.ts';
 
@@ -23,12 +24,14 @@ const GRID = <><rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" h
 // 공방 탭 아이콘(lucide workflow)
 const FLOW = <><rect width="8" height="8" x="3" y="3" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect width="8" height="8" x="13" y="13" rx="2" /></>;
 const PLAY = <><circle cx="12" cy="12" r="10" /><path d="m10 8 6 4-6 4z" /></>;   // 런 탭(lucide circle-play)
-const CHECKS = <><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></>;   // 결과 탭(lucide list-checks)
+const TODAY = <><path d="M8 2v4" /><path d="M16 2v4" /><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M3 10h18" /><path d="m9 16 2 2 4-4" /></>;   // 오늘 탭(lucide calendar-check)
+const ROCKET = <><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" /><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" /><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" /><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" /></>;   // 배포 탭(lucide rocket)
 
 const route = () => {
   const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/), ws = h.match(/^#\/workshop(?:\/(.+))?/), runs = h.match(/^#\/runs(?:\/(.+))?/);
   if (h.startsWith('#/settings')) return { view: 'settings' as const, id: undefined };
-  if (h.startsWith('#/results')) return { view: 'results' as const, id: undefined };
+  if (h.startsWith('#/deploy') || h.startsWith('#/results')) return { view: 'deploy' as const, id: undefined };
+  if (h.startsWith('#/today')) return { view: 'today' as const, id: undefined };
   if (ws) return { view: 'workshop' as const, id: ws[1] };
   if (runs) return { view: 'runs' as const, id: runs[1] };
   return skill ? { view: 'skills' as const, id: skill[1] } : { view: 'herdr' as const, id: h.match(/^#\/herdr\/(.+)/)?.[1] };
@@ -83,12 +86,13 @@ export default function App() {
         </span>
         {/* 좁은 화면에선 탭 줄만 옆으로 밀린다(페이지는 가로로 안 밀리게) */}
         <nav className="-my-px flex max-w-full min-w-0 self-stretch overflow-x-auto [scrollbar-width:none]">
+          <a href="#/today" className={nav(r.view === 'today')}><Icon className="size-4">{TODAY}</Icon>오늘</a>
           <a href="#/herdr" className={nav(r.view === 'herdr')}><Icon className="size-4">{TERMINAL}</Icon>herdr</a>
           <a href="#/skills" className={nav(r.view === 'skills')}><Icon className="size-4">{GRID}</Icon>스킬</a>
           <a href="#/workshop" className={nav(r.view === 'workshop')}><Icon className="size-4">{FLOW}</Icon>공방</a>
           <a href="#/runs" className={`relative ${nav(r.view === 'runs')}`}><Icon className="size-4">{PLAY}</Icon>런
             {asked > 0 && <span title={`받은 요청 ${asked} — 런 시작 · 거절 전까지 보인다`} className="absolute top-3 right-1.5 min-w-3 rounded-full bg-red-500 px-0.5 text-center text-[0.5rem] leading-3 font-bold text-white tabular-nums ring-2 ring-card">{asked}</span>}</a>
-          <a href="#/results" className={nav(r.view === 'results')}><Icon className="size-4">{CHECKS}</Icon>결과</a>
+          <a href="#/deploy" className={nav(r.view === 'deploy')}><Icon className="size-4">{ROCKET}</Icon>배포</a>
           <a href="#/settings" className={nav(r.view === 'settings')}><Icon className="size-4">{GEAR}</Icon>설정</a>
         </nav>
         {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}
@@ -109,7 +113,7 @@ export default function App() {
           )}
         </span>
       </header>
-      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : r.view === 'results' ? <ResultsPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
+      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : r.view === 'deploy' ? <DeployPage /> : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
 }

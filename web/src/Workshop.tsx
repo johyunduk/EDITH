@@ -1,4 +1,5 @@
-// 공방 — 체인(노드를 이은 것)과 엔진(체인 · 엔진을 이은 것)을 그리고 고친다. 둘은 파일 꼴이 같고 kind 로 가른다(만들 때 고른다). 왼쪽 목록, 가운데 캔버스(React Flow), 오른쪽 공방 Claude pane.
+// 공방 — 체인(노드를 이은 것)과 엔진(체인 · 엔진을 이은 것)을 그리고 고치고, 런(돌리는 단위 — 엔진 하나 + 작업 폴더 · 단추)을 정한다. 셋은 파일 꼴이 같고 kind 로 가른다(만들 때 고른다).
+// 왼쪽 목록(맨 위 런, 그 아래 체인 · 엔진 트리), 가운데 캔버스(React Flow) 또는 런 설정(RunDef), 오른쪽 공방 Claude pane.
 // engine.json 은 이 화면만 쓴다(서버는 읽은 판이 같을 때만 저장). 스킬 파일은 오른쪽 Claude 가 쓰고, 사람이 노드에서 「연결」을 눌러 붙인다.
 // 노드는 스킬(Claude 가 한다) · 명령(실행기가 돌린다) · 체인 · 엔진(그 자리에서 그것이 돈다 — 엔진에서만) 중 하나. 화살표는 보통 또는 「실패하면」(고치고 다시).
 // 주소는 #/workshop/<폴더>. 설계만 한다 — 돌리는 것(런)은 머리줄 「런」.
@@ -14,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { AgentPane } from './AgentPane.tsx';
 import { putDraft } from './Prompt.tsx';
 import { FolderInput } from './Side.tsx';
-import { Empty, Icon, Tag } from './ui.tsx';
+import { Bracketed, Empty, Icon, Tag } from './ui.tsx';
 import { Kind, STATUS } from './herdrUi.tsx';
 import { toast } from './copy.ts';
 import { StepFlow } from './StepFlow.tsx';
@@ -25,15 +26,18 @@ type SkillRef = { from: 'engine' | 'installed'; id: string };
 type WNode = { id: string; title: string; skill: SkillRef | null; command?: string; engine?: string; x: number; y: number };
 type WEdge = { from: string; to: string; fail?: true; max?: number };
 type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
-type Engine = { name: string; kind?: 'chain' | 'engine'; nodes: WNode[]; edges: WEdge[]; common?: SkillRef; workdir?: Workdir };
-type Read = { id: string; engine: Engine | null; errors: string[]; version: string; skills: { id: string; desc: string }[]; draft: { engine: Engine | null; errors: string[] } | null };
+// kind run — 런(돌리는 단위): 돌릴 엔진(engine) · 작업 폴더 · 입력칸 안내 · 무인 처음 값. 노드 없음
+type Engine = { name: string; kind?: 'chain' | 'engine' | 'run'; nodes: WNode[]; edges: WEdge[]; common?: SkillRef; workdir?: Workdir; engine?: string; input?: string; unattended?: boolean };
+// actions — 이 폴더(런이면 단추를 빌려 쓰는 엔진까지)의 단추 목록과 어느 폴더 것인지
+type Read = { id: string; engine: Engine | null; errors: string[]; version: string; skills: { id: string; desc: string }[]; draft: { engine: Engine | null; errors: string[] } | null;
+  picks?: string; actions?: { from: string; list: { label: string; on?: string; when?: string; danger?: boolean; copy?: boolean }[] } };
 type List = { root: string; engines: Item[]; claude: string | null };
 // uses — 노드가 부르는 체인 · 엔진(노드 순서, 적용된 engine.json 기준), draft — draft.json 이 있다
-type Item = { id: string; name: string; nodes: number; kind: 'chain' | 'engine'; broken: boolean; uses: string[]; draft: boolean };
+type Item = { id: string; name: string; nodes: number; kind: 'chain' | 'engine' | 'run'; broken: boolean; uses: string[]; draft: boolean; engine?: string };   // engine — 런이 돌리는 엔진
 type Installed = { id: string; name: string; call: string; agents: string[]; desc: string };
 
 const PLUS = <path d="M12 5v14M5 12h14" />;
-const KIND = { chain: '체인', engine: '엔진' } as const;
+const KIND = { chain: '체인', engine: '엔진', run: '런' } as const;
 const VIEWS = [['map', '흐름 지도', '단계 칸과 줄로 본다 — 줄을 누르면 하는 일 · Claude 가 받는 지시 · 앞뒤 흐름'], ['canvas', '캔버스', '노드 · 화살표를 놓고 고친다'],
   ['flat', '펼쳐 보기', '안에 든 체인 · 엔진을 노드까지 펼친 캔버스 — 런 화면과 같은 모양']] as const;
 const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />;
@@ -41,6 +45,7 @@ const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-
 const KIND_ICON = {
   engine: <><path d="m12 2 10 5-10 5L2 7z" /><path d="m2 12 10 5 10-5" /><path d="m2 17 10 5 10-5" /></>,
   chain: <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>,
+  run: <><circle cx="12" cy="12" r="10" /><path d="m10 8 6 4-6 4z" /></>,
 };
 
 export function WorkshopPage({ id, side }: { id?: string; side: boolean }) {
@@ -54,13 +59,182 @@ export function WorkshopPage({ id, side }: { id?: string; side: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <aside className={`max-h-72 shrink-0 overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
+        {list.data && <RunList engines={list.data.engines} sel={id} />}
         <EngineList list={list.data} sel={id} />
       </aside>
       <main className="flex min-h-[32rem] min-w-0 flex-1 flex-col">
-        {id ? <Editor key={id} id={id} root={list.data?.root ?? ''} engines={list.data?.engines ?? []} claude={claude} onAsk={ask} />
-          : <div className="p-6"><Empty>왼쪽에서 고르거나 새로 만든다. 체인은 노드(스킬 · 명령)를 잇고, 엔진은 체인 · 엔진(과 노드)을 잇는다.</Empty></div>}
+        {!id ? <div className="p-6"><Empty>왼쪽에서 고르거나 새로 만든다. 런은 엔진 하나를 어디서 · 어떻게 돌리나, 체인은 노드(스킬 · 명령)를 잇고, 엔진은 체인 · 엔진(과 노드)을 잇는다.</Empty></div>
+          : !list.data ? <p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>
+          : list.data.engines.find(e => e.id === id)?.kind === 'run' ? <RunDef key={id} id={id} root={list.data.root} engines={list.data.engines} claude={claude} onAsk={ask} />
+          : <Editor key={id} id={id} root={list.data.root} engines={list.data.engines} claude={claude} onAsk={ask} />}
       </main>
       <ClaudePanel id={claude} fold={fold} setFold={setFold} />
+    </div>
+  );
+}
+
+// 런 — 돌리는 단위(엔진 하나 + 작업 폴더 · 단추). 목록 맨 위에 따로 두고, 「+ 새 런」 은 이름 · 폴더 이름 · 돌릴 엔진
+function RunList({ engines, sel }: { engines: Item[]; sel?: string }) {
+  const qc = useQueryClient();
+  const runs = engines.filter(e => e.kind === 'run').sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  const targets = engines.filter(e => e.kind !== 'run' && !e.broken).sort((a, b) => +(a.kind === 'chain') - +(b.kind === 'chain') || a.name.localeCompare(b.name, 'ko'));
+  const name = (id?: string) => engines.find(e => e.id === id)?.name ?? id ?? '';
+  const [open, setOpen] = useState(false), [label, setLabel] = useState(''), [folder, setFolder] = useState(''), [target, setTarget] = useState(''), [err, setErr] = useState('');
+  const create = async () => {
+    try {
+      await post('/api/workshop', { id: folder.trim(), name: label.trim(), kind: 'run', engine: target });
+      await qc.invalidateQueries({ queryKey: ['workshop'] });
+      setOpen(false); setLabel(''); setFolder(''); setTarget(''); setErr('');
+      location.hash = `#/workshop/${folder.trim()}`;
+    } catch (e) { setErr((e as Error).message); }
+  };
+  const field = 'w-full rounded-md border bg-card px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/50';
+  return (
+    <div className="mb-2 border-b pb-2">
+      <div className="mb-1 flex items-center gap-1.5 px-2.5 pt-1">
+        <span className="text-xs font-semibold">런</span><span className="text-[0.6875rem] text-muted-foreground">돌리는 단위</span>
+        <button type="button" onClick={() => { setOpen(v => !v); setErr(''); }} aria-pressed={open}
+          className="ml-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[0.75rem] font-medium hover:bg-muted/70"><Icon className="size-3">{PLUS}</Icon>새 런</button>
+      </div>
+      {open && (
+        <form onSubmit={e => { e.preventDefault(); void create(); }} className="mb-2 space-y-1.5 rounded-lg border bg-card p-2">
+          <p className="text-xs font-semibold">새 런 — 엔진 하나를 어디서 · 어떻게 돌리나</p>
+          <label className="block text-xs text-muted-foreground">이름<input value={label} onChange={e => setLabel(e.target.value)} placeholder="개발" className={`mt-0.5 ${field}`} /></label>
+          <label className="block text-xs text-muted-foreground">폴더 이름 — 영문 소문자 · 숫자 · -
+            <input value={folder} onChange={e => setFolder(e.target.value.toLowerCase())} placeholder="dev" className={`mt-0.5 font-mono ${field}`} /></label>
+          <label className="block text-xs text-muted-foreground">돌릴 엔진
+            <select value={target} onChange={e => setTarget(e.target.value)} className={`mt-0.5 ${field}`}>
+              <option value="">고르기</option>{targets.map(e => <option key={e.id} value={e.id}>{e.name} ({KIND[e.kind]} · {e.id})</option>)}
+            </select></label>
+          {err && <p className="text-xs text-destructive">{err}</p>}
+          <Button type="submit" size="sm" className="h-7 w-full text-xs" disabled={!label.trim() || !folder.trim() || !target}>만들기</Button>
+        </form>
+      )}
+      {!runs.length ? <p className="px-2.5 py-1 text-[0.6875rem] text-muted-foreground">아직 없다 — 엔진을 고르고 런을 만든다</p>
+        : runs.map(r => (
+          <a key={r.id} href={`#/workshop/${r.id}`} aria-current={r.id === sel ? 'page' : undefined} title={`런 · ${r.id}`}
+            className={`block rounded-md border-l-2 px-2.5 py-1.5 ${r.id === sel ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`}>
+            <span className="block truncate text-[0.8125rem] font-semibold">{r.name}{r.broken && <span className="ml-1.5 text-[0.6875rem] font-normal text-destructive">형식 오류</span>}</span>
+            <span className="block truncate text-[0.6875rem] text-muted-foreground">엔진 {name(r.engine)}</span>
+          </a>
+        ))}
+    </div>
+  );
+}
+
+// 작업 폴더 한 줄 — 시작할 때 고르기 · 늘 같은 폴더 · 새 워크트리
+const home = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, '~');
+const workdirText = (w?: Workdir) => !w || w.kind === 'ask' ? '시작할 때 고르기' : w.kind === 'fixed' ? `늘 같은 폴더 ${home(w.dir)}` : `새 워크트리 — 레포 ${home(w.repo)}${w.base ? ` · 기준 ${w.base}` : ''}`;
+type RunItem = { id: number; name: string; engine: string; def?: string; state: string; created: number; tag?: string; title?: string; agenda?: string };
+const RUN_STATE: Record<string, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝' };
+
+// 런 설정 — 위는 한 줄씩 요약(엔진 · 작업 폴더 · 시작 입력 · 단추 · 받은 요청 · 무인)과 그 자리 고치기, 아래는 돌릴 엔진의 흐름 지도 · 펼쳐 보기와 지난 런.
+// 작업 폴더 · 단추가 런에 없으면 엔진 것을 쓴다(엔진에서 런으로 옮기는 동안) — 「여기서 정하기」 로 런에 옮겨 적는다
+function RunDef({ id, root, engines, claude, onAsk }: { id: string; root: string; engines: Item[]; claude: string | null; onAsk: (text: string) => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['workshop', id], queryFn: () => get<Read>(`/api/workshop/${id}`), refetchInterval: 5000 });
+  const def = q.data?.engine ?? null, target = def?.engine ?? '';
+  const tq = useQuery({ queryKey: ['workshop', target], queryFn: () => get<Read>(`/api/workshop/${target}`), enabled: !!target });
+  const runs = useQuery({ queryKey: ['runs'], queryFn: () => get<RunItem[]>('/api/runs'), refetchInterval: 10_000 });
+  const [tab, setTab] = useState<'map' | 'flat' | 'runs'>('map'), [edit, setEdit] = useState<'engine' | 'workdir' | 'input' | null>(null), [err, setErr] = useState('');
+  const [input, setInput] = useState(''), typing = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 저장 — 읽은 판이 같을 때만(서버가 막으면 다시 읽는다). 폴더 칸은 치기를 멈춘 뒤 한 번
+  const later = (patch: Partial<Engine>, wait?: number) => { if (typing.current) clearTimeout(typing.current); if (wait) typing.current = setTimeout(() => void save(patch), wait); else void save(patch); };
+  const save = async (patch: Partial<Engine>) => {
+    if (!def || !q.data) return;
+    try { await post(`/api/workshop/${id}`, { engine: { ...def, ...patch }, version: q.data.version }); setErr(''); setEdit(null); }
+    catch (e) { setErr((e as Error).message); }
+    await qc.invalidateQueries({ queryKey: ['workshop'] });
+  };
+  if (!q.data) return <p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>;
+  if (!def) return <div className="space-y-2 p-4"><p className="text-sm text-destructive">engine.json 형식 오류 — {q.data.errors.join(' · ')}</p><p className="font-mono text-xs text-muted-foreground">{root}/{id}/engine.json</p></div>;
+  const t = engines.find(e => e.id === target), tdef = tq.data?.engine ?? null, acts = q.data.actions;
+  const buttons = acts?.list.filter(a => !a.on) ?? [], hook = acts?.list.find(a => a.on === 'request');
+  const borrowed = acts && acts.from !== id;
+  const mine = (runs.data ?? []).filter(r => r.def === id || (!r.def && r.engine === target));
+  const row = 'grid grid-cols-[6.5rem_minmax(0,1fr)_auto] items-baseline gap-x-4 border-t py-2.5 first:border-t-0';
+  const link = 'text-xs text-primary hover:underline';
+  const field = 'h-8 rounded-md border bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50';
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+        <h1 className="text-base font-bold">{def.name}</h1>
+        <span className="rounded-full bg-accent px-2 py-px text-[0.6875rem] font-semibold text-accent-foreground">런</span>
+        <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={`${root}/${id}`}>{id}/</span>
+        <span className="ml-auto"><RemoveEngine id={id} what="런" /></span>
+        <a href={`#/runs?run=${id}`} className="inline-flex h-8 items-center rounded-md bg-primary px-3.5 text-xs font-bold text-primary-foreground hover:bg-primary/90">이 런 시작 ›</a>
+      </div>
+      <div className="space-y-3 p-4">
+        <Bracketed label="런 요약" className="px-5 py-1.5">
+          <div className={row}>
+            <span className="text-xs text-muted-foreground">엔진</span>
+            {edit === 'engine'
+              ? <select autoFocus value={target} onChange={e => void save({ engine: e.target.value })} className={field}>
+                  {engines.filter(e => e.kind !== 'run' && !e.broken).map(e => <option key={e.id} value={e.id}>{e.name} ({KIND[e.kind]} · {e.id})</option>)}
+                </select>
+              : <span className="text-sm"><a href={`#/workshop/${target}`} className="font-semibold hover:underline">{t?.name ?? target}</a> <span className="font-mono text-xs text-muted-foreground">{target}</span>{t && <span className="text-muted-foreground"> · 노드 {t.nodes}</span>}</span>}
+            <button type="button" className={link} onClick={() => setEdit(edit === 'engine' ? null : 'engine')}>{edit === 'engine' ? '닫기' : '바꾸기'}</button>
+          </div>
+          <div className={row}>
+            <span className="text-xs text-muted-foreground">작업 폴더</span>
+            {edit === 'workdir'
+              ? <span className="text-xs text-muted-foreground"><WorkdirSetting w={def.workdir} onChange={(w, wait) => later({ workdir: w }, wait)} /></span>
+              : def.workdir ? <span className="text-sm">{workdirText(def.workdir)}</span>
+              : <span className="text-sm">{workdirText(tdef?.workdir)} <span className="text-xs text-muted-foreground">— 엔진 「{t?.name ?? target}」 설정</span></span>}
+            {def.workdir || edit === 'workdir' ? <button type="button" className={link} onClick={() => setEdit(edit === 'workdir' ? null : 'workdir')}>{edit === 'workdir' ? '닫기' : '고치기'}</button>
+              : <button type="button" className={link} title="엔진의 작업 폴더를 이 런에 옮겨 적는다 — 그 뒤로는 런 것을 쓴다" onClick={() => void save({ workdir: tdef?.workdir ?? { kind: 'ask' } })}>여기서 정하기</button>}
+          </div>
+          <div className={row}>
+            <span className="text-xs text-muted-foreground">시작 입력</span>
+            {edit === 'input'
+              ? <form className="flex gap-1.5" onSubmit={e => { e.preventDefault(); void save({ input: input.trim() || undefined }); }}>
+                  <input autoFocus value={input} onChange={e => setInput(e.target.value)} placeholder="입력칸 안내 — 예: 기획서 · 이슈 주소" className={`${field} min-w-0 flex-1`} />
+                  <Button type="submit" size="sm" className="h-8 text-xs">저장</Button>
+                </form>
+              : <span className="text-sm">{def.input ?? <span className="text-muted-foreground">안내 없음</span>}{q.data.picks && <span className="text-muted-foreground"> — 「{q.data.picks}」 목록</span>}</span>}
+            <button type="button" className={link} onClick={() => { setInput(def.input ?? ''); setEdit(edit === 'input' ? null : 'input'); }}>{edit === 'input' ? '닫기' : '고치기'}</button>
+          </div>
+          <div className={row}>
+            <span className="text-xs text-muted-foreground">런 단추</span>
+            <span className="flex flex-wrap gap-1.5">
+              {buttons.length ? buttons.map(b => <span key={b.label} className={`rounded-md px-2 py-px text-xs ${b.danger ? 'bg-destructive/10 text-destructive' : 'bg-muted'}`} title={b.when === 'done' ? '런이 끝난 뒤' : '늘'}>{b.label}</span>)
+                : <span className="text-sm text-muted-foreground">없음</span>}
+            </span>
+            <span className="font-mono text-[0.6875rem] text-muted-foreground" title={borrowed ? '런 폴더에 단추 파일이 없어 엔진 것을 쓴다' : '이 런의 단추 파일'}>{acts?.from ?? id}/actions.json</span>
+          </div>
+          <div className={row}>
+            <span className="text-xs text-muted-foreground">받은 요청</span>
+            <span className="text-sm">{hook ? <>시작 · 거절할 때 「{hook.label}」</> : <span className="text-muted-foreground">없음</span>}</span>
+            <span />
+          </div>
+          <div className={row}>
+            <span className="text-xs text-muted-foreground">무인</span>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!def.unattended} onChange={e => void save({ unattended: e.target.checked || undefined })} />새 런 칸에서 처음부터 켜기</label>
+            <span />
+          </div>
+        </Bracketed>
+        {err && <p className="text-xs text-destructive">{err}</p>}
+        <div role="tablist" aria-label="보기" className="flex flex-wrap gap-1">
+          {([['map', '흐름 지도'], ['flat', '펼쳐 보기'], ['runs', `지난 런 ${mine.length}`]] as const).map(([v, label]) => (
+            <button key={v} type="button" role="tab" aria-selected={tab === v} onClick={() => setTab(v)}
+              className={`rounded-md border px-3 py-1 text-xs ${tab === v ? 'border-primary bg-primary font-semibold text-primary-foreground' : 'bg-card hover:bg-muted'}`}>{label}</button>
+          ))}
+          {target && <a href={`#/workshop/${target}`} className="ml-auto self-center text-xs text-primary hover:underline">흐름은 엔진 「{t?.name ?? target}」 것 — 엔진 열기 ›</a>}
+        </div>
+      </div>
+      {tab === 'map' && target && <div className="flex min-h-[28rem] flex-1 flex-col"><EngineMap id={target} root={root} claude={claude} onAsk={onAsk} /></div>}
+      {tab === 'flat' && target && <div className="flex min-h-[28rem] flex-1 flex-col"><Expanded id={target} /></div>}
+      {tab === 'runs' && (
+        <ul className="mx-4 mb-4 divide-y rounded-lg border bg-card">
+          {mine.length ? mine.map(r => (
+            <li key={r.id}><a href={`#/runs/${r.id}`} className="flex items-baseline gap-2 px-3 py-2 hover:bg-muted/60">
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">#{r.id}</span>
+              <span className="min-w-0 flex-1 truncate text-sm">{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.agenda && <span className="mr-1 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{RUN_STATE[r.state] ?? r.state}</span>
+            </a></li>
+          )) : <li className="px-3 py-2 text-sm text-muted-foreground">아직 없다</li>}
+        </ul>
+      )}
     </div>
   );
 }
@@ -101,7 +275,7 @@ function EngineList({ list, sel }: { list?: List; sel?: string }) {
       )}
       {!list ? <p className="p-2.5 text-xs text-muted-foreground">불러오는 중…</p>
         : !list.engines.length ? <p className="p-2.5 text-xs text-muted-foreground">아직 없다 — 노드를 이은 체인부터 만든다</p>
-        : <EngineTree engines={list.engines} sel={sel} />}
+        : <EngineTree engines={list.engines.filter(e => e.kind !== 'run')} sel={sel} />}
       {list && <p className="mt-2 px-2.5 font-mono text-[0.625rem] break-all text-muted-foreground/70" title="공방 폴더">{list.root}</p>}
     </>
   );
@@ -366,6 +540,12 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
           <span className="rounded-full bg-accent px-2 py-px text-[0.6875rem] font-semibold text-accent-foreground" title={eng.kind === 'engine' ? '체인 · 엔진과 노드를 잇는다' : '스킬 · 명령 노드만 잇는다 — 체인을 이으려면 엔진을 만든다'}>{what}</span>
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={`${root}/${id}`}>{id}/</span>
           <span className="ml-auto text-xs text-muted-foreground">노드 {eng.nodes.length} · 스킬 {skills.length}</span>
+          {/* 이 엔진을 돌리는 런 — 돌리는 단위는 런이고, 엔진 바로 돌리기는 시험(런 화면 「엔진 · 체인 바로 시험」) */}
+          {engines.filter(e => e.kind === 'run' && e.engine === id).map(r => (
+            <a key={r.id} href={`#/workshop/${r.id}`} title="이 엔진을 돌리는 런" className="rounded-full bg-accent px-2 py-px text-[0.6875rem] font-semibold text-accent-foreground hover:underline">런 {r.name} ›</a>
+          ))}
+          <a href={`#/runs?test=${id}`} title={`런 없이 이 ${what}만 시험으로 돌린다 — 작업 폴더 · 단추는 이 ${what} 설정`}
+            className="inline-flex h-7 items-center rounded-md border px-2.5 text-xs font-medium text-primary hover:bg-muted">시험으로 돌리기</a>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={askEngine} disabled={!claude}
             title={claude ? `이 ${what}을 만들거나 고쳐 달라는 글을 오른쪽 Claude 입력칸에 넣는다 — Claude 는 초안(draft.json)을 쓰고, 여기서 미리 보고 적용한다` : '오른쪽에서 공방 Claude 를 먼저 띄운다'}>Claude 에게 맡기기</Button>
           {eng.kind === 'engine' && (

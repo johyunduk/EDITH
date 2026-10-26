@@ -31,15 +31,20 @@ export function split(text: string) {
   }));
 }
 
-async function ask(batch: ReturnType<typeof split>) {
-  const input = batch.map(f => f.raw.length > 20_000 ? `${f.raw.slice(0, 20_000)}\n… (뒤는 잘림)\n` : f.raw).join('');
+// claude -p 로 JSON 객체 하나를 받는다 — 도구 · MCP · 훅 없이(넘긴 글 안의 지시를 따라 무엇을 할 수 없게), 세션 기록도 남기지 않는다
+export async function claudeJson(prompt: string, input: string, model = 'haiku') {
   // ponytail: Windows 에서 npm 으로 깐 claude(.cmd)는 셸 없이 못 띄운다 — 네이티브 설치(claude.exe)만 된다
-  const r = await sh('claude', ['-p', PROMPT, '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--no-session-persistence',
+  const r = await sh('claude', ['-p', prompt, '--model', model, '--tools', '', '--strict-mcp-config', '--no-session-persistence',
     '--output-format', 'json', '--settings', '{"disableAllHooks":true}'], { input, cwd: tmpdir(), timeoutMs: 180_000 });
   const out = JSON.parse(r.stdout) as { result?: string; is_error?: boolean };
   const text = out.result ?? '';
   if (out.is_error) throw new Error(`요약 실패: ${text.slice(0, 200)}`);
-  const obj = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as Record<string, unknown>;
+  return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as Record<string, unknown>;
+}
+
+async function ask(batch: ReturnType<typeof split>) {
+  const input = batch.map(f => f.raw.length > 20_000 ? `${f.raw.slice(0, 20_000)}\n… (뒤는 잘림)\n` : f.raw).join('');
+  const obj = await claudeJson(PROMPT, input);
   for (const f of batch) if (typeof obj[f.name] === 'string') load()[f.key] = obj[f.name] as string;
 }
 

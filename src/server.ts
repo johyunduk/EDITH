@@ -23,14 +23,15 @@ import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } f
 import { canShoot, screenshot } from './screenshot.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
 import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, syncGuide } from './workshop.ts';
-import { act, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resultHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
+import { act, acted, actionsOf, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
 import { repoDiff, repoStatus } from './repos.ts';
 import { listOutputs, readOutput } from './outputs.ts';
 import { livePort, stream } from './live.ts';
 import { runAnalysis } from './analysis.ts';
 import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
-import { checkResult, listResults } from './results.ts';
-import { reachFetch, reachList } from './reach.ts';
+import { brief, dayAi, todoOp, todoState } from './today.ts';
+import { addItem, checkTask, deployBoard, deployDone, deployFetch, editItems, prepareMerge, promoteMany } from './deploy.ts';
+import { withAgenda } from './agenda.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -168,8 +169,8 @@ export function serve(port: number) {
       if (path === '/api/workshop' && req.method === 'GET')
         return reply(res, 200, { root: WORKSHOP, engines: listEngines(), claude: await findClaude().catch(() => null) });
       if (path === '/api/workshop' && req.method === 'POST') {
-        const b = await body(req) as { id?: unknown; name?: unknown; kind?: unknown };
-        try { return reply(res, 200, createEngine(b.id, b.name, b.kind)); } catch (e) { return fail(e); }
+        const b = await body(req) as { id?: unknown; name?: unknown; kind?: unknown; engine?: unknown };   // engine — 런이 돌릴 엔진
+        try { return reply(res, 200, createEngine(b.id, b.name, b.kind, undefined, b.engine)); } catch (e) { return fail(e); }
       }
       if (path === '/api/workshop/claude' && req.method === 'POST') return await ensureClaude().then(id => reply(res, 200, { id }), fail);
       // 초안 — 적용(읽은 판이 같을 때만) · 버리기, 지우기(휴지통으로)
@@ -196,12 +197,12 @@ export function serve(port: number) {
       const wp = path.match(/^\/api\/workshop\/([^/]+)\/picks$/);
       if (wp && req.method === 'POST') return await runPicks(wp[1]).then(v => reply(res, 200, v), fail);
       if (we && NAME.test(we[1])) {
-        if (req.method === 'GET') { try { return reply(res, 200, { ...readEngine(we[1]), picks: pickAction(we[1])?.label }); } catch { return reply(res, 404, '공방에 없다'); } }
+        if (req.method === 'GET') { try { return reply(res, 200, { ...readEngine(we[1]), picks: pickAction(we[1])?.label, actions: actionsOf(we[1]) }); } catch { return reply(res, 404, '공방에 없다'); } }
         const b = await body(req) as { engine?: unknown; version?: unknown };
         try { return reply(res, 200, saveEngine(we[1], b.engine, b.version)); } catch (e) { return fail(e); }
       }
       // 런 — 목록, 새 런(체인 · 엔진, 작업 폴더, 입력), 하나 보기, 멈춤 · 이어서 · 건너뛰기
-      if (path === '/api/runs' && req.method === 'GET') return reply(res, 200, listRuns());
+      if (path === '/api/runs' && req.method === 'GET') return reply(res, 200, withAgenda(listRuns()));   // 안건 이름(배포 목록 tag)까지 — src/agenda.ts
       // 동시 런 한도 — 넘으면 새 런은 줄을 선다
       if (path === '/api/runs/limit' && req.method === 'GET') return reply(res, 200, { max: runLimit() });
       if (path === '/api/runs/limit' && req.method === 'POST') { try { return reply(res, 200, setRunLimit((await body(req) as { max?: unknown }).max)); } catch (e) { return fail(e); } }
@@ -221,13 +222,31 @@ export function serve(port: number) {
         }, fail);
       }
       if (path === '/api/requests' && req.method === 'GET') return reply(res, 200, listRequests());
-      if (path === '/api/results' && req.method === 'GET') return reply(res, 200, listResults());
+      if (path === '/api/today' && req.method === 'GET') return reply(res, 200, await brief());
+      if (path === '/api/today/ai' && req.method === 'POST') {
+        const b = await body(req) as { force?: unknown };
+        return await dayAi(b.force === true).then(a => reply(res, 200, a), fail);
+      }
+      if (path === '/api/today/todo' && req.method === 'GET') return reply(res, 200, todoState());
+      if (path === '/api/today/todo' && req.method === 'POST') {
+        const b = await body(req) as Record<string, unknown>;
+        try { return reply(res, 200, todoOp(b)); } catch (e) { return fail(e); }
+      }
       // 끝난 런의 코드가 어느 브랜치까지 갔나(src/reach.ts) · 「새로 받기」 — 그 레포들을 origin 에서 fetch
-      if (path === '/api/reach' && req.method === 'GET') return reply(res, 200, await reachList());
-      if (path === '/api/reach/fetch' && req.method === 'POST') { await body(req); return reply(res, 200, await reachFetch()); }
-      if (path === '/api/results/check' && req.method === 'POST') {
-        // 체크를 파일에 쓰고, 그 런 엔진에 「결과 반영」 명령(actions.json on: results)이 있으면 돌린다
-        try { const x = checkResult(await body(req) as Record<string, unknown>); return reply(res, 200, { ok: true, hook: resultHook(x.run, x) }); } catch (e) { return fail(e); }
+      // 배포 목록(src/deploy.ts) — 보기(항목 + 그 브랜치의 런) · 최신화(fetch) · 배포일 · 연기 · 보관 · 메모 · 할 일 체크 · 항목 더하기 · 다음 환경에 올리기(레포마다 push) · 그 머지 준비(충돌은 Claude pane)
+      if (path === '/api/deploy' && req.method === 'GET') return reply(res, 200, await deployBoard());
+      if (path === '/api/deploy/done' && req.method === 'GET') return reply(res, 200, deployDone(url.searchParams.get('q') ?? '', url.searchParams.get('before') ?? undefined));
+      const dp = path.match(/^\/api\/deploy\/(fetch|edit|task|add|promote|prepare)$/);
+      if (dp && req.method === 'POST') {
+        const b = (await body(req) ?? {}) as Record<string, unknown>;
+        try {
+          if (dp[1] === 'fetch') return reply(res, 200, await deployFetch(b.ids));
+          if (dp[1] === 'edit') return reply(res, 200, editItems(b));
+          if (dp[1] === 'task') return reply(res, 200, checkTask(b));
+          if (dp[1] === 'add') return reply(res, 200, await addItem(b));
+          if (dp[1] === 'prepare') return reply(res, 200, await prepareMerge(b));
+          return reply(res, 200, await promoteMany(b));
+        } catch (e) { return fail(e); }
       }
       const rj = path.match(/^\/api\/requests\/([^/]+)\/reject$/);
       if (rj && REQ_ID.test(rj[1]) && req.method === 'POST') {
@@ -239,8 +258,11 @@ export function serve(port: number) {
           return reply(res, 200, { ok: true });
         } catch (e) { return fail(e); }
       }
+      // 런 단추 기록(최근 5개, code null 이면 도는 중) — 배포 화면이 단추를 누른 뒤 끝났는지만 가볍게 본다
+      const rac = path.match(/^\/api\/runs\/(\d{1,6})\/acted$/);
+      if (rac && req.method === 'GET') return reply(res, 200, acted(Number(rac[1])).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}) })));
       const ru = path.match(/^\/api\/runs\/(\d{1,6})(?:\/(stop|resume|skip|rewind|action))?$/);
-      if (ru && !ru[2] && req.method === 'GET') { const v = runView(Number(ru[1])); return v ? reply(res, 200, v) : reply(res, 404, '없는 런'); }
+      if (ru && !ru[2] && req.method === 'GET') { const v = runView(Number(ru[1])); return v ? reply(res, 200, withAgenda([v])[0]) : reply(res, 404, '없는 런'); }
       // 런의 레포 커밋 상태 — 엔진이 남긴 edith-repos.json 의 레포를 git 으로 읽는다(src/repos.ts)
       const rp = path.match(/^\/api\/runs\/(\d{1,6})\/repos$/);
       if (rp && req.method === 'GET') { const r = loadRun(Number(rp[1])); return r ? reply(res, 200, await repoStatus(join(RUNS, rp[1], 'work'), r.cwd)) : reply(res, 404, '없는 런'); }

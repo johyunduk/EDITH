@@ -122,6 +122,25 @@ test('작업 폴더 설정 · 초안(draft.json) — 자리 채우기, 적용 ·
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
 });
 
+test('런(kind run) — 돌릴 엔진 하나 · 노드 없음, 만들 때 엔진을 확인하고, 런이 돌리는 엔진은 지우지 않는다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'edith-run-')), trash = join(root, '..', `${root.split('/').pop()}-trash`);
+  try {
+    assert.deepEqual(check({ name: '개발', kind: 'run', engine: 'dev', nodes: [], edges: [], input: ' 기획서 주소 ', unattended: true, workdir: { kind: 'fixed', dir: '~/w' } }),
+      { name: '개발', kind: 'run', engine: 'dev', nodes: [], edges: [], workdir: { kind: 'fixed', dir: '~/w' }, input: '기획서 주소', unattended: true });
+    assert.ok((check({ name: 'r', kind: 'run', nodes: [] }) as string[]).some(e => e.includes('engine')));
+    assert.ok((check({ name: 'r', kind: 'run', engine: 'e', nodes: [node('a')] }) as string[]).some(e => e.includes('노드를 넣지 않는다')));
+    createEngine('flow', '흐름', 'engine', root);
+    assert.throws(() => createEngine('r0', '런', 'run', root, 'none'), /돌릴 엔진/);
+    const r = createEngine('run-dev', '개발', 'run', root, 'flow');
+    assert.deepEqual([r.engine?.kind, r.engine?.engine], ['run', 'flow']);
+    assert.throws(() => createEngine('r1', '런의 런', 'run', root, 'run-dev'), /런 말고/);
+    assert.deepEqual(listEngines(root).map(e => [e.id, e.kind, e.engine, e.uses]), [['flow', 'engine', undefined, []], ['run-dev', 'run', 'flow', []]]);
+    assert.throws(() => removeEngine('flow', root, trash), /런 「개발」/);
+    removeEngine('run-dev', root, trash);
+    removeEngine('flow', root, trash);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(trash, { recursive: true, force: true }); }
+});
+
 test('엔진 지우기 — 쓰는 엔진이 있으면 거절, 지우면 휴지통으로', () => {
   const root = mkdtempSync(join(tmpdir(), 'edith-rm-')), trash = join(root, '..', `${root.split('/').pop()}-trash`);
   try {

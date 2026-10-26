@@ -1,7 +1,8 @@
-// 런 — 공방의 엔진 · 체인을 한 번 돌린 것. 왼쪽 「새 런」과 런 목록, 가운데 타임라인(카드 덱 — RunTimeline.tsx, 「캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
+// 런 #번호 — 공방의 런(또는 시험으로 엔진 · 체인)을 한 번 돌린 것. 왼쪽 「새 런」과 런 목록, 가운데 타임라인(카드 덱 — RunTimeline.tsx, 「캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
 // 주소는 #/runs/<번호>. 돌리는 것은 서버의 실행기(src/runner.ts)이고, 화면은 run.json 을 읽어 보여 주며 멈춤 · 이어서 · 건너뛰기만 보낸다.
+// 런 이름은 「티켓 [안건] 짧은 제목」(받은 요청 · 배포 목록 · 엔진 요약에서)을 크게, 「#번호 엔진 이름」 은 그 위에 작게.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { get, post, useHerdr } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { AgentPane } from './AgentPane.tsx';
@@ -22,6 +23,7 @@ type Step = FlowStep & { skill?: string; command?: string; max?: number };
 type RunState = 'queued' | 'running' | 'check' | 'stopped' | 'done';
 type Run = {
   id: number; engine: string; name: string; cwd: string; input: string; created: number; state: RunState; reason?: string; pane?: string; dir: string; branch?: string; unattended?: boolean;
+  tag?: string; title?: string; agenda?: string;   // 런 이름표 — 티켓 · 짧은 제목(서버 runLabel) · 안건 이름(배포 목록 tag — src/agenda.ts)
   steps: Step[]; nodes: Record<string, { state: NodeState; attempt: number; fails: number; summary?: string; line?: string; reason?: string; wake?: number }>;
   detail: Record<string, { prompt?: string; output?: string; claude?: ClaudeUsed }>;
   rewinds?: { at: number; to: string; name: string; by: string; reason: string }[];
@@ -38,7 +40,7 @@ type Summary = {
   check: { title: string; note?: string; items: string[] }[];
 };
 type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
-type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number };
+type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number; tag?: string; title?: string; agenda?: string };
 type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; at: number };
 
 const RUN_LABEL: Record<RunState, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝' };
@@ -63,7 +65,7 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   const n = id && /^\d+$/.test(id) ? Number(id) : undefined, [req, setReq] = useState<Req | null>(null);
   const run = useQuery({
     queryKey: ['run', n], queryFn: () => get<Run>(`/api/runs/${n}`), enabled: n !== undefined,
-    refetchInterval: q => q.state.data?.state === 'running' ? 1500 : 5000,
+    refetchInterval: q => q.state.data?.state === 'running' || q.state.data?.acted.some(a => a.code === null) ? 1500 : 5000,   // 단추 명령이 도는 동안도 자주
   });
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -76,15 +78,15 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
             <a key={r.id} href={`#/runs/${r.id}`} title={r.reason}
               className={`flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 ${r.id === n ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`}>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[0.8125rem] font-medium">#{r.id} {r.name}</span>
-                <span className="block truncate text-[0.6875rem] text-muted-foreground tabular-nums">{when(r.created)} · {r.done}/{r.total}</span>
+                <span className="block truncate text-[0.6875rem] text-muted-foreground tabular-nums">#{r.id} {r.name} · {when(r.created)} · {r.done}/{r.total}</span>
+                <span className="line-clamp-2 text-[0.8125rem] font-medium">{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.agenda && <span className="mr-1 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</span>
               </span>
               <span className={`shrink-0 rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>
             </a>
           ))}
       </aside>
       <main className="flex min-h-[32rem] min-w-0 flex-1 flex-col overflow-y-auto">
-        {n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 엔진이나 체인을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
+        {n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
           : run.error && !run.data ? <div className="p-6"><Empty>런을 읽지 못했다 — {String(run.error)}</Empty></div>
           : !run.data ? <div className="p-6"><Empty>불러오는 중…</Empty></div>
           : <RunDetail r={run.data} />}
@@ -148,13 +150,34 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
 }
 
 type Pick = { label: string; note?: string; input: string; title?: string; tag?: string };
-// 새 런 — 엔진 · 체인, 작업 폴더(Claude 가 일할 곳, 이 브라우저에 기억), 입력. 받은 요청을 열면 그 값으로 채운다.
+// 새 런 — 공방의 런을 카드로 고르고(고른 카드에 작업 폴더 · 입력 · 무인), 엔진 · 체인 바로 시험은 아래 접힌 칸. 받은 요청을 열면 그 값으로 채운다.
+// 주소 #/runs?run=<런> · ?test=<엔진> 으로 오면(공방 「이 런 시작」 · 「시험으로 돌리기」) 그것을 고른 채로 연다.
 function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   const qc = useQueryClient();
-  const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { id: string; name: string; nodes: number; kind: 'chain' | 'engine'; broken: boolean }[] }>('/api/workshop') });
-  const [open, setOpen] = useState(false), [engine, setEngine] = useState(''), [input, setInput] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [branch, setBranch] = useState(''), [unattended, setUnattended] = useState(false);
+  const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { id: string; name: string; nodes: number; kind: 'chain' | 'engine' | 'run'; broken: boolean; engine?: string }[] }>('/api/workshop') });
+  const [open, setOpen] = useState(false), [test, setTest] = useState(false), [engine, setEngine] = useState(''), [input, setInput] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [branch, setBranch] = useState(''), [unattended, setUnattended] = useState(false);
   // 고른 것의 작업 폴더 설정 — 늘 같은 폴더 · 새 워크트리면 폴더를 묻지 않는다
-  const eq = useQuery({ queryKey: ['workshop', engine], queryFn: () => get<{ engine: { workdir?: Workdir } | null; picks?: string }>(`/api/workshop/${engine}`), enabled: !!engine });
+  type Def = { engine: { workdir?: Workdir; kind?: string; engine?: string; input?: string; unattended?: boolean } | null; picks?: string };
+  const eq = useQuery({ queryKey: ['workshop', engine], queryFn: () => get<Def>(`/api/workshop/${engine}`), enabled: !!engine });
+  // 런이면 작업 폴더가 없을 때 그 엔진 것(엔진에서 런으로 옮기는 동안)
+  const tgt = eq.data?.engine?.kind === 'run' ? eq.data.engine.engine : undefined;
+  const tq = useQuery({ queryKey: ['workshop', tgt], queryFn: () => get<Def>(`/api/workshop/${tgt}`), enabled: !!tgt });
+  const all = engines.data?.engines ?? [], runs = all.filter(e => e.kind === 'run' && !e.broken).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  const isRun = runs.some(r => r.id === engine), nameOf = (id?: string) => all.find(e => e.id === id)?.name ?? id ?? '';
+  // 공방에서 온 주소 — 한 번 읽고 주소에서 뗀다
+  useEffect(() => {
+    const read = () => { const m = location.hash.match(/[?&](run|test)=([a-z0-9-]+)/); if (!m) return; setOpen(true); setEngine(m[2]); setTest(m[1] === 'test'); history.replaceState(null, '', '#/runs'); };
+    read(); addEventListener('hashchange', read); return () => removeEventListener('hashchange', read);
+  }, []);
+  // 받은 요청이 엔진을 가리키고 그 엔진을 돌리는 런이 하나뿐이면 그 런으로
+  useEffect(() => {
+    if (!req || isRun) return;
+    const wrap = runs.filter(r => r.engine === engine);
+    if (wrap.length === 1) setEngine(wrap[0].id);
+  }, [req, engine, isRun, runs]);
+  // 무인 처음 값 — 런 설정대로(요청에서 연 것은 요청 값)
+  const unattendedDefault = eq.data?.engine?.unattended;
+  useEffect(() => { if (!req) setUnattended(!!unattendedDefault); }, [engine, unattendedDefault, req]);
   // 엔진이 주는 고르기 목록(actions.json on: "picks" — 예: 일감 목록) — 누를 때만 명령이 돈다
   // 고른 것(picked)은 입력을 고치지 않은 채 시작하면 그 제목 · 꼬리표를 런에 남긴다
   const [picks, setPicks] = useState<Pick[] | null>(null), [picking, setPicking] = useState(false), [picked, setPicked] = useState<Pick | null>(null);
@@ -164,7 +187,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
     try { setPicks(await post<Pick[]>(`/api/workshop/${engine}/picks`, {})); } catch (e) { setErr((e as Error).message); }
     setPicking(false);
   };
-  const wd: Workdir = eq.data?.engine?.workdir ?? { kind: 'ask' };
+  const wd: Workdir = eq.data?.engine?.workdir ?? tq.data?.engine?.workdir ?? { kind: 'ask' };
   const home = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, '~');
   const [cwd, setCwd] = useState(() => { try { return localStorage.getItem('edith.runs.cwd') ?? ''; } catch { return ''; } });
   useEffect(() => {
@@ -204,23 +227,8 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   // 첨부 경로는 입력 끝에(빈칸 든 경로는 따옴표)
   const addPaths = (ps: string[]) => setInput(v => [v.trimEnd(), ...ps.map(x => x.includes(' ') ? `"${x}"` : x)].filter(Boolean).join(' '));
   const field = 'w-full rounded-md border bg-card px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/50';
-  return (
+  const fields = (
     <>
-      <button onClick={() => setOpen(v => !v)} className="mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] font-medium hover:bg-muted/70">
-        <Icon className="size-3.5">{PLAY}</Icon>새 런
-      </button>
-      {open && (
-        <form onSubmit={e => { e.preventDefault(); void go(); }} className="mb-2 space-y-1.5 rounded-lg border bg-card p-2">
-          {req && <p className="flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400"><span className="min-w-0 flex-1 truncate">요청 {req.from ?? req.id} 에서 — 시작하면 요청에 런 번호로 답한다</span>
-            <button type="button" className="shrink-0 underline-offset-2 hover:underline" onClick={done}>떼기</button></p>}
-          <label className="block text-xs text-muted-foreground">엔진 · 체인
-            <select value={engine} onChange={e => setEngine(e.target.value)} className={`mt-0.5 ${field}`}>
-              <option value="">고르기</option>
-              {/* 엔진을 위에 — 보통 돌리는 것은 엔진이고, 체인은 하나만 시험할 때 */}
-              {engines.data?.engines.filter(e => !e.broken).sort((a, b) => Number(b.kind === 'engine') - Number(a.kind === 'engine'))
-                .map(e => <option key={e.id} value={e.id}>{e.name} ({KIND[e.kind]} · {e.id})</option>)}
-            </select>
-          </label>
           {wd.kind === 'fixed' && <p className="text-xs break-all text-muted-foreground">작업 폴더 <span className="font-mono text-foreground">{home(wd.dir)}</span> — 공방 설정</p>}
           {wd.kind === 'worktree' && (
             <div className="space-y-1 text-xs text-muted-foreground">
@@ -244,7 +252,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
                 {picks.map((p, i) => <option key={i} value={i}>{p.label}{p.note ? ` · ${p.note}` : ''}</option>)}
               </select>
             : <Button type="button" size="sm" variant="outline" className="h-7 w-full text-xs" disabled={picking} onClick={() => void loadPicks()}>{picking ? '불러오는 중…' : eq.data.picks}</Button>)}
-          <label className="block text-xs text-muted-foreground">입력 — 모든 노드에 같이 간다(예: 기획서 링크)
+          <label className="block text-xs text-muted-foreground">입력 — {eq.data?.engine?.input ?? '모든 노드에 같이 간다(예: 기획서 링크)'}
             <textarea value={input} onChange={e => setInput(e.target.value)} rows={3} className={`mt-0.5 resize-y ${field}`}
               onPaste={e => { const f = [...e.clipboardData.files]; if (!f.length) return; e.preventDefault(); upload(f).then(addPaths, (x: Error) => setErr(`올리지 못했다 — ${x.message}`)); }} /></label>
           <div className="flex items-center gap-1.5"><Attach onPaths={addPaths} /><span className="text-[0.6875rem] text-muted-foreground">파일을 올리면 그 경로가 입력 끝에 붙는다(붙여넣기도)</span></div>
@@ -256,7 +264,42 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
           {err && <p className="text-xs break-words text-destructive">{err}</p>}
           <Button type="submit" size="sm" className="h-7 w-full text-xs" disabled={busy || !engine || (wd.kind === 'ask' && !cwd.trim()) || (wd.kind === 'worktree' && !branch.trim())}>{busy ? '시작하는 중…' : '런 시작'}</Button>
           <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{wd.kind === 'worktree' ? '레포에서 그 브랜치로 워크트리와 워크스페이스를 만들고' : 'herdr 에 「▶ 이름 #번호」 워크스페이스를 만들고 작업 폴더에서'} Claude 를 띄워 노드를 하나씩 보낸다. 시작할 때의 사본으로 돈다(공방에서 고쳐도 이 런은 그대로).</p>
-        </form>
+    </>
+  );
+  return (
+    <>
+      <button onClick={() => setOpen(v => !v)} className="mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] font-medium hover:bg-muted/70">
+        <Icon className="size-3.5">{PLAY}</Icon>새 런
+      </button>
+      {open && (
+        <form onSubmit={e => { e.preventDefault(); void go(); }} className="mb-2 space-y-1.5 rounded-lg border bg-card p-2">
+          {req && <p className="flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400"><span className="min-w-0 flex-1 truncate">요청 {req.from ?? req.id} 에서 — 시작하면 요청에 런 번호로 답한다</span>
+            <button type="button" className="shrink-0 underline-offset-2 hover:underline" onClick={done}>떼기</button></p>}
+          {runs.map(r => r.id === engine
+            ? <div key={r.id} className="space-y-1.5 rounded-lg border-2 border-primary bg-card p-2">
+                <button type="button" onClick={() => setEngine('')} className="flex w-full items-baseline gap-1.5 text-left" aria-expanded="true">
+                  <span className="text-sm font-semibold">{r.name}</span><span className="ml-auto truncate text-[0.6875rem] text-muted-foreground">엔진 {nameOf(r.engine)}</span>
+                </button>
+                {fields}
+              </div>
+            : <button key={r.id} type="button" onClick={() => { setEngine(r.id); setTest(false); }} aria-expanded="false"
+                className="flex w-full items-baseline gap-1.5 rounded-lg border bg-card px-2.5 py-2 text-left hover:border-primary/50">
+                <span className="text-sm font-semibold">{r.name}</span><span className="ml-auto truncate text-[0.6875rem] text-muted-foreground">엔진 {nameOf(r.engine)}</span>
+              </button>)}
+          {engines.data && !runs.length && <p className="px-1 text-xs text-muted-foreground">공방에 런이 없다 — 공방 「+ 새 런」 에서 엔진을 골라 만든다</p>}
+          {/* 엔진 · 체인 바로 시험 — 런 없이 그 엔진 설정으로(체인 하나만 돌려 볼 때) */}
+          <details open={test} onToggle={e => setTest(e.currentTarget.open)} className="rounded-lg border border-dashed bg-card/60 p-2">
+            <summary className="cursor-pointer text-xs text-muted-foreground">엔진 · 체인 바로 시험</summary>
+            <div className="mt-1.5 space-y-1.5">
+              <select value={isRun ? '' : engine} onChange={e => setEngine(e.target.value)} aria-label="시험으로 돌릴 엔진 · 체인" className={field}>
+                <option value="">고르기</option>
+                {all.filter(e => e.kind !== 'run' && !e.broken).sort((a, b) => Number(b.kind === 'engine') - Number(a.kind === 'engine'))
+                  .map(e => <option key={e.id} value={e.id}>{e.name} ({KIND[e.kind as 'chain' | 'engine']} · {e.id})</option>)}
+              </select>
+              {engine && !isRun && fields}
+            </div>
+          </details>
+</form>
       )}
     </>
   );
@@ -269,6 +312,7 @@ function RunDetail({ r }: { r: Run }) {
   const qc = useQueryClient();
   const [sel, setSel] = useState<string | null>(null), [busy, setBusy] = useState(false), [armed, setArmed] = useState(''), [view, setView] = useState<View>('timeline'), [watch, setWatch] = useState(false);
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(''), 3000); return () => clearTimeout(t); }, [armed]);
+  useActedToast(r);
   // 요약이 있는 끝난 런은 「요약」 부터 — 런을 바꾸거나 런이 막 끝났을 때
   const hasSummary = !!r.summary;
   useEffect(() => { setView(hasSummary ? 'summary' : 'timeline'); }, [r.id, hasSummary]);
@@ -284,7 +328,8 @@ function RunDetail({ r }: { r: Run }) {
   return (
     <div className="space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <h1 className="text-lg font-bold">#{r.id} {r.name}</h1>
+        <div className="min-w-0"><div className="text-xs text-muted-foreground tabular-nums">#{r.id} {r.name}</div>
+          <h1 className="text-lg font-bold">{r.tag && <span className="mr-2 font-mono text-base text-primary">{r.tag}</span>}{r.agenda && <span className="mr-2 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</h1></div>
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>
         {r.unattended && <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground" title="확인 필요를 사람에게 넘기지 않고 다시 돌리거나 건너뛴다">무인</span>}
         <span className="text-sm text-muted-foreground tabular-nums">{done}/{live.length}</span>
@@ -368,10 +413,11 @@ function RunDetail({ r }: { r: Run }) {
 function SummaryView({ r, s, toTimeline }: { r: Run; s: Summary; toTimeline: () => void }) {
   const qc = useQueryClient(), [busy, setBusy] = useState(false), outs = useOutputs(r.id).data ?? [];
   const now = s.next.findIndex(x => !x.done), all = outs.map((o, i): [OutputItem, number] => [o, i]), key = all.filter(([o]) => s.outputs.includes(o.label));
+  const running = runningOf(r), lastOf = (label: string) => r.acted.find(a => a.label === label);   // acted 는 최근 것부터
   const press = async (label: string) => {
     const n = r.actions.findIndex(a => a.label === label);
     setBusy(true);
-    try { await post(`/api/runs/${r.id}/action`, { n, text: '' }); await qc.invalidateQueries({ queryKey: ['run', r.id] }); }
+    try { await pressAction(qc, r.id, n, ''); }
     catch (e) { toast(`하지 못했다 — ${(e as Error).message}`, 5000); }
     setBusy(false);
   };
@@ -394,8 +440,10 @@ function SummaryView({ r, s, toTimeline }: { r: Run; s: Summary; toTimeline: () 
                   <span className="text-xs font-semibold text-muted-foreground">{x.done ? '✓ 끝' : on ? `${i + 1} · 지금` : `${i + 1}`}</span>
                   <strong className="text-sm">{x.label}</strong>
                   {x.note && <span className="text-xs text-muted-foreground">{x.note}</span>}
-                  {a && <Button size="sm" variant={on ? 'default' : 'outline'} className="mt-auto h-7 self-start text-xs" disabled={!on || busy || !!a.ask}
-                    title={a.ask ? '글을 받는 단추 — 아래 「런 단추」 줄에서' : a.hint} onClick={() => void press(a.label)}>{a.label}</Button>}
+                  {a && <Button size="sm" variant={on ? 'default' : 'outline'} className="mt-auto h-7 self-start text-xs" disabled={!on || busy || !!a.ask || !!running} aria-busy={running?.label === a.label || undefined}
+                    title={a.ask ? '글을 받는 단추 — 아래 「런 단추」 줄에서' : a.hint} onClick={() => void press(a.label)}>{running?.label === a.label ? `${a.label} — 도는 중 · ${secs(running.at)}` : a.label}</Button>}
+                  {/* 마지막으로 누른 결과 — 끝났는지 그 자리에서(출력은 아래 「최근 단추」) */}
+                  {a && (() => { const l = lastOf(a.label); return l && l.code !== null && <span className={`text-xs ${l.code === 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-destructive'}`}>{l.code === 0 ? '✓' : '✗'} {when(l.at)} {l.code === 0 ? '끝' : `끝 코드 ${l.code}`}{l.note ? ` · ${l.note}` : ''}</span>; })()}
                 </li>
               );
             })}
@@ -835,17 +883,36 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
   );
 }
 
+// 단추 명령은 누르면 뒤에서 돈다(서버 runAction) — 도는 중인 기록(code null)이면 그 단추가 「도는 중 · 몇 초」, 끝나는 순간 알림
+const runningOf = (r: Run) => r.acted.find(a => a.code === null);
+// 단추 보내기 — 서버가 누른 순간 기록을 쓰니 곧바로 한 번 다시 읽는다(복사 단추는 끝날 때까지 답을 붙잡아, 답만 기다리면 「도는 중」 이 늦게 뜬다)
+const pressAction = (qc: QueryClient, id: number, n: number, text: string) => {
+  const t = setTimeout(() => void qc.invalidateQueries({ queryKey: ['run', id] }), 300);
+  return post(`/api/runs/${id}/action`, { n, text }).finally(() => { clearTimeout(t); void qc.invalidateQueries({ queryKey: ['run', id] }); });
+};
+const secs = (at: number) => `${Math.max(1, Math.round((Date.now() - at) / 1000))}초`;
+function useActedToast(r: Run) {
+  const seen = useRef(new Map<number, number | null>());
+  useEffect(() => {
+    for (const a of r.acted) {
+      if (seen.current.get(a.at) === null && a.code !== null)
+        toast(a.code === 0 ? `「${a.label}」 끝${a.note ? ` · ${a.note}` : ''}` : `「${a.label}」 실패 — 끝 코드 ${a.code}${a.note ? ` · ${a.note}` : ''}`, a.code === 0 ? 3000 : 6000);
+      seen.current.set(a.at, a.code);
+    }
+  }, [r.acted]);
+}
+
 // 런 단추 — 맨 위 엔진 폴더의 actions.json. 단추에 마우스를 올리면 설명(hint, 없으면 돌릴 명령)이 보인다. ask 가 있으면 글을 받아 같이 넘긴다.
 // 지우는 단추(danger)는 빨강으로 맨 끝에 떼어 둔다 — 다른 단추와 헷갈려 누르지 않게
 function Actions({ r }: { r: Run }) {
   const qc = useQueryClient(), [ask, setAsk] = useState<number | null>(null), [text, setText] = useState(''), [busy, setBusy] = useState(false);
   const go = async (n: number) => {
     setBusy(true);
-    try { await post(`/api/runs/${r.id}/action`, { n, text }); setAsk(null); setText(''); await qc.invalidateQueries({ queryKey: ['run', r.id] }); }
+    try { await pressAction(qc, r.id, n, text); setAsk(null); setText(''); }
     catch (e) { toast(`하지 못했다 — ${(e as Error).message}`, 5000); }
     setBusy(false);
   };
-  const doing = r.acted.some(a => a.code === null), last = r.acted[0];
+  const running = runningOf(r), doing = !!running, last = r.acted[0];
   const how = (a: Run['acted'][number]) => `${a.code === null ? '도는 중' : a.code === 0 ? '끝' : `끝 코드 ${a.code}`}${a.note ? ` · ${a.note}` : ''}`;
   return (
     <div className="space-y-2">
@@ -854,9 +921,9 @@ function Actions({ r }: { r: Run }) {
         {/* 지우는 단추 앞 가름 — order-last 끼리는 DOM 차례라 단추보다 먼저 둔다 */}
         {r.actions.some(a => a.danger) && <span className="order-last mx-1 h-4 w-px bg-border" aria-hidden />}
         {r.actions.map((a, i) => (a.when === 'done' && r.state !== 'done') ? null : (
-          <Button key={i} size="sm" variant={ask === i ? 'default' : 'outline'} disabled={busy || doing} title={a.hint ?? `$ ${a.command}`}
+          <Button key={i} size="sm" variant={ask === i || running?.label === a.label ? 'default' : 'outline'} disabled={busy || doing} title={a.hint ?? `$ ${a.command}`} aria-busy={running?.label === a.label || undefined}
             className={`h-7 text-xs ${a.danger ? `order-last ${ask === i ? '' : 'text-destructive hover:text-destructive'}` : ''}`}
-            onClick={() => a.ask ? setAsk(ask === i ? null : i) : void go(i)}>{a.label}</Button>
+            onClick={() => a.ask ? setAsk(ask === i ? null : i) : void go(i)}>{running?.label === a.label ? `${a.label} — 도는 중 · ${secs(running.at)}` : a.label}</Button>
         ))}
       </div>
       {ask !== null && (

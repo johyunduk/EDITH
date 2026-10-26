@@ -46,5 +46,8 @@ test('reachOf — 커밋 그대로 · 내용 일치 · 일부 · 제목만 · �
     // fast-forward — feature 자체(조상이고 머지 없음)
     const ff = await reachOf(r.d, r.start, 'feature');
     assert.deepEqual([ff.state, ff.how], ['in', 'ff']);
+    // 같은 커밋을 가리키는 다른 브랜치 — 기억해 둔 결과를 써도 이름은 그 브랜치 것(stage = master 인 레포에서 칸 이름이 겹치던 것)
+    execFileSync('git', ['-C', r.d, 'branch', 'dev-copy', 'dev']);
+    assert.deepEqual([(await reachOf(r.d, r.start, 'dev-copy')).ref, (await reachOf(r.d, r.start, 'dev')).ref], ['dev-copy', 'dev']);
   } finally { r.done(); }
 });

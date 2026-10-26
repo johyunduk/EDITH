@@ -1,8 +1,8 @@
 // 공방 — 노드를 이은 「체인」과 체인을 이은 「엔진」을 만들고 고치는 폴더. 하나가 workshop/<id>/ 하나다:
 // engine.json(노드 · 연결 · 위치 — 화면만 쓴다)과 skills/<이름>/SKILL.md(공방 Claude pane 이 쓴다).
 // engine.json 을 쓰는 쪽을 화면 하나로 둬서 Claude 와 서로 덮어쓰지 않는다. 경로는 이름 규칙 + realpath 로 공방 폴더 안만 연다.
-// 화면 말: 노드 · 체인 · 엔진 · 런(한 번 돌린 것). 코드의 engine(Engine · engine.json)은 체인과 엔진을 함께 가리키고 kind 로 가른다 —
-// 체인은 스킬 · 명령 노드만, 엔진은 다른 체인 · 엔진을 부르는 노드(node.engine)도 넣는다. 종류는 만들 때 정한다.
+// 화면 말: 노드 · 체인 · 엔진 · 런(돌리는 단위) · 런 #번호(런을 한 번 돌린 것). 코드의 engine(Engine · engine.json)은 셋을 함께 가리키고 kind 로 가른다 —
+// 체인은 스킬 · 명령 노드만, 엔진은 다른 체인 · 엔진을 부르는 노드(node.engine)도 넣는다, 런은 노드 없이 돌릴 엔진 하나와 실행 설정. 종류는 만들 때 정한다.
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,7 +22,9 @@ export type Edge = { from: string; to: string; fail?: true; max?: number };
 // 작업 폴더 — 실행할 때 고르기(기본) · 늘 같은 폴더 · 레포에서 새 워크트리(브랜치는 실행할 때). 실행하는 맨 바깥 엔진의 것만 쓴다.
 export type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
 // common — 이 엔진의 모든 스킬 노드 지시 앞에 같이 붙는 스킬(공통 규칙). kind 가 없으면 체인(check 는 늘 채운다).
-export type Engine = { name: string; kind?: 'chain' | 'engine'; nodes: Node[]; edges: Edge[]; common?: SkillRef; workdir?: Workdir };
+// kind run — 런(돌리는 단위): 돌릴 엔진 · 체인 하나(engine)와 작업 폴더 · 입력칸 안내(input) · 새 런 칸의 무인 처음 값(unattended). 노드는 없다.
+// 런 단추 · 고르기 · 요청 훅(actions.json)은 런 폴더에 두거나, 없으면 그 엔진 것을 쓴다. 작업 폴더도 없으면 엔진 것.
+export type Engine = { name: string; kind?: 'chain' | 'engine' | 'run'; nodes: Node[]; edges: Edge[]; common?: SkillRef; workdir?: Workdir; engine?: string; input?: string; unattended?: boolean };
 // 브랜치 이름 — 인자로만 넘기지만 git 이 받는 꼴로 미리 거른다(- 로 시작 · .. 금지)
 export const BRANCH = /^(?!-)(?!.*\.\.)[\p{L}\p{N}._/-]{1,100}$/u;
 
@@ -49,6 +51,14 @@ export function check(v: unknown): Engine | string[] {
     : w.kind === 'worktree' && path(w.repo) && (w.base == null || w.base === '' || (typeof w.base === 'string' && BRANCH.test(w.base)))
       ? { kind: 'worktree', repo: (w.repo as string).trim(), ...(w.base ? { base: w.base as string } : {}) } : null;
   if (workdir === null) errs.push('workdir 는 { kind: ask } · { kind: fixed, dir } · { kind: worktree, repo, base? }');
+  if (e.kind === 'run') {
+    if (typeof e.engine !== 'string' || !NAME.test(e.engine)) errs.push('런의 engine 은 돌릴 엔진 · 체인 폴더 이름');
+    if (e.input != null && e.input !== '' && !text(e.input, 200)) errs.push('input(입력칸 안내)은 200자까지 한 줄 글');
+    if (e.unattended != null && typeof e.unattended !== 'boolean') errs.push('unattended 는 true · false');
+    if (Array.isArray(e.nodes) && e.nodes.length) errs.push('런에는 노드를 넣지 않는다 — 돌릴 엔진에 넣는다');
+    return errs.length ? errs : { name: (e.name as string).trim(), kind: 'run', engine: e.engine as string, nodes: [], edges: [], ...(workdir ? { workdir } : {}),
+      ...(typeof e.input === 'string' && e.input.trim() ? { input: e.input.trim() } : {}), ...(e.unattended === true ? { unattended: true } : {}) };
+  }
   if (!Array.isArray(e.nodes) || e.nodes.length > 200) return [...errs, 'nodes 는 200개까지의 배열'];
   if (!Array.isArray(e.edges) || e.edges.length > 1000) return [...errs, 'edges 는 1000개까지의 배열'];
   const nodes: Node[] = [];
@@ -77,7 +87,7 @@ export function check(v: unknown): Engine | string[] {
     edges.push({ from: d.from, to: d.to, fail: true, max });
   });
   // 종류 — 없으면(종류를 적기 전 파일) 노드로 정한다
-  if (e.kind != null && e.kind !== 'chain' && e.kind !== 'engine') errs.push('kind 는 chain 또는 engine');
+  if (e.kind != null && e.kind !== 'chain' && e.kind !== 'engine') errs.push('kind 는 chain · engine · run');
   const kind = e.kind === 'chain' || e.kind === 'engine' ? e.kind : nodes.some(n => n.engine) ? 'engine' : 'chain';
   if (kind === 'chain') for (const n of nodes) if (n.engine) errs.push(`노드 ${n.id}: 체인에는 다른 체인 · 엔진을 넣지 않는다 — 엔진을 만들어 거기에 넣는다`);
   if (errs.length) return errs;
@@ -181,7 +191,8 @@ export function listEngines(root = ROOT) {
   return ids.flatMap(id => {
     try {
       const r = readEngine(id, root), show = r.draft?.engine ?? r.engine;
-      return [{ id, name: show?.name ?? id, nodes: r.engine?.nodes.length ?? 0, kind: r.engine?.kind ?? 'chain', broken: !r.engine, uses: show?.nodes.flatMap(n => n.engine ? [n.engine] : []) ?? [], draft: !!r.draft }];
+      return [{ id, name: show?.name ?? id, nodes: r.engine?.nodes.length ?? 0, kind: r.engine?.kind ?? 'chain', broken: !r.engine, uses: show?.nodes.flatMap(n => n.engine ? [n.engine] : []) ?? [], draft: !!r.draft,
+        ...(r.engine?.kind === 'run' ? { engine: r.engine.engine } : {}) }];   // 런은 돌릴 엔진(트리의 uses 에는 넣지 않는다 — 엔진이 런 밑으로 숨지 않게)
     } catch { return []; }
   });
 }
@@ -193,14 +204,16 @@ function write(file: string, e: Engine) {
   renameSync(tmp, file);
 }
 
-export function createEngine(id: unknown, name: unknown, kind: unknown, root = ROOT) {
+// target — 런(kind run)이 돌릴 엔진 · 체인(공방에 있고 런이 아닌 것)
+export function createEngine(id: unknown, name: unknown, kind: unknown, root = ROOT, target?: unknown) {
   if (typeof id !== 'string' || !NAME.test(id) || id === 'claude') throw new Error('폴더 이름은 영문 소문자 · 숫자 · - 만(40자까지)');
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const d = dir(root, id);
   if (existsSync(d)) throw new Error(`같은 폴더 이름이 이미 있다: ${id}`);
-  const e = check({ name, kind, nodes: [], edges: [] });
+  const e = check({ name, kind, nodes: [], edges: [], ...(kind === 'run' ? { engine: target } : {}) });
   if (Array.isArray(e)) throw new Error(e[0]);
-  mkdirSync(join(d, 'skills'), { recursive: true, mode: 0o700 });
+  if (e.kind === 'run') { let t: Engine | null = null; try { t = readEngine(e.engine!, root).engine; } catch { /* 없음 */ } if (!t || t.kind === 'run') throw new Error('돌릴 엔진 · 체인을 고른다(공방에 있는 것, 런 말고)'); }
+  mkdirSync(e.kind === 'run' ? d : join(d, 'skills'), { recursive: true, mode: 0o700 });   // 런은 스킬이 없다
   write(join(d, 'engine.json'), e);
   return readEngine(id, root);
 }
@@ -242,6 +255,8 @@ export function removeEngine(id: string, root = ROOT, trash = TRASH) {
   if (!existsSync(join(d, 'engine.json'))) throw new Error('공방에 없다');
   const users = listEngines(root).filter(e => e.id !== id && readEngine(e.id, root).engine?.nodes.some(n => n.engine === id)).map(e => `「${e.name}」`);
   if (users.length) throw new Error(`이것을 쓰는 엔진이 있다 — ${users.join(' · ')} 에서 이것을 부르는 노드를 먼저 지운다`);
+  const runs = listEngines(root).filter(e => e.kind === 'run' && e.engine === id).map(e => `「${e.name}」`);
+  if (runs.length) throw new Error(`이것을 돌리는 런이 있다 — 런 ${runs.join(' · ')} 의 엔진을 먼저 바꾸거나 지운다`);
   mkdirSync(trash, { recursive: true, mode: 0o700 });
   const to = join(trash, `${id}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   renameSync(d, to);
@@ -280,8 +295,8 @@ const guide = () => `# 공방 — EDITH 가 띄운 Claude 에게
 
 이 파일은 EDITH 가 맡는다 — 고쳐도 EDITH 가 다시 쓴다. 내 규칙은 같은 폴더의 \`CLAUDE.local.md\` 에 둔다.
 
-여기는 EDITH 「공방」 폴더다. 말: **노드**(일 하나) · **체인**(노드를 이은 것) · **엔진**(체인 · 엔진을 이은 것) · **런**(체인이나 엔진을 한 번 돌린 것).
-체인 · 엔진 하나가 하위 폴더 하나다(파일 꼴은 같다 — \`engine.json\` 의 \`kind\` 로 가른다. 체인은 스킬 · 명령 노드만, 엔진은 체인 · 엔진도 넣는다).
+여기는 EDITH 「공방」 폴더다. 말: **노드**(일 하나) · **체인**(노드를 이은 것) · **엔진**(체인 · 엔진을 이은 것) · **런**(돌리는 단위 — 엔진 하나를 어디서 · 어떻게 돌리나) · **런 #번호**(런을 한 번 돌린 것).
+체인 · 엔진 · 런 하나가 하위 폴더 하나다(파일 꼴은 같다 — \`engine.json\` 의 \`kind\` 로 가른다. 체인은 스킬 · 명령 노드만, 엔진은 체인 · 엔진도 넣는다, 런은 노드 없이 \`engine\`(돌릴 엔진) · 작업 폴더 · 단추 \`actions.json\`).
 
 - \`<폴더>/engine.json\` — 노드 · 화살표 · 위치. **EDITH 화면만 쓴다. 고치지 않는다.**
 - 체인이나 엔진을 만들거나 고쳐 달라면, 노드가 쓸 스킬을 써 달라면 **만들기 스킬** \`${join(REPO, 'workshop', 'engine-skill.md')}\` 를 먼저 읽고 그대로 한다.

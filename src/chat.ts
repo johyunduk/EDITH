@@ -382,8 +382,8 @@ export function codexUsage(pane: string, cwd: string, title: string) {
   const mine = file ? lastTokens(file) : null, own = mine?.tokens, acct = (latest && latest !== file ? lastTokens(latest)?.tokens : null) ?? own;
   if (!mine && !acct) return null;
   const { five, week } = windows(acct?.rate_limits);
-  const lim = (w: Win | undefined, day: boolean) => !w ? null : w.resets_at && w.resets_at * 1000 <= Date.now() ? { pct: 0, reset: null }
-    : { pct: Math.round(w.used_percent), reset: w.resets_at ? until(w.resets_at * 1000, day) : null };
+  const lim = (w: Win | undefined, day: boolean) => !w ? null : w.resets_at && w.resets_at * 1000 <= Date.now() ? { pct: 0, reset: null, at: null }
+    : { pct: Math.round(w.used_percent), reset: w.resets_at ? until(w.resets_at * 1000, day) : null, at: w.resets_at ? w.resets_at * 1000 : null };
   const u = own?.info?.last_token_usage, cw = own?.info?.model_context_window;
   return {
     model: mine?.turn?.model ?? null, effort: mine?.turn?.effort ?? null,

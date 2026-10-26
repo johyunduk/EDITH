@@ -4,8 +4,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, runLabel, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
+
+test('runLabel — 티켓은 요청 tag, 제목은 요약 → 요청 제목(앞 이모지 뗌) → 입력 첫 줄(주소뿐이면 없음)', () => {
+  const req = { tag: 'ISSUE-5', title: '🐞 [포인트] 문구 고치기' };
+  assert.deepEqual(runLabel(req, '포인트 화면 문구를 바꾸기', 'https://example.com/x'), { tag: 'ISSUE-5', title: '포인트 화면 문구를 바꾸기' });
+  assert.deepEqual(runLabel(req, '', 'https://example.com/x'), { tag: 'ISSUE-5', title: '[포인트] 문구 고치기' });
+  assert.deepEqual(runLabel(null, undefined, 'https://example.com/abc\n메모'), {});
+  assert.deepEqual(runLabel(null, undefined, '관리자 메모 칸을 더한다\n- 200자'), { title: '관리자 메모 칸을 더한다' });
+});
 
 const node = (id: string, x: Record<string, unknown> = {}) => ({ id, title: id, skill: { from: 'engine' as const, id: 'do' }, x: 0, y: 0, ...x });
 const resolve = (engine: string) => `/s/${engine}/SKILL.md`;
@@ -264,23 +272,50 @@ test('새 런 고르기 목록 — 이름 · 입력이 있는 줄만, 배열이 
   assert.throws(() => parsePicks('깨짐'), /JSON 배열/);
 });
 
+test('런으로 시작 — 엔진의 작업 폴더 · 단추를 이어받고, 런 폴더에 단추가 있으면 그것(사본 run/), 고르기도 그 차례', () => {
+  const home = mkdtempSync(join(tmpdir(), 'edith-rundef-')), ws = join(home, '.local', 'share', 'edith', 'workshop');
+  try {
+    mkdirSync(join(ws, 'eng'), { recursive: true }); mkdirSync(join(ws, 'myrun'), { recursive: true });
+    writeFileSync(join(ws, 'eng', 'engine.json'), JSON.stringify({ name: '엔진', kind: 'engine', workdir: { kind: 'fixed', dir: home }, nodes: [{ id: 'a', title: '가', skill: null, command: 'true', x: 0, y: 0 }], edges: [] }));
+    writeFileSync(join(ws, 'eng', 'actions.json'), JSON.stringify([{ label: '엔진 단추', command: 'true' }, { label: '엔진 고르기', on: 'picks', command: 'echo []' }]));
+    writeFileSync(join(ws, 'myrun', 'engine.json'), JSON.stringify({ name: '내 런', kind: 'run', engine: 'eng', nodes: [], edges: [] }));
+    const code = `import { startRun, loadRun, readActions, pickAction } from ${JSON.stringify(join(import.meta.dirname, 'runner.ts'))};
+      import { writeFileSync, existsSync } from 'node:fs';
+      const a = await startRun('myrun', '', '입력', '', 0), ra = loadRun(a.id);
+      const first = { def: ra.def, engine: ra.engine, name: ra.name, cwd: ra.cwd, copied: existsSync(${JSON.stringify(join(home, '.local', 'share', 'edith', 'workshop-runs'))} + '/' + a.id + '/run/engine.json'),
+        buttons: readActions(ra).map(x => x.label), picks: pickAction('myrun')?.label };
+      writeFileSync(${JSON.stringify(join(ws, 'myrun', 'actions.json'))}, JSON.stringify([{ label: '런 단추', command: 'true' }]));
+      const b = await startRun('myrun', '', '', '', 0), test = await startRun('eng', '', '', '', 0);
+      console.log(JSON.stringify({ first, second: readActions(loadRun(b.id)).map(x => x.label), picks2: pickAction('myrun')?.label ?? null, test: { def: loadRun(test.id).def ?? null, name: loadRun(test.id).name } }));
+      process.exit(0);`;
+    const out = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', timeout: 20_000 });
+    const got = JSON.parse(out.stdout.trim().split('\n').pop() ?? '{}');
+    assert.deepEqual(got.first, { def: 'myrun', engine: 'eng', name: '내 런', cwd: home, copied: true, buttons: ['엔진 단추'], picks: '엔진 고르기' });
+    assert.deepEqual(got.second, ['런 단추']);   // 런 폴더 단추가 엔진 것을 통째로 갈음한다
+    assert.equal(got.picks2, null);              // 런 폴더 단추 파일에 고르기가 없으면 고르기도 없다
+    assert.deepEqual(got.test, { def: null, name: '엔진' });   // 엔진을 바로 돌리면(시험) 런이 아니다
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 test('copy 단추 — 끝날 때까지 기다려 출력 · 끝 코드를 돌려주고, 보통 단추는 기다리지 않는다', () => {
   const home = mkdtempSync(join(tmpdir(), 'edith-copy-')), dir = join(home, '.local', 'share', 'edith', 'workshop-runs', '7');
   try {
     mkdirSync(join(dir, 'engine', 'e'), { recursive: true });
     writeFileSync(join(dir, 'run.json'), JSON.stringify({ id: 7, engine: 'e', name: 'e', cwd: home, input: '', created: 0, state: 'done', steps: [], nodes: {} }));
     writeFileSync(join(dir, 'engine', 'e', 'actions.json'), JSON.stringify([
-      { label: '명령 보기', command: 'echo "git push origin HEAD:master"; echo 둘째', copy: true },
+      { label: '명령 보기', command: 'echo "git push origin HEAD:master"; echo 둘째', copy: true, flow: '{branch} → master' },
       { label: '틀린 copy', command: 'true', copy: 'yes' },
+      { label: '틀린 flow', command: 'true', flow: 1 },
       { label: '돌리기', command: 'sleep 1' },
     ]));
     const code = `import { runAction, readActions, loadRun } from ${JSON.stringify(join(import.meta.dirname, 'runner.ts'))};
-      const labels = readActions(loadRun(7)).map(a => a.label);
+      const labels = readActions(loadRun(7)).map(a => a.label), flow = readActions(loadRun(7))[0].flow;
       const copied = await runAction(7, 0, ''), plain = await runAction(7, 1, '');
-      console.log(JSON.stringify({ labels, copied, plain }));`;
+      console.log(JSON.stringify({ labels, flow, copied, plain }));`;
     const out = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
     const got = JSON.parse(out.stdout.trim().split('\n').pop() ?? '{}');
-    assert.deepEqual(got.labels, ['명령 보기', '돌리기']);   // copy 가 참 · 거짓이 아니면 단추가 아니다
+    assert.deepEqual(got.labels, ['명령 보기', '돌리기']);   // copy 가 참 · 거짓이 아니면, flow 가 글이 아니면 단추가 아니다
+    assert.equal(got.flow, '{branch} → master');   // flow 는 그대로 넘어간다 — 채우기는 배포 화면이
     assert.deepEqual(got.copied, { output: 'git push origin HEAD:master\n둘째\n', code: 0 });
     assert.deepEqual(got.plain, {});
   } finally { rmSync(home, { recursive: true, force: true }); }

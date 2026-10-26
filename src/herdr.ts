@@ -221,8 +221,9 @@ export function liveWindow(plain: string[], box: number): [number, number] {
   return [a, b];
 }
 
-// 사용량 — 모델·생각 강도(effort), 컨텍스트가 몇 % 찼는지, 5시간·7일 한도를 몇 % 썼는지(reset 은 다시 차기까지 남은 시간 글).
-export type Limit = { pct: number; reset: string | null };
+// 사용량 — 모델·생각 강도(effort), 컨텍스트가 몇 % 찼는지, 5시간·7일 한도를 몇 % 썼는지(reset 은 다시 차기까지 남은 시간 글, at 은 다시 차는 시각 ms).
+// rough — at 이 시 단위까지만 맞다(Claude 상태줄의 「3d4h」 에서 거꾸로 센 것). 화면이 「14시경」 으로 보인다
+export type Limit = { pct: number; reset: string | null; at: number | null; rough?: boolean };
 export type Usage = { model: string | null; effort: string | null; ctx: number | null; five: Limit | null; week: Limit | null };
 
 // Claude 는 상태줄(~/.claude/statusline-command.sh 가 그리는 「✦ Opus 5.5 [xhigh] · CONTEXT 45% · DAILY 30% | 2h10m · WEEKLY 12% | 3d4h」)을 화면에서 읽는다.
@@ -233,19 +234,20 @@ export async function statusline(id: string): Promise<Usage | null> {
   if (box < 0) return null;
   const tail = plain.slice(box + 1).join(' ');
   const at = (k: string) => tail.match(new RegExp(`${k}\\s+(\\d+)%(?:\\s*\\|\\s*(\\S+))?`));
-  const lim = (m: RegExpMatchArray | null): Limit | null => m ? { pct: Number(m[1]), reset: m[2] ?? null } : null;
+  const lim = (m: RegExpMatchArray | null): Limit | null => m ? limitOf(Number(m[1]), m[2] ?? null) : null;
   const c = at('CONTEXT'), m = tail.match(/✦\s+(.+?)(?:\s+\[([^\]]+)\])?(?=\s+·|\s*$)/);
   const u: Usage = { model: m?.[1] ?? null, effort: m?.[2] ?? null, ctx: c ? Number(c[1]) : null, five: lim(at('DAILY')), week: lim(at('WEEKLY')) };
   if (!u.model && u.ctx === null && !u.five && !u.week) return null;
   // 한도는 계정 전체 — 어느 pane 상태줄에서든 읽으면 다시 찰 시각으로 기억해 두고, 한도가 안 보이는 상태줄(막 띄운 세션 등)에 채운다
   for (const k of ['five', 'week'] as const) {
     const seen = u[k];
-    if (seen) limits[k] = { pct: seen.pct, at: seen.reset ? Date.now() + resetSecs(seen.reset) * 1000 : null };
+    if (seen) limits[k] = { pct: seen.pct, at: seen.at, ...(seen.rough ? { rough: true } : {}) };
     else if (limits[k]) u[k] = fromSeen(limits[k]!, k === 'week');
   }
   return u;
 }
-const limits: { five?: { pct: number; at: number | null }; week?: { pct: number; at: number | null } } = {};
+type Seen = { pct: number; at: number | null; rough?: boolean };
+const limits: { five?: Seen; week?: Seen } = {};
 export const knowLimits = () => !!(limits.five || limits.week);
 // 한도에 닿은(100%) 것이 다시 차는 시각(둘 다면 늦은 쪽) — 상태줄에서 못 읽었으면 null
 export const limitReset = () => Math.max(0, ...[limits.five, limits.week].flatMap(l => l && l.pct >= 100 && l.at && l.at > Date.now() ? [l.at] : [])) || null;
@@ -262,9 +264,12 @@ export const until = (ms: number, day: boolean) => {
   const s = (ms - Date.now()) / 1000;
   return day ? `${Math.floor(s / 86400)}d${Math.floor(s % 86400 / 3600)}h` : `${Math.floor(s / 3600)}h${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}m`;
 };
+// 상태줄 글(남은 시간) → 다시 차는 시각. 「3d4h」 꼴은 시 아래를 버린 글이라 rough
+export const limitOf = (pct: number, reset: string | null, now = Date.now()): Limit =>
+  ({ pct, reset, at: reset ? now + resetSecs(reset) * 1000 : null, ...(reset && /^\d+d/.test(reset) ? { rough: true } : {}) });
 // 다시 찰 시각이 지났으면 그 뒤로 안 썼다는 뜻이라 0%
-const fromSeen = (l: { pct: number; at: number | null }, day: boolean): Limit =>
-  l.at && l.at <= Date.now() ? { pct: 0, reset: null } : { pct: l.pct, reset: l.at ? until(l.at, day) : null };
+const fromSeen = (l: Seen, day: boolean): Limit =>
+  l.at && l.at <= Date.now() ? { pct: 0, reset: null, at: null } : { pct: l.pct, reset: l.at ? until(l.at, day) : null, at: l.at, ...(l.rough ? { rough: true } : {}) };
 
 // 셸 명령 기록 — 터미널의 지난 출력을 프롬프트 줄 기준으로 「명령 + 출력」 으로 자른다(브라우저 스크롤로 보려고).
 // 프롬프트 기호는 줄 첫 낱말 중 흔한 것(➜ ❯ $ % # λ, PowerShell 의 PS)에서 가장 많이 나온 것. 오래된 출력은 끝 3000줄까지만. 출력 줄은 색(ANSI) 그대로.
