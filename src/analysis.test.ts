@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acrossOf, codexUsage, flow, lanes, mergePart, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, type Ev, type Inside, type RunSum } from './analysis.ts';
+import { acrossOf, codexUsage, flow, lanes, mergePart, OUTSIDE, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, windows, type Ev, type Inside, type RunSum } from './analysis.ts';
 import { codeFp } from './runner.ts';
 
 test('런 분석 시간 — 도는 중은 일한 시간, 답 기다림 · 확인 필요는 사람 대기, 끝나면 멈춘다', () => {
@@ -144,4 +144,17 @@ test('여러 런 모아 보기 — 지난 런 중앙값(3런 넘을 때), 헛도
   assert.deepEqual(x.medians, { a: { ms: 20, n: 4 } });   // 이 런(9)은 빼고, v 는 2런뿐이라 없음
   assert.deepEqual(x.flaky, [{ key: 'v', same: 2, ran: 2 }]);
   assert.deepEqual(x.repo, { runs: 3, must: 1, check: 2, added: 1 });
+});
+
+test('런 분석 노드 밖 — 노드 도는 시간 창 밖의 대화는 노드에서 빼 「노드 밖」 으로, 그 대화를 연 사람 글도', () => {
+  const at = (m: number) => Date.UTC(2026, 9, 26, 0, m);
+  const iso = (m: number) => new Date(at(m)).toISOString();
+  const win = windows([{ t: at(0), key: 'n', state: 'running', attempt: 1 }, { t: at(10), key: 'n', state: 'done', attempt: 1 }]);
+  const into: Record<string, { output: number }> = {}, inside: Record<string, Inside> = {};
+  const said = (m: number, id: string, out: number) => JSON.stringify({ type: 'assistant', timestamp: iso(m), message: { id, usage: { input_tokens: 1, output_tokens: out }, content: [] } });
+  tokensIn([JSON.stringify({ type: 'user', timestamp: iso(0), message: { content: '[EDITH 런 #6 · 구현 › 「구현」]\n결과 파일: /r/6/nodes/n/1/result.json' } }), said(5, 'a', 10),
+    JSON.stringify({ type: 'user', timestamp: iso(40), message: { content: '그 파일 되돌렸으니 다시 해\n둘째 줄' } }), said(41, 'b', 99)], 6, into as never, inside, undefined, win.within);
+  assert.equal(into.n.output, 10);
+  assert.equal(into[OUTSIDE].output, 99);
+  assert.deepEqual(inside[OUTSIDE].asks, [{ t: at(40), text: '그 파일 되돌렸으니 다시 해' }]);
 });

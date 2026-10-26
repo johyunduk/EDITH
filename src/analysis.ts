@@ -161,7 +161,7 @@ function compare(r: Run) {
 // 그 뒤의 답(같은 message.id 는 한 번)을 그 노드에 더한다. 노드마다 /clear 라 보통 노드 시도 하나가 세션 파일 하나다.
 // shortcut: 런 시작 뒤 바뀐 세션 파일을 통째로 읽는다 — 같은 폴더에서 다른 큰 세션이 돌면 느려진다. 그러면 (파일 · 크기) 로 캐시한다
 // 노드 안쪽 — 그 노드 대화의 처음 · 끝 시각과 도구별 걸린 시간(도구 호출 → 결과). 모델이 생각 · 글 쓴 시간은 나머지로 본다
-export type Inside = { first: number; last: number; tools: Record<string, number>; busy: number; spans?: [number, number][]; turns?: number; reads?: Record<string, number>; readChars?: number; agents?: { n: number; ms: number; turns: number } };   // busy = 도구가 하나라도 돈 시간(겹친 것은 한 번)
+export type Inside = { first: number; last: number; tools: Record<string, number>; busy: number; spans?: [number, number][]; turns?: number; reads?: Record<string, number>; readChars?: number; agents?: { n: number; ms: number; turns: number }; asks?: { t: number; text: string }[] };   // asks = 노드 밖 대화를 연 사람 글   // busy = 도구가 하나라도 돈 시간(겹친 것은 한 번)
 // 읽기 — 읽은 파일(Read 도구, cat · head · sed 같은 Bash 가 연 파일)과 그 결과 글자 수. 경로는 끝 세 마디로
 const READ_CMD = /\b(cat|head|tail|sed|less)\b/, FILE = /[^\s'"`;|&>()]+\.[A-Za-z]{1,5}\b/g;   // 확장자가 있는 낱말(읽기 명령 안에서만)
 export function readPaths(name: string, input: unknown): string[] {
@@ -182,8 +182,11 @@ export function toolLabel(name: string, input: unknown) {
   }
   return name.startsWith('mcp__') ? `MCP ${name.split('__').at(-1)}` : name;
 }
-export function tokensIn(lines: string[], run: number, into: Record<string, Tok>, inside: Record<string, Inside> = {}, agents = new Map<string, string>()) {
+// 노드 밖 — 노드 글을 받은 pane 에서 그 노드가 끝난 뒤(도는 시간 창 밖) 이어진 대화. 런 pane 에 사람이 따로 시킨 일이라 노드 숫자에서 뺀다
+export const OUTSIDE = '(노드 밖)';
+export function tokensIn(lines: string[], run: number, into: Record<string, Tok>, inside: Record<string, Inside> = {}, agents = new Map<string, string>(), within?: (node: string, t: number) => boolean) {
   let cur: string | null = null;
+  const who = (t: number) => cur && within && Number.isFinite(t) && !within(cur, t) ? OUTSIDE : cur;
   const seen = new Set<string>(), head = `[EDITH 런 #${run} ·`, open = new Map<string, { t: number; label: string; node: string; paths: string[] }>();
   const mark = (node: string, t: number) => { if (!Number.isFinite(t)) return; const x = inside[node] ??= { first: t, last: t, tools: {}, busy: 0 }; x.first = Math.min(x.first, t); x.last = Math.max(x.last, t); };
   for (const l of lines) {
@@ -210,21 +213,27 @@ export function tokensIn(lines: string[], run: number, into: Record<string, Tok>
         }
         mark(p.node, at);
       }
-      if (cur) mark(cur, at);
+      if (cur) {
+        const node = who(at)!;
+        mark(node, at);
+        // 노드 밖 대화를 연 글 — 도구 결과가 아니라 사람이 pane 에 직접 친 글(첫 줄 120자)
+        if (node === OUTSIDE && text.trim() && !blocks.some(b => b?.type === 'tool_result')) (inside[OUTSIDE].asks ??= []).push({ t: at, text: text.trim().split('\n')[0].slice(0, 120) });
+      }
       continue;
     }
     if (!cur) continue;
-    mark(cur, at);
+    const node = who(at)!;
+    mark(node, at);
     for (const b of blocks) {
       if (b?.type !== 'tool_use' || !b.id) continue;
-      if (b.name === 'Agent' || b.name === 'Task') agents.set(b.id, cur);   // 하위 에이전트 기록(meta.json 의 toolUseId)을 이 노드에 붙인다
-      if (!open.has(b.id) && Number.isFinite(at)) open.set(b.id, { t: at, label: toolLabel(b.name ?? '', b.input), node: cur, paths: readPaths(b.name ?? '', b.input) });
+      if (b.name === 'Agent' || b.name === 'Task') agents.set(b.id, node);   // 하위 에이전트 기록(meta.json 의 toolUseId)을 이 노드에 붙인다
+      if (!open.has(b.id) && Number.isFinite(at)) open.set(b.id, { t: at, label: toolLabel(b.name ?? '', b.input), node, paths: readPaths(b.name ?? '', b.input) });
     }
     const id = o.message?.id, u = o.message?.usage;
     if (!u || !id || seen.has(id)) continue;
     seen.add(id);
-    if (inside[cur]) inside[cur].turns = (inside[cur].turns ?? 0) + 1;   // 대화 턴 — 답 하나(같은 message.id 는 한 번)
-    const t = into[cur] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
+    if (inside[node]) inside[node].turns = (inside[node].turns ?? 0) + 1;   // 대화 턴 — 답 하나(같은 message.id 는 한 번)
+    const t = into[node] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
     t.input += u.input_tokens ?? 0; t.output += u.output_tokens ?? 0;
     t.cacheRead += u.cache_read_input_tokens ?? 0; t.cacheWrite += u.cache_creation_input_tokens ?? 0;
     if (o.message?.model && !t.models.includes(o.message.model)) t.models.push(o.message.model);
@@ -273,16 +282,16 @@ function subagents(session: string, agents: Map<string, string>, into: Record<st
 // 이 런 글이 없는 파일도 빈 결과로 기억한다. shortcut: 기억은 서버를 다시 켤 때까지 쌓인다 — 런 · 세션이 아주 많아지면 오래된 런부터 지운다
 type Part = { into: Record<string, Tok>; inside: Record<string, Inside> };
 const parsed = new Map<string, { key: string; part: Part }>();
-function filePart(run: number, f: string, size: number, mtime: number): Part {
+function filePart(run: number, f: string, size: number, mtime: number, win: Win): Part {
   const sd = join(f.replace(/\.jsonl$/, ''), 'subagents');
   let sub = '';
   try { sub = readdirSync(sd).map(x => `${x}:${statSync(join(sd, x)).size}`).join(); } catch { /* 하위 에이전트 없음 */ }
-  const id = `${run}|${f}`, key = `${size}:${mtime}:${sub}`, c = parsed.get(id);
+  const id = `${run}|${f}`, key = `${size}:${mtime}:${sub}:${win.key}`, c = parsed.get(id);
   if (c?.key === key) return c.part;
   const part: Part = { into: {}, inside: {} }, t = readFileSync(f, 'utf8');
   if (t.includes(`[EDITH 런 #${run} ·`)) {
     const agents = new Map<string, string>();
-    tokensIn(t.split('\n'), run, part.into, part.inside, agents);
+    tokensIn(t.split('\n'), run, part.into, part.inside, agents, win.within);
     if (agents.size) subagents(f, agents, part.into, part.inside);
   }
   parsed.set(id, { key, part });
@@ -304,10 +313,18 @@ export function mergePart(out: Part, p: Part) {
     if (x.readChars) o.readChars = (o.readChars ?? 0) + x.readChars;
     for (const [n, v] of Object.entries(x.reads ?? {})) (o.reads ??= {})[n] = (o.reads[n] ?? 0) + v;
     if (x.agents) { const a = o.agents ??= { n: 0, ms: 0, turns: 0 }; a.n += x.agents.n; a.ms += x.agents.ms; a.turns += x.agents.turns; }
+    if (x.asks) o.asks = [...(o.asks ?? []), ...x.asks].sort((a, b) => a.t - b.t);
   }
 }
 // 이 런의 세션 파일 — 런이 시작된 뒤 바뀐 것. 끝난 런이면 끝나고 5분 넘어 생긴 파일(다른 런 · 다른 일)은 건너뛴다(생긴 시각을 모르는 파일 시스템이면 안 거른다)
-function tokens(r: Run, inside: Record<string, Inside>, end: number) {
+// 노드마다 도는 시간 창 — 시도마다 시작 5초 전부터 끝 2분 뒤까지(결과 파일을 쓰고 끝나는 사이). 도는 중인 시도는 끝이 없다
+type Win = { within: (node: string, t: number) => boolean; key: string };
+export function windows(events: Ev[]): Win {
+  const w = new Map<string, [number, number][]>(), ts = tries(events);
+  for (const x of ts) (w.get(x.key) ?? w.set(x.key, []).get(x.key)!).push([x.start - 5_000, (x.end ?? Infinity) + 120_000]);
+  return { within: (node, t) => (w.get(node) ?? []).some(([a, b]) => t >= a && t <= b), key: `${ts.length}:${ts.filter(x => x.end).length}` };
+}
+function tokens(r: Run, inside: Record<string, Inside>, end: number, win: Win) {
   const out: Part = { into: {}, inside }, dir = transcriptDir(r.cwd);
   let files: { f: string; size: number; mtime: number }[] = [];
   try {
@@ -316,7 +333,7 @@ function tokens(r: Run, inside: Record<string, Inside>, end: number) {
       return s.mtimeMs >= r.created && !(s.birthtimeMs > 0 && s.birthtimeMs > end + 300_000) ? [{ f, size: s.size, mtime: s.mtimeMs }] : [];
     });
   } catch { return out.into; }
-  for (const x of files) mergePart(out, filePart(r.id, x.f, x.size, x.mtime));
+  for (const x of files) mergePart(out, filePart(r.id, x.f, x.size, x.mtime, win));
   return out.into;
 }
 
@@ -370,7 +387,9 @@ export function runAnalysis(id: number) {
   if (!r) return null;
   const inside: Record<string, Inside> = {};
   const events = readEvents(id), finished = ['done', 'dropped'].includes(r.state);
-  const time = timings(events, Date.now()), tok = tokens(r, inside, finished ? Math.max(r.created, ...events.map(e => e.t)) : Infinity), use = codexUsage(records(id));   // 옛 런은 기록이 없어 시간 없음
+  const time = timings(events, Date.now()), tok = tokens(r, inside, finished ? Math.max(r.created, ...events.map(e => e.t)) : Infinity, windows(events)), use = codexUsage(records(id));   // 옛 런은 기록이 없어 시간 없음
+  const outside = tok[OUTSIDE] || inside[OUTSIDE] ? { tokens: tok[OUTSIDE] ?? null, inside: inside[OUTSIDE] ?? null } : null;
+  delete tok[OUTSIDE]; delete inside[OUTSIDE];
   // 명령 노드의 claude -p 사용량을 그 노드 토큰에(모델 칸에는 「claude -p」)
   for (const [k, c] of Object.entries(use.claude)) {
     const t = tok[k] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
@@ -390,5 +409,5 @@ export function runAnalysis(id: number) {
   const end = r.state === 'done' ? last : Date.now(), recs = records(id);
   return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created, timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
     flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: use, compare: compare(r),
-    sameCode: sameCode(events), repoPick: repoPick(id, recs), across: across(r) };
+    sameCode: sameCode(events), repoPick: repoPick(id, recs), across: across(r), outside };
 }

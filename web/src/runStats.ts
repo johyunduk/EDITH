@@ -20,6 +20,8 @@ export type Stats = {
   sameCode?: { key: string; attempts: number; same: number; lost: number; passed: boolean }[];   // 옛 서버는 없다
   repoPick?: { must: string[]; check: string[]; human: boolean; picked: { repo: string; commits: number | null }[] } | null;
   // 같은 엔진 최근 런 모아 보기 — medians 는 지난 런(이 런 빼고)에서 그 노드가 일한 시간의 중앙값(3런 넘을 때만)
+  // 노드 밖 — 노드가 끝난 뒤 런 pane 에서 이어진 대화(사람이 직접 친 글로 시작). 노드 숫자에서 뺀 것
+  outside?: { tokens: Tok | null; inside: { first: number; last: number; turns?: number; asks?: { t: number; text: string }[] } | null } | null;
   across?: { runs: number; medians: Record<string, { ms: number; n: number }>; flaky: { key: string; same: number; ran: number }[]; repo: { runs: number; must: number; check: number; added: number } | null };
 };
 
@@ -52,6 +54,9 @@ export function highlights(a: Stats, cut = (n: string) => n): Row[] {
   const same = a.sameCode ?? [];
   if (same.length) rows.push({ label: '헛도는 검사', items: same.map(x => ({ text: name(x.key), key: x.key,
     sub: `코드 그대로 ${x.same}번 다시 · ${dur(x.lost)}${x.passed ? ' · 코드를 안 고쳤는데 통과 — 거짓 경보 의심' : ''}` })) });
+  // 노드 밖 대화 — 사람이 런 pane 에 직접 시킨 일(끼어든 곳). 노드 숫자에는 들어가지 않는다
+  const asks = a.outside?.inside?.asks ?? [];
+  if (asks.length) rows.push({ label: '노드 밖 대화', items: asks.slice(0, 3).map(x => ({ text: `「${x.text}」`, sub: `${new Date(x.t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}${a.outside?.tokens ? ` · 노드 밖 출력 합 ${a.outside.tokens.output}` : ''}` })) });
   // 평소보다 느림 — 지난 런 중앙값(across.medians, 30초 넘는 노드만)보다 2배 넘게 일한 노드(1분 넘는 것), 많이 느린 것부터 3개
   const usual = a.across?.medians ?? {}, ratio = (x: StatNode) => (x.time?.work ?? 0) / (usual[x.key]?.ms || Infinity);
   const slower = a.nodes.filter(x => (x.time?.work ?? 0) >= 60_000 && (usual[x.key]?.ms ?? 0) >= 30_000 && ratio(x) >= 2).sort((x, y) => ratio(y) - ratio(x)).slice(0, 3);
