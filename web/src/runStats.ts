@@ -52,6 +52,10 @@ export function highlights(a: Stats, cut = (n: string) => n): Row[] {
   const same = a.sameCode ?? [];
   if (same.length) rows.push({ label: '헛도는 검사', items: same.map(x => ({ text: name(x.key), key: x.key,
     sub: `코드 그대로 ${x.same}번 다시 · ${dur(x.lost)}${x.passed ? ' · 코드를 안 고쳤는데 통과 — 거짓 경보 의심' : ''}` })) });
+  // 평소보다 느림 — 지난 런 중앙값(across.medians, 30초 넘는 노드만)보다 2배 넘게 일한 노드(1분 넘는 것), 많이 느린 것부터 3개
+  const usual = a.across?.medians ?? {}, ratio = (x: StatNode) => (x.time?.work ?? 0) / (usual[x.key]?.ms || Infinity);
+  const slower = a.nodes.filter(x => (x.time?.work ?? 0) >= 60_000 && (usual[x.key]?.ms ?? 0) >= 30_000 && ratio(x) >= 2).sort((x, y) => ratio(y) - ratio(x)).slice(0, 3);
+  if (slower.length) rows.push({ label: '평소보다 느림', items: slower.map(x => ({ text: x.title, key: x.key, sub: `${dur(x.time!.work)} — 보통 ${dur(usual[x.key].ms)}(지난 ${usual[x.key].n}런)` })) });
   // 갈래가 여럿이면 늦게 끝난 갈래가 병목 — 먼저 끝난 갈래가 합침 앞에서 기다린 시간
   const late = Math.max(...a.lanes.map(l => l.last ?? 0)), slow = a.lanes.find(l => l.last === late), waited = a.lanes.filter(l => (l.waited ?? 0) >= 60_000);
   if (a.lanes.length > 1 && slow && waited.length) rows.push({ label: '병목 갈래', items: [{ text: `${slow.track} 갈래가 늦게 끝났다`, sub: waited.map(l => `${l.track} 가 합침 앞에서 ${dur(l.waited!)} 기다림`).join(' · ') }] });

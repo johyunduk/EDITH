@@ -53,3 +53,11 @@ test('먼저 볼 것 — 헛도는 검사(코드 그대로 다시 돈 노드), �
   assert.deepEqual(h['헛도는 검사'].items, [{ text: 'BE 검증', key: 'v', sub: '코드 그대로 1번 다시 · 12분 0초 · 코드를 안 고쳤는데 통과 — 거짓 경보 의심' }]);
   assert.equal(Object.fromEntries(highlights(stats([])).map(r => [r.label, r]))['헛도는 검사'], undefined);
 });
+
+test('먼저 볼 것 — 평소보다 느림(지난 런 중앙값의 2배 넘게, 1분 넘게 일한 노드), 없으면 줄 없음', () => {
+  const medians = { slow: { ms: 2 * M, n: 5 }, fine: { ms: 2 * M, n: 5 }, tiny: { ms: 10_000, n: 5 } };
+  const a = stats([node('slow', '구현', 5 * M), node('fine', '구현', 3 * M), node('tiny', '구현', 70_000), node('new', '구현', 9 * M)], { across: { runs: 6, medians, flaky: [], repo: null } });
+  const h = Object.fromEntries(highlights(a).map(r => [r.label, r]));
+  assert.deepEqual(h['평소보다 느림'].items, [{ text: 'slow', key: 'slow', sub: '5분 0초 — 보통 2분 0초(지난 5런)' }]);   // 보통 30초 안 되는 노드 · 보통이 없는 노드는 뺀다
+  assert.equal(Object.fromEntries(highlights(stats([node('slow', '구현', 5 * M)])).map(r => [r.label, r]))['평소보다 느림'], undefined);
+});
