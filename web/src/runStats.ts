@@ -15,7 +15,7 @@ export type Stats = {
   phases?: { name: string; ms: number }[];   // 옛 서버는 없다
   lanes: { track: string; first: number | null; last: number | null; work: number; human: number; waited: number | null; join: string | null }[];
   redo: { again: number; fixing: number };
-  codex: { nodes: Record<string, { in: number; out: number; cacheR: number }>; weekly: [number, number] | null };
+  codex: { nodes: Record<string, { in: number; out: number; cacheR: number }>; weekly: [number, number] | null; claude?: Record<string, { in: number; out: number; cacheR: number; cost: number }> };   // claude = 명령 노드의 claude -p
   compare: { id: number; state: string; created: number; elapsed: number; human: number; phases: { name: string; ms: number }[] }[];
   sameCode?: { key: string; attempts: number; same: number; lost: number; passed: boolean }[];   // 옛 서버는 없다
   repoPick?: { must: string[]; check: string[]; human: boolean; picked: { repo: string; commits: number | null }[] } | null;

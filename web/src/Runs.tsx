@@ -795,12 +795,13 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
   const a = q.data, rows = a.nodes.filter(x => x.attempts > 0), sum = (f: (x: StatNode) => number) => a.nodes.reduce((t, x) => t + f(x), 0);
   const ps = byPhase(a), cut = dropShared(ps.map(p => p.name)), max = Math.max(1, ...ps.map(p => p.ms), ...a.nodes.map(x => x.time?.work ?? 0));
   const human = sum(x => x.time?.human ?? 0), codexOut = Object.values(a.codex.nodes).reduce((s, x) => s + x.out, 0);
+  const claudeP = Object.values(a.codex.claude ?? {}).reduce((s, x) => s + x.cost, 0);
   const tiles: [string, string, string][] = [
     ['걸린 시간', dur(a.elapsed), a.flow ? `일 ${dur(a.flow.work)} · 빈 시간 ${dur(a.flow.idle)}` : `노드가 일한 시간 합 ${dur(sum(x => x.time?.work ?? 0))}`],
     ['사람 대기', dur(human), human ? `런의 ${Math.round(human / (a.elapsed || 1) * 100)}%` : '사람을 기다리지 않았다'],
     ['다시 돈 시간', dur(a.redo.again + a.redo.fixing), `되돌림 ${a.rewinds.length}번 · 고치는 노드 ${dur(a.redo.fixing)}`],
     ['Claude 입력 토큰', big(sum(x => x.tokens ? inTok(x.tokens) : 0)),
-      `출력 ${big(sum(x => x.tokens?.output ?? 0))}${codexOut ? ` · Codex 출력 ${big(codexOut)}` : ''}${a.codex.weekly ? ` · Codex 주간 ${a.codex.weekly[0]}→${a.codex.weekly[1]}%` : ''}`],
+      `출력 ${big(sum(x => x.tokens?.output ?? 0))}${claudeP ? ` · 명령 노드 claude -p $${claudeP.toFixed(2)}` : ''}${codexOut ? ` · Codex 출력 ${big(codexOut)}` : ''}${a.codex.weekly ? ` · Codex 주간 ${a.codex.weekly[0]}→${a.codex.weekly[1]}%` : ''}`],
   ];
   const cols = [...new Set(a.records.flatMap(o => Object.keys(o)))].slice(0, 8), cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
   const toggle = (n: string) => setOpen(o => { const s = new Set(o); if (!s.delete(n)) s.add(n); return s; });

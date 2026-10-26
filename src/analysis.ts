@@ -82,17 +82,24 @@ export function redo(steps: { key: string; fixOnly?: boolean }[], events: Ev[]) 
   }
   return out;
 }
-// Codex 사용량 — 엔진이 남긴 기록의 {"kind":"usage","node","codex":{"in","out","cacheR"},"weekly"} 줄을 노드마다 더하고, 주간 한도 %는 처음 · 끝
+// Codex 사용량 — 엔진이 남긴 기록의 {"kind":"usage","node","codex":{"in","out","cacheR"},"weekly"} 줄을 노드마다 더하고, 주간 한도 %는 처음 · 끝.
+// 명령 노드가 부른 claude -p(세션 기록이 없다)는 {"kind":"usage","node","claude":{"in","out","cacheR","cost"}} 줄 — 노드마다 따로(runAnalysis 가 그 노드 토큰에 더한다)
 export function codexUsage(records: Record<string, unknown>[]) {
-  const nodes: Record<string, { in: number; out: number; cacheR: number }> = {}, weekly: number[] = [];
+  const nodes: Record<string, { in: number; out: number; cacheR: number }> = {}, claude: Record<string, { in: number; out: number; cacheR: number; cost: number }> = {}, weekly: number[] = [];
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0;
   for (const o of records) {
     if (o.kind !== 'usage') continue;
-    const c = (o.codex ?? {}) as Record<string, unknown>, k = typeof o.node === 'string' ? o.node : '';
-    const n = nodes[k] ??= { in: 0, out: 0, cacheR: 0 }, num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0;
+    const k = typeof o.node === 'string' ? o.node : '';
+    if (o.claude && typeof o.claude === 'object') {
+      const c = o.claude as Record<string, unknown>, n = claude[k] ??= { in: 0, out: 0, cacheR: 0, cost: 0 };
+      n.in += num(c.in); n.out += num(c.out); n.cacheR += num(c.cacheR); n.cost += num(c.cost);
+      continue;
+    }
+    const c = (o.codex ?? {}) as Record<string, unknown>, n = nodes[k] ??= { in: 0, out: 0, cacheR: 0 };
     n.in += num(c.in); n.out += num(c.out); n.cacheR += num(c.cacheR);
     if (typeof o.weekly === 'number') weekly.push(o.weekly);
   }
-  return { nodes, weekly: weekly.length ? [weekly[0], weekly.at(-1)!] as [number, number] : null };
+  return { nodes, claude, weekly: weekly.length ? [weekly[0], weekly.at(-1)!] as [number, number] : null };
 }
 // 헛도는 검사 — 같은 노드의 다음 시도가 앞 시도와 같은 코드 지문(fp)으로 시작했다: 실패 · 고치기 · 사람 판단 뒤에도 코드가 그대로인 채 다시 돌았다.
 // lost = 그런 시도마다 앞 시도 시작부터 이 시도 시작까지(앞 시도 · 고치기 · 사람 대기), passed = 마지막 시도가 끝남(코드 그대로 통과면 거짓 경보 의심)
@@ -291,7 +298,13 @@ export function runAnalysis(id: number) {
   const r = loadRun(id);
   if (!r) return null;
   const inside: Record<string, Inside> = {};
-  const events = readEvents(id), time = timings(events, Date.now()), tok = tokens(r, inside);   // 옛 런은 기록이 없어 시간 없음
+  const events = readEvents(id), time = timings(events, Date.now()), tok = tokens(r, inside), use = codexUsage(records(id));   // 옛 런은 기록이 없어 시간 없음
+  // 명령 노드의 claude -p 사용량을 그 노드 토큰에(모델 칸에는 「claude -p」)
+  for (const [k, c] of Object.entries(use.claude)) {
+    const t = tok[k] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, models: [] };
+    t.input += c.in; t.output += c.out; t.cacheRead += c.cacheR;
+    if (!t.models.includes('claude -p')) t.models.push('claude -p');
+  }
   const nodes = r.steps.map(s => {
     const n = r.nodes[s.key];
     return {
@@ -304,6 +317,6 @@ export function runAnalysis(id: number) {
   const last = Math.max(r.created, ...events.map(e => e.t));
   const end = r.state === 'done' ? last : Date.now(), recs = records(id);
   return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created, timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
-    flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: codexUsage(recs), compare: compare(r),
+    flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: use, compare: compare(r),
     sameCode: sameCode(events), repoPick: repoPick(id, recs) };
 }

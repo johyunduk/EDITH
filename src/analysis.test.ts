@@ -113,3 +113,10 @@ test('런 분석 하위 에이전트 — 부른 노드(Agent 도구 호출 id)�
   assert.deepEqual(inside.p.agents, { n: 1, ms: 60_000, turns: 2 });
   assert.deepEqual((into as Record<string, { output: number; models: string[] }>).p.output, 2 + 7 + 3);
 });
+
+test('런 분석 claude -p 사용량 — 명령 노드가 남긴 usage 줄의 claude 칸은 Codex 와 따로, 노드마다', () => {
+  const u = codexUsage([{ kind: 'usage', node: 'r', claude: { in: 32, out: 50, cacheR: 400, cost: 0.0012 } }, { kind: 'usage', node: 'r', claude: { in: 8, out: 1, cacheR: 0, cost: 0.0008 } },
+    { kind: 'usage', node: 'c', codex: { in: 5, out: 6, cacheR: 7 } }]);
+  assert.deepEqual(u.claude, { r: { in: 40, out: 51, cacheR: 400, cost: 0.002 } });
+  assert.deepEqual(u.nodes, { c: { in: 5, out: 6, cacheR: 7 } });
+});
