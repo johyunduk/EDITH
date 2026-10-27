@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkAlive, claudeLine, follow, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
+import { checkAlive, claudeLine, follow, isProgram, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
 import { agentSince, hasShells, isLimitScreen, liveWindow, noteAgents } from './herdr.ts';
 
 test('이전 대화 — 4MB 보다 긴 줄을 사이에 두고도 순서·바이트 위치를 지켜 거꾸로 모은다', () => {
@@ -117,4 +117,13 @@ test('백그라운드 셸 — 입력칸 아래 모드 줄의 「N shell」 만',
   assert.ok(!hasShells([...box, '  ⏵⏵ auto mode on · ⧉ 7']));
   assert.ok(!hasShells(['⏺ 1 shell 로 돌렸다', ...box]));   // 입력칸 위 글은 안 본다
   assert.ok(!hasShells(['  ⏵⏵ auto mode on · 1 shell']));   // 입력칸이 안 보이면(메뉴 중) 모른다
+});
+
+test('pane 프로그램 — Windows 의 전체 경로·.exe·대소문자도 claude 로 본다', () => {
+  assert.ok(isProgram('claude', 'claude'));
+  assert.ok(isProgram('C:\\Users\\u\\.local\\bin\\claude.exe', 'claude'));
+  assert.ok(isProgram('/home/u/.local/bin/claude', 'claude'));
+  assert.ok(isProgram('C:/tools/Claude.EXE', 'claude'));
+  assert.ok(!isProgram('claude-helper', 'claude'));
+  assert.ok(!isProgram('C:\\claude\\node.exe', 'claude'));
 });

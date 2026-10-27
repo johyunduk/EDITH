@@ -9,7 +9,7 @@
 import { execFileSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { agentSince, sessionOf, until } from './herdr.ts';
 import { sh } from './sh.ts';
 
@@ -257,6 +257,8 @@ export function follow(f: LiveFile | undefined, files: () => string[] = () => re
   }
   return f;   // bg 세션이 끝났으면 원래 것
 }
+// herdr process-info 의 argv0 — macOS·Linux 는 `claude`, Windows 는 `C:\…\claude.exe` 처럼 전체 경로·.exe 가 붙는다(win32.basename 은 / 와 \ 를 다 가른다)
+export const isProgram = (argv0: string, name: string) => win32.basename(argv0).toLowerCase().replace(/\.exe$/, '') === name;
 const pids = new Map<string, number>();
 function liveFile(pane: string) {
   const read = (pid: number) => follow(readLive(pid));
@@ -264,7 +266,7 @@ function liveFile(pane: string) {
   if (hit) return hit;
   try {
     const out = execFileSync('herdr', ['pane', 'process-info', '--pane', pane], { encoding: 'utf8', timeout: 3000 });
-    const pid = (JSON.parse(out).result.process_info as { foreground_processes: { argv0: string; pid: number }[] }).foreground_processes.find(p => p.argv0 === 'claude')?.pid;
+    const pid = (JSON.parse(out).result.process_info as { foreground_processes: { argv0: string; pid: number }[] }).foreground_processes.find(p => isProgram(p.argv0, 'claude'))?.pid;
     if (!pid) return undefined;
     pids.set(pane, pid);
     return read(pid);
@@ -316,7 +318,7 @@ function codexOpen(pane: string) {
   let file: string | null = null;
   try {
     const info = JSON.parse(execFileSync('herdr', ['pane', 'process-info', '--pane', pane], { encoding: 'utf8', timeout: 3000 })).result.process_info as { foreground_processes: { argv0: string; pid: number }[] };
-    const pid = info.foreground_processes.find(p => p.argv0 === 'codex')?.pid;
+    const pid = info.foreground_processes.find(p => isProgram(p.argv0, 'codex'))?.pid;
     const files = pid ? rolloutsIn(execFileSync('lsof', ['-Fn', '-p', String(pid)], { encoding: 'utf8', timeout: 3000 })) : [];
     file = files.find(f => metaCwd(f)) ?? files[0] ?? null;   // 하위 대화를 함께 열고 있으면 본 대화 먼저
   } catch { /* herdr·lsof 없음 */ }
