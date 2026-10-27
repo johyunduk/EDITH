@@ -82,6 +82,7 @@ function setup() {
 }
 
 // 업데이트 — 받기(git pull) → 화면 빌드 → 떠 있는 EDITH 를 새 코드로 다시 켠다(/api/restart).
+// 이 폴더에서 고친 것(커밋 안 된)은 받은 코드 위에 다시 얹는다 — 겹치면 Claude 가 합치고 검사로 확인, 못 하면 stash 에(src/update.ts).
 // 설치 단계(도구·herdr 통합·플러그인)가 바뀌었으면 edith setup. npm 은 Windows 에서 npm.cmd 라 셸로 띄운다(인자는 고정 글자뿐).
 async function update(args: string[]) {
   const i = args.indexOf('--port'), port = i >= 0 ? Number(args[i + 1]) : 4320;
@@ -89,13 +90,26 @@ async function update(args: string[]) {
     console.log(`$ ${cmd} ${a.join(' ')}`);
     if (spawnSync(cmd, a, { cwd: REPO, stdio: 'inherit', shell: win }).status !== 0) fail(why);
   };
-  if (existsSync(join(REPO, '.git'))) run('git', ['pull', '--ff-only'], '받지 못했다 — 이 폴더에서 고친 것이 있으면 커밋한 뒤 git pull 로 합친다');
+  const U = existsSync(join(REPO, '.git')) ? await import('./update.ts') : null, notes: string[] = [];
+  if (U) {
+    const eol = U.restoreEolOnly(REPO);
+    if (eol.length) console.log(`줄끝(CRLF · LF)만 바뀐 파일은 되돌렸다: ${eol.join(' · ')}`);
+    console.log('$ git pull --ff-only --autostash');
+    const r = U.pull(REPO);
+    if (!r.ok) fail(r.why!);
+    if (r.note) notes.push(r.note);
+  }
   run('npm', ['run', 'build'], '화면 빌드가 실패했다');
-  if (!(await isEdith(port))) return console.log('끝 — edith 로 켠다');
+  // 커밋 안 된 고침은 이 기기에만 있다 — 다른 기기가 받지 못하고, 오래 두면 다음 받기와 겹친다
+  const left = U?.uncommitted(REPO) ?? [];
+  if (left.length) notes.push(`커밋 안 된 고침이 이 폴더에만 있다(${left.join(' · ')}) — 다른 기기에서도 쓰려면 커밋해서 올린다`);
+  const tail = () => notes.forEach(n => console.log(`· ${n}`));
+  if (!(await isEdith(port))) { console.log('끝 — edith 로 켠다'); return tail(); }
   const { consoleKey } = await import('./server.ts'), origin = `http://127.0.0.1:${port}`;
   const r = await fetch(`${origin}/api/restart`, { method: 'POST', headers: { origin, 'content-type': 'application/json', cookie: `edith-${port}=${consoleKey()}` }, body: '{}' }).catch(() => null);
   console.log(r?.ok ? `끝 — ${port} 의 EDITH 를 새 코드로 다시 켰다(그 터미널에서 그대로 돈다)`
     : `끝 — 떠 있는 EDITH 를 다시 켜지 못했다(${r ? await r.text() : '닿지 않음'}) — 그 터미널에서 Ctrl+C 뒤 edith`);
+  tail();
 }
 
 // 다른 기기 잇기 — 인자가 없으면 Tailscale 에 붙은 기기를 보여 주고 번호·그 기기 사용자 이름을 묻는다

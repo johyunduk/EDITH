@@ -34,6 +34,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | 파일 | 하는 일 |
 |---|---|
 | `src/cli.ts` | `edith` 명령 — 도구 확인, herdr 서버 시작, 화면 서버, 브라우저, `edith update`·`setup`·`connect` |
+| `src/update.ts` | `edith update` 의 받기 — 줄끝만 바뀐 파일 되돌리기, `git pull --ff-only --autostash`, 겹치면 Claude 로 합치고 타입 검사 · 시험 · 화면 빌드로 확인(못 하면 stash 에 두고 받은 코드로) |
 | `src/server.ts` | HTTP 서버 — 보안 검사(Host·열쇠·출처 — `refuse`), `/api/*` 길 나누기, `web/dist` 주기, SSE(`/api/events`), 다시 켜기(`/api/restart`) |
 | `src/herdr.ts` | herdr — 스냅샷, 이벤트 구독, 터미널 흐름(보기·입력), 프롬프트·키, 나누기·옮기기·닫기, 셸 기록, 상태줄 사용량 |
 | `src/chat.ts` | Claude·Codex 세션 기록(JSONL) → 대화 항목, 기록 파일 찾기, Codex 사용량, 백그라운드 작업 |
