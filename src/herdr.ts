@@ -387,6 +387,7 @@ export async function spaces() {
   return (s.workspaces as { workspace_id: string; label?: string; agent_status?: string; worktree?: { checkout_path: string } }[]).map(w => ({
     id: w.workspace_id, label: w.label ?? w.workspace_id, busy: w.agent_status === 'working',
     home: w.worktree?.checkout_path, cwds: s.panes.filter(p => p.workspace === w.workspace_id).map(p => p.cwd).filter(Boolean),
+    panes: s.panes.filter(p => p.workspace === w.workspace_id).map(p => p.id),
   }));
 }
 export const closeWorkspace = (id: string) => api('workspace.close', { workspace_id: id });

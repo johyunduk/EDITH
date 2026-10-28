@@ -21,6 +21,7 @@ import { engineMap, workshopFile } from './engineMap.ts';
 import { apply, install, pack, plan, preview, unpack } from './skillsMove.ts';
 import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } from './machines.ts';
 import { canShoot, screenshot } from './screenshot.ts';
+import { prune, UPLOAD_KEEP, UPLOADS } from './uploads.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
 import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, syncGuide } from './workshop.ts';
 import { act, acted, actionsOf, dropRun, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
@@ -117,17 +118,14 @@ const reply = (res: ServerResponse, code: number, body: unknown) => {
 
 // 첨부 — 화면이 올린 파일(base64)을 내 데이터 폴더에 두고 그 경로를 돌려준다. 에이전트가 그 경로로 읽는다.
 // 이름은 글자·숫자·.-_ 만 남기고 앞에 시각·난수를 붙여 겹치지 않게 한다.
-// 7일 지난 첨부는 올릴 때 지운다 — 에이전트는 받자마자 읽는다. 지난 대화를 이어 가다 그 파일이 다시 필요하면 다시 올린다.
-const UPLOAD_MAX = 15 * 1024 * 1024, UPLOAD_KEEP = 7 * 86_400_000;
-export function prune(dir: string, keep: number, now = Date.now()) {
-  for (const f of readdirSync(dir)) try { if (now - statSync(join(dir, f)).mtimeMs > keep) unlinkSync(join(dir, f)); } catch { /* 그새 지워짐 */ }
-}
+// 7일 지난 첨부는 올릴 때 지운다(src/uploads.ts) — 에이전트는 받자마자 읽는다. 지난 대화를 이어 가다 그 파일이 다시 필요하면 다시 올린다.
+const UPLOAD_MAX = 15 * 1024 * 1024;
 function upload(b: { name?: unknown; data?: unknown }) {
   if (typeof b.data !== 'string') throw new Error('파일이 없다');
   const buf = Buffer.from(b.data, 'base64');
   if (!buf.length || buf.length > UPLOAD_MAX) throw new Error('파일은 15MB 까지');
   const name = (typeof b.name === 'string' ? basename(b.name) : '').replace(/[^\p{L}\p{N}._-]+/gu, '_').replace(/^\.+/, '').slice(-80) || 'file';
-  const dir = join(DATA_DIR, 'uploads');
+  const dir = UPLOADS;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   prune(dir, UPLOAD_KEEP);
   const path = join(dir, `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}-${name}`);

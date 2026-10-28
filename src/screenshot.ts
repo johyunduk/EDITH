@@ -4,8 +4,8 @@
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { DATA_DIR } from './config.ts';
 import { sh } from './sh.ts';
+import { prune, UPLOAD_KEEP, UPLOADS } from './uploads.ts';
 
 export const canShoot = process.platform === 'darwin';
 
@@ -13,8 +13,9 @@ export const canShoot = process.platform === 'darwin';
 const THUMB = ['com.apple.screencapture', 'show-thumbnail'];
 export async function screenshot() {
   if (!canShoot) throw new Error('스크린샷 버튼은 macOS 만 — OS 캡처를 클립보드로 찍어 입력칸에 붙여넣는다');
-  const dir = join(DATA_DIR, 'uploads');
+  const dir = UPLOADS;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  prune(dir, UPLOAD_KEEP);   // 올리기와 같게 — 스크린샷만 찍어도 오래된 첨부가 남지 않게
   const path = join(dir, `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}-screenshot.png`);
   const prev = await sh('defaults', ['read', ...THUMB], { ok: true });
   try {

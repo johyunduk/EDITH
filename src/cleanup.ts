@@ -1,7 +1,7 @@
 // 정리 — 운영까지 다 나간 안건의 워크트리 · herdr 워크스페이스 · 로컬 브랜치를 치우고 보관한다(배포 화면 카드 「정리」, 보관했는데 남은 것은 「Complete」 의 「남은 n개 정리」).
 // 브랜치마다 「코드가 들어갔나」 를 해시가 아니라 내용으로 본다 — 들어갔어야 할 곳(into)에 그 브랜치를 합쳐 본 트리가 into 트리와 같으면 들어간 것(체리픽 · 스쿼시도).
 // 치우는 것: 원본(→ 운영), 그 원본에 합친 이슈 브랜치(런 edith-repos.json 의 via → 원본), 첫 환경 머지 브랜치 merge/<끝>(→ dev — 공방 키트 「dev 머지 준비」 꼴),
-// 그 뒤 환경 머지 브랜치 merge-<환경>/<끝>(→ 그 환경 — 「stage · prod 머지 준비」). 원격 브랜치 · 레포 본 체크아웃 · 런 기록은 남긴다.
+// 그 뒤 환경 머지 브랜치 merge-<환경>/<끝>(→ 그 환경 — 「stage · prod 머지 준비」), 이어진 끝난 런의 「▶ 이름 #번호」 워크스페이스. 원격 브랜치 · 레포 본 체크아웃 · 런 기록은 남긴다.
 // 걸리면(코드가 덜 들어감 · 커밋 안 한 변경 · stash · 일하는 워크스페이스 · 엔진 훅이 막음) 그 항목은 아무것도 지우지 않는다 — 미리보기(cleanPlan)와 정리(cleanRun)가 같은 확인.
 // 엔진 몫(작업 문서 · 외부 기록 확인 · 런 안 사본 같은 것)은 공방 훅 on: "cleanup" 이 한다: EDITH_CLEAN_MODE=check 면 확인만 — 표준 출력 {"lines": [{what, ref, parts?, ok, check, skippable?}]}
 // (skippable — 사람이 보고 넘길 수 있는 엔진 확인, 화면 「넘기고 정리」. EDITH 자신의 확인 — 코드 · 커밋 안 한 변경 · 워크스페이스 · 런 — 은 넘기지 못한다.
@@ -13,13 +13,14 @@ import { ANY, change, commit, DEPLOY_FILE, git, loadStore, mainRepo, note, out, 
 import { closeWorkspace, spaces } from './herdr.ts';
 import { each } from './reach.ts';
 import { readRefs } from './repos.ts';
-import { deployHook, listRuns, RUNS, runHook, type RunAction } from './runner.ts';
+import { deployHook, listRuns, loadRun, RUNS, runHook, type RunAction } from './runner.ts';
 import { lastLine } from './timeline.ts';
+import { refsIn, removeUploads, runRefPaths, transcriptDir } from './uploads.ts';
 
 export type Line = { what: string; ref: string; parts?: string; ok: boolean; check: string; skippable?: true; fix?: string };
-export type Space = { id: string; label: string; busy: boolean; home?: string; cwds: string[] };
+export type Space = { id: string; label: string; busy: boolean; home?: string; cwds: string[]; panes?: string[] };
 type Target = { what: string; branch: string; local: boolean; worktree?: string; spaces: { id: string; label: string }[] };
-export type CleanPlan = { id: string; repo: string; name: string; branch: string; tag?: string; agenda?: string; done?: string; runs: number[]; lines: Line[]; hook: Line[]; targets: Target[]; ok: boolean };   // hook — 엔진 훅 확인 줄(lines 에도 들어 있다)
+export type CleanPlan = { id: string; repo: string; name: string; branch: string; tag?: string; agenda?: string; done?: string; runs: number[]; lines: Line[]; hook: Line[]; targets: Target[]; runSpaces: { id: string; label: string }[]; ok: boolean };   // hook — 엔진 훅 확인 줄(lines 에도 들어 있다)
 type Hook = { dir: string; action: RunAction } | null | undefined;   // null — 훅 없음(시험)
 
 const label = (ref: string) => ref.replace(/^origin\//, '');
@@ -36,6 +37,12 @@ export function spacesOf(all: Space[], wt: string) {
   const mine = all.filter(s => (s.home && under(s.home, wt)) || (s.cwds.length > 0 && s.cwds.every(c => under(c, wt))));
   return { mine, mixed: all.filter(s => !mine.includes(s) && s.cwds.some(c => under(c, wt))) };
 }
+// 끝난 런의 워크스페이스 — 런 pane 이 든 것(런 작업 폴더는 워크트리 바깥이라 spacesOf 로는 안 잡힌다). 런 밖 pane 이 있거나 일하는 중이면 닫지 않고 남긴다
+export function runSpacesOf(all: Space[], panes: string[]) {
+  const ws = all.filter(s => s.panes?.some(p => panes.includes(p)));
+  const mine = ws.filter(s => !s.busy && s.panes!.every(p => panes.includes(p)));
+  return { mine, kept: ws.filter(s => !mine.includes(s)) };
+}
 // 그 항목에 이어진 런과, 그 원본에 합친 이슈 브랜치(런 edith-repos.json 의 via)
 // active — 아직 끝나지 않은 런(끝 · 버림이 아니면 — 멈춤도 이어 갈 수 있다). 그 런이 쓰는 워크트리는 치우지 않는다
 async function linked(x: Item) {
@@ -47,7 +54,8 @@ async function linked(x: Item) {
     runs.add(r.id);
     if (r.state !== 'done' && r.state !== 'dropped') active.add(r.id);
   }
-  return { runs: [...runs], issues: [...issues], active: [...active] };
+  const ended = [...runs].filter(n => !active.has(n)).map(n => { const r = loadRun(n); return { id: n, panes: r ? [r.pane, ...Object.values(r.panes ?? {}).map(o => o.pane)].filter((p): p is string => !!p) : [] }; });
+  return { runs: [...runs], issues: [...issues], active: [...active], ended };
 }
 const hookEnv = (p: CleanPlan, mode: 'check' | 'run' | 'fix') => ({ EDITH_CLEAN_MODE: mode, EDITH_CLEAN_REPO: p.repo, EDITH_CLEAN_BRANCH: p.branch, EDITH_DEPLOY_ID: p.id,
   EDITH_CLEAN_WORKTREES: p.targets.flatMap(t => t.worktree ?? []).join('\n'), EDITH_CLEAN_RUNS: p.runs.join(',') });
@@ -64,7 +72,7 @@ export function parseLines(t: string): Line[] {
 
 // reuse — 앞 미리보기의 훅 확인 줄(정리 때 느린 확인을 다시 돌리지 않게)
 async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string, reuse?: Line[]): Promise<CleanPlan> {
-  const envs = s.envs, tail = x.branch.split('/').pop()!, { runs, issues, active } = await linked(x);
+  const envs = s.envs, tail = x.branch.split('/').pop()!, { runs, issues, active, ended } = await linked(x);
   const own = await commit(x.repo, `refs/heads/${x.branch}`) ? x.branch : `origin/${x.branch}`;
   const cands = [{ what: '원본', branch: x.branch, into: envs.at(-1)!.ref }, ...issues.map(i => ({ what: '이슈', branch: i, into: own })),
     { what: `${envs[0].name} 머지`, branch: `merge/${tail}`, into: envs[0].ref }, ...envs.slice(1).map(e => ({ what: `${e.name} 머지`, branch: `merge-${e.name}/${tail}`, into: e.ref }))];
@@ -83,7 +91,13 @@ async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string,
     lines.push({ what: c.what, ref: c.branch, parts: [wt ? `워크트리 ${basename(wt)}` : '', ...mine.map(m => `워크스페이스 「${m.label}」`), local ? '로컬 브랜치' : ''].filter(Boolean).join(' · '),
       ok: !bad, check: bad || `코드 ${label(c.into)} 에 있음` });
   }
-  const p: CleanPlan = { id: x.id, repo: x.repo, name: basename(x.repo), branch: x.branch, ...(x.tag ? { tag: x.tag } : {}), ...(x.agenda ? { agenda: x.agenda } : {}), ...(x.done ? { done: x.done } : {}), runs, lines, hook: [], targets, ok: false };
+  const runSpaces: CleanPlan['runSpaces'] = [];
+  for (const e of ended) {
+    const { mine, kept } = runSpacesOf(sp, e.panes);
+    for (const m of mine) { runSpaces.push({ id: m.id, label: m.label }); lines.push({ what: '런', ref: `#${e.id}`, parts: `워크스페이스 「${m.label}」`, ok: true, check: '런이 끝났다 — 닫는다' }); }
+    for (const k of kept) lines.push({ what: '런', ref: `#${e.id}`, parts: `워크스페이스 「${k.label}」`, ok: true, check: k.busy ? '일하는 중이라 남긴다' : '런 밖 pane 이 있어 남긴다' });
+  }
+  const p: CleanPlan = { id: x.id, repo: x.repo, name: basename(x.repo), branch: x.branch, ...(x.tag ? { tag: x.tag } : {}), ...(x.agenda ? { agenda: x.agenda } : {}), ...(x.done ? { done: x.done } : {}), runs, lines, hook: [], targets, runSpaces, ok: false };
   if (hook && targets.length) {
     if (reuse) p.hook = reuse;
     else {
@@ -92,7 +106,7 @@ async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string,
     }
     lines.push(...p.hook);
   }
-  if (!targets.length) lines.push({ what: '정리', ref: x.branch, ok: true, check: '치울 워크트리 · 브랜치가 없다 — 보관만' });
+  if (!targets.length && !runSpaces.length) lines.push({ what: '정리', ref: x.branch, ok: true, check: '치울 워크트리 · 브랜치가 없다 — 보관만' });
   return { ...p, ok: lines.every(l => l.ok) };
 }
 const idsOf = (b: { ids?: unknown }) => {
@@ -151,6 +165,7 @@ export async function cleanRun(b: { ids?: unknown; skip?: unknown }, file = DEPL
   const reuse = new Map(idsOf(b).flatMap(id => { const h = recentHook(id); return h ? [[id, h] as const] : []; }));
   const plans = await cleanPlan(b, file, all, hook, reuse), done: string[] = [], stopped: string[] = [];
   const skip = new Set(Array.isArray(b.skip) ? b.skip.filter((x): x is string => typeof x === 'string') : []);
+  const closed = new Set<string>();   // 런 하나가 두 항목(BE · FE)에 이어지면 먼저 정리한 항목이 닫는다
   for (const p of plans) {
     const name = `${p.name} ${p.branch}`, over = skipped(p, skip);
     if (!p.ok && !over) { stopped.push(`${name} — ${p.lines.find(l => !l.ok)!.check}`); continue; }
@@ -158,19 +173,25 @@ export async function cleanRun(b: { ids?: unknown; skip?: unknown }, file = DEPL
       const log = logOf(file, p.id, 'clean'), r = await runHook(hook, hookEnv(p, 'run'), log, 5 * 60_000);
       if (r.code) { stopped.push(`${name} — 정리 훅이 멈췄다: ${why(log, r.code)}`); continue; }
     }
-    const errs: string[] = [], gone = { wt: 0, ws: 0, br: 0 };
+    const errs: string[] = [], gone = { wt: 0, ws: 0, br: 0, up: 0 };
     for (const t of p.targets) {
       for (const w of t.spaces) try { await close(w.id); gone.ws++; } catch (e) { errs.push(`워크스페이스 「${w.label}」 — ${(e as Error).message.split('\n')[0]}`); }
       if (!t.worktree) continue;
       const r = await git(p.repo, ['worktree', 'remove', t.worktree]);
       if (r.code) errs.push(`워크트리 ${basename(t.worktree)} — ${(r.stderr || r.stdout).trim().split('\n')[0]}`); else gone.wt++;
     }
+    for (const w of p.runSpaces.filter(w => !closed.has(w.id))) try { await close(w.id); closed.add(w.id); gone.ws++; } catch (e) { errs.push(`워크스페이스 「${w.label}」 — ${(e as Error).message.split('\n')[0]}`); }
     await git(p.repo, ['worktree', 'prune']);
     for (const t of p.targets.filter(t => t.local)) {
       const r = await git(p.repo, ['branch', '-D', t.branch]);
       if (r.code) errs.push(`브랜치 ${t.branch} — ${(r.stderr || r.stdout).trim().split('\n')[0]}`); else gone.br++;
     }
-    const did = `워크트리 ${gone.wt} · 워크스페이스 ${gone.ws} · 로컬 브랜치 ${gone.br}${over ? ` · 넘긴 확인: ${p.lines.filter(l => !l.ok).map(l => l.check).join(' · ')}`.slice(0, 160) : ''}`;
+    // 첨부 — 이 항목의 런 · 워크트리에서 돈 Claude 대화가 쓴 것(src/uploads.ts). 안 끝난 다른 런이 같은 파일을 쓰면 남긴다
+    const runFiles = (ids: number[]) => ids.flatMap(id => runRefPaths(join(RUNS, String(id))));
+    const keep = refsIn(runFiles(listRuns().filter(r => !p.runs.includes(r.id) && r.state !== 'done' && r.state !== 'dropped').map(r => r.id)));
+    const mine = refsIn([...runFiles(p.runs), ...p.targets.flatMap(t => t.worktree ? [transcriptDir(t.worktree)] : [])]);
+    gone.up = removeUploads([...mine].filter(n => !keep.has(n)));
+    const did = `워크트리 ${gone.wt} · 워크스페이스 ${gone.ws} · 로컬 브랜치 ${gone.br}${gone.up ? ` · 첨부 ${gone.up}` : ''}${over ? ` · 넘긴 확인: ${p.lines.filter(l => !l.ok).map(l => l.check).join(' · ')}`.slice(0, 160) : ''}`;
     const x = loadStore(file).items.find(i => i.id === p.id), day = !errs.length && x && !x.done ? await prodDay(x, loadStore(file)) : undefined;
     // 다 치웠을 때만 보관한다 — 일부만이면 남은 것을 다시 정리할 수 있게 둔다
     change(file, ANY, s => { const y = s.items.find(i => i.id === p.id); if (!y) return; if (day) y.done = day; note(y, errs.length ? `정리 일부 — ${did} · 남음: ${errs.join(' · ').slice(0, 200)}` : `정리 — ${did}${day ? ` · 보관(${day.slice(5).replace('-', '/')})` : ''}`); });

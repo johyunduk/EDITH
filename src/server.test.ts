@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { prune, refuse } from './server.ts';
+import { refuse } from './server.ts';
+import { prune } from './uploads.ts';
 
 const KEY = 'k'.repeat(32);
 const req = (method: string, headers: Record<string, string> = {}) => ({ method, headers: { host: '127.0.0.1:4320', ...headers } });

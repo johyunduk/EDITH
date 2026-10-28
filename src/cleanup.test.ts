@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanFix, cleanPlan, cleanRun, cleanStart, cleanState, contentIn, parseLines, spacesOf, type Space } from './cleanup.ts';
+import { cleanFix, cleanPlan, cleanRun, cleanStart, cleanState, contentIn, parseLines, runSpacesOf, spacesOf, type Space } from './cleanup.ts';
 import { importItems, loadStore } from './deploy.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -54,6 +54,19 @@ test('spacesOf — 워크트리 자리이거나 pane 이 모두 안이면 그 �
   const { mine, mixed } = spacesOf(all, '/w/feature');
   assert.deepEqual(mine.map(s => s.id), ['a', 'b']);
   assert.deepEqual(mixed.map(s => s.id), ['c']);
+});
+
+test('runSpacesOf — 끝난 런 pane 이 든 워크스페이스만, 런 밖 pane 이 있거나 일하는 중이면 남긴다', () => {
+  const all: Space[] = [
+    { id: 'r', label: '▶ 런 #3', busy: false, cwds: ['/w'], panes: ['r:p1', 'r:p2'] },
+    { id: 'x', label: '▶ 런 #3 · 갈래', busy: false, cwds: ['/w', '/home'], panes: ['x:p1', 'x:p2'] },
+    { id: 'b', label: '▶ 런 #3 · 다른 갈래', busy: true, cwds: ['/w'], panes: ['b:p1'] },
+    { id: 'o', label: '다른 일', busy: false, cwds: ['/w'], panes: ['o:p1'] },
+    { id: 'n', label: '옛 꼴', busy: false, cwds: ['/w'] },
+  ];
+  const { mine, kept } = runSpacesOf(all, ['r:p1', 'r:p2', 'x:p1', 'b:p1']);
+  assert.deepEqual(mine.map(s => s.id), ['r']);
+  assert.deepEqual(kept.map(s => s.id), ['x', 'b']);
 });
 
 test('parseLines — 마지막 줄의 JSON 만, 틀린 줄은 버린다', () => {
