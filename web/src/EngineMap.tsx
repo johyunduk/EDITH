@@ -16,7 +16,7 @@ type Phase = { name: string; groups: { label: string; rows: Row[] }[]; hidden: s
 type EngineMapData = { summary?: string; phases: Phase[]; hidden: number; mapped: boolean; errors: string[]; draft: boolean };
 
 // 역할 — 아이콘(선) · 색 · 이름 · 오른쪽 상자 제목
-const ROLE: Record<Role, { icon: ReactNode; tone: string; pill: string; label: string; box: string }> = {
+export const ROLE: Record<Role, { icon: ReactNode; tone: string; pill: string; label: string; box: string }> = {
   claude: { icon: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />, tone: 'text-violet-600 dark:text-violet-400', pill: 'bg-violet-500/12 text-violet-700 dark:text-violet-300', label: 'Claude 가 한다', box: 'Claude 가 받는 지시' },
   check: { icon: <><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></>, tone: 'text-sky-700 dark:text-sky-400', pill: 'bg-sky-500/12 text-sky-800 dark:text-sky-300', label: '자동 검사 — Claude 없음', box: '자동으로 돌리는 것' },
   human: { icon: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>, tone: 'text-amber-600 dark:text-amber-400', pill: 'bg-amber-500/15 text-amber-800 dark:text-amber-300', label: '사람이 확인', box: '사람에게 묻는 것' },

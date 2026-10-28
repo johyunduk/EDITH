@@ -1,6 +1,6 @@
 // 공방 — 체인(노드를 이은 것)과 엔진(체인 · 엔진을 이은 것)을 그리고 고치고, 런(돌리는 단위 — 엔진 하나 + 작업 폴더 · 단추)을 정한다. 셋은 파일 꼴이 같고 kind 로 가른다(만들 때 고른다).
 // 왼쪽 목록(맨 위 런, 그 아래 체인 · 엔진 트리), 가운데 캔버스(React Flow) 또는 런 설정(RunDef), 오른쪽 공방 Claude pane.
-// engine.json 은 이 화면만 쓴다(서버는 읽은 판이 같을 때만 저장). 스킬 파일은 오른쪽 Claude 가 쓰고, 사람이 노드에서 「연결」을 눌러 붙인다.
+// engine.json 은 이 화면만 쓴다(서버는 읽은 판이 같을 때만 저장). 스킬 파일은 오른쪽 Claude 가 쓰고, 사람이 노드 칸에서 「이 노드에 붙이기」를 눌러 붙인다.
 // 노드는 스킬(Claude 가 한다) · 명령(실행기가 돌린다) · 체인 · 엔진(그 자리에서 그것이 돈다 — 엔진에서만) 중 하나. 화살표는 보통 또는 「실패하면」(고치고 다시).
 // 주소는 #/workshop/<폴더>. 설계만 한다 — 돌리는 것(런)은 머리줄 「런」.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -19,8 +19,9 @@ import { Bracketed, Empty, Icon, Tag } from './ui.tsx';
 import { Kind, STATUS } from './herdrUi.tsx';
 import { toast } from './copy.ts';
 import { StepFlow } from './StepFlow.tsx';
-import { EngineMap } from './EngineMap.tsx';
+import { EngineMap, ROLE } from './EngineMap.tsx';
 import type { FlowStep } from './stepFlow.ts';
+import { skillBrief, skillDetail } from './skillDesc.ts';
 
 type SkillRef = { from: 'engine' | 'installed'; id: string };
 type WNode = { id: string; title: string; skill: SkillRef | null; command?: string; engine?: string; x: number; y: number };
@@ -41,6 +42,7 @@ const KIND = { chain: '체인', engine: '엔진', run: '런' } as const;
 const VIEWS = [['map', '흐름 지도', '단계 칸과 줄로 본다 — 줄을 누르면 하는 일 · Claude 가 받는 지시 · 앞뒤 흐름'], ['canvas', '캔버스', '노드 · 화살표를 놓고 고친다'],
   ['flat', '펼쳐 보기', '안에 든 체인 · 엔진을 노드까지 펼친 캔버스 — 런 화면과 같은 모양']] as const;
 const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />;
+const PENCIL = <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>, ALERT = <><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></>;
 // 목록의 종류 표시 — 엔진은 겹친 판, 체인은 사슬
 const KIND_ICON = {
   engine: <><path d="m12 2 10 5-10 5L2 7z" /><path d="m2 12 10 5 10-5" /><path d="m2 17 10 5 10-5" /></>,
@@ -58,7 +60,8 @@ export function WorkshopPage({ id, side }: { id?: string; side: boolean }) {
   if (list.error && !list.data) return <p className="p-4 text-sm text-destructive">{String(list.error)}</p>;
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className={`max-h-72 shrink-0 overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
+      {/* relative — 목록 속 sr-only(position: absolute) 글이 이 칸 기준이 되어 함께 잘린다. 없으면 펼친 목록 길이만큼 페이지가 밀린다 */}
+      <aside className={`relative max-h-72 shrink-0 overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
         {list.data && <RunList engines={list.data.engines} sel={id} />}
         <EngineList list={list.data} sel={id} />
       </aside>
@@ -358,35 +361,60 @@ function EngineTree({ engines, sel }: { engines: Item[]; sel?: string }) {
   );
 }
 
-// 노드 상자 — 제목과 스킬. 스킬 칸은 붙음 · 없는 스킬 · Claude 가 쓰는 중 · 스킬 없음
-type Card = { title: string; chip: string; tone: 'linked' | 'missing' | 'writing' | 'none' | 'cmd' | 'eng'; engine?: boolean };
+// 노드 상자 — 도는 차례 번호 · 제목 · 하는 일 두 줄 · 스킬. 왼쪽 띠가 스킬 상태(붙음 · 없음 · 파일 없음 · Claude 가 쓰는 중)
+// 「실패하면」 화살표가 닿는 노드는 고칠 때만 돌아 번호 대신 「실패할 때」. on — 오른쪽 칸에서 고른 노드, lit — 오른쪽 목록에서 올린 노드
+type Card = { title: string; chip: string; tone: 'linked' | 'missing' | 'writing' | 'none' | 'cmd' | 'eng'; engine?: boolean; desc?: string; n?: number; fix?: boolean; on?: boolean; lit?: boolean };
 type StepNode = RFNode<Card, 'step'>;
 const CHIP: Record<Card['tone'], string> = {
   linked: 'bg-accent font-mono text-accent-foreground',
   missing: 'bg-destructive/10 text-destructive',
   writing: 'border border-dashed border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  none: 'bg-muted text-muted-foreground',
+  none: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
   cmd: 'bg-code font-mono text-code-foreground',
   eng: 'bg-primary/15 font-semibold text-primary',
 };
+const BAND: Record<Card['tone'], string> = { linked: 'border-l-emerald-500', missing: 'border-l-destructive', writing: 'border-l-amber-500', none: 'border-l-amber-500', cmd: '', eng: 'border-l-primary' };
+const AMBER = 'text-amber-600 dark:text-amber-400';
+const TONE_ICON: Record<Card['tone'], [ReactNode, string]> = {
+  linked: [ROLE.claude.icon, ROLE.claude.tone], cmd: [ROLE.check.icon, ROLE.check.tone], eng: [KIND_ICON.engine, 'text-primary'],
+  none: [ALERT, AMBER], writing: [ALERT, AMBER], missing: [ALERT, 'text-destructive'],
+};
+const LEGEND = [['bg-emerald-500', '스킬 붙음'], ['bg-amber-500', '스킬 없음'], ['bg-destructive', '스킬 파일이 없음']] as const;
 function Step({ data, selected }: NodeProps<StepNode>) {
+  const ring = selected || data.on ? 'ring-2 ring-primary' : data.lit ? 'ring-3 ring-primary/30' : '';
   // 명령 노드는 잇는 일(측 정하기 · 갈림 · 키트 깔기)이 많아 작은 칩으로 — 명령은 올려 보거나 눌러서 본다
   if (data.tone === 'cmd') return (
-    <div title={data.chip} className={`flex max-w-44 items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs shadow-xs ${selected ? 'border-primary ring-3 ring-primary/25' : ''}`}>
+    <div title={data.chip} className={`flex max-w-44 items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs shadow-xs ${ring}`}>
       <Handle type="target" position={Position.Left} />
+      <Icon className={`size-3.5 ${ROLE.check.tone}`}>{ROLE.check.icon}</Icon>
       <span className="font-mono text-[0.625rem] text-muted-foreground">$</span>
       <span className="truncate">{data.title}</span>
       <Handle type="source" position={Position.Right} />
     </div>
   );
+  const empty = data.tone === 'none' || data.tone === 'writing';
   return (
-    <div className={`w-48 rounded-lg border bg-card px-3 py-2 shadow-xs ${data.engine ? 'border-2 border-primary/50' : ''} ${selected ? 'border-primary ring-3 ring-primary/25' : ''}`}>
+    <div className={`w-56 rounded-lg border border-l-4 px-3 py-1.5 shadow-xs ${data.fix ? 'border-l-muted-foreground/40' : BAND[data.tone]} ${empty ? 'border-dashed border-amber-500 bg-amber-50 dark:bg-amber-950/40' : 'bg-card'} ${ring}`}>
       <Handle type="target" position={Position.Left} />
-      <div className="truncate text-[0.84375rem] font-semibold">{data.title}</div>
-      <span className={`mt-1 inline-block max-w-full truncate rounded-full px-2 py-px text-[0.6875rem] ${CHIP[data.tone]}`}>{data.chip}</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {data.fix ? <span className="shrink-0 rounded bg-muted px-1.5 py-px text-[0.625rem] text-muted-foreground">실패할 때</span>
+          : data.n !== undefined && <span className="grid size-5 shrink-0 place-items-center rounded-full bg-accent text-[0.6875rem] font-bold text-accent-foreground">{data.n}</span>}
+        <span className="truncate text-[0.84375rem] font-semibold">{data.title}</span>
+      </div>
+      {data.desc && <p className={`mt-0.5 line-clamp-2 text-[0.6875rem] leading-4 ${empty ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>{data.desc}</p>}
+      <span className={`mt-1 block w-fit max-w-full truncate rounded-full px-2 py-px text-[0.6875rem] ${CHIP[data.tone]}`}>{data.chip}</span>
       <Handle type="source" position={Position.Right} />
     </div>
   );
+}
+// 도는 차례 — 런과 같게(src/runner.ts flatten): 앞 노드가 먼저, 같으면 놓인 차례. 「실패하면」 화살표가 닿는 노드(fix)는 번호가 없다
+function orderOf(e: Engine | null) {
+  const list: WNode[] = [], fix = new Set(e?.edges.filter(x => x.fail).map(x => x.to)), plain = e?.edges.filter(x => !x.fail) ?? [];
+  for (let more = !!e; more;) {
+    more = false;
+    for (const n of e!.nodes) if (!fix.has(n.id) && !list.includes(n) && plain.every(x => x.to !== n.id || list.some(m => m.id === x.from))) { list.push(n); more = true; }
+  }
+  return { num: new Map(list.map((n, i) => [n.id, i + 1])), fix };
 }
 const nodeTypes = { step: Step };
 const EDGE = { markerEnd: { type: 'arrowclosed' as const, width: 16, height: 16 } };
@@ -399,7 +427,7 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
   const installed = useMemo(() => (installedQ.data ?? []).filter(s => s.agents.includes('claude')), [installedQ.data]);   // 1판은 Claude 가 부를 수 있는 것만
   const [eng, setEng] = useState<Engine | null>(null);
   const engRef = useRef<Engine | null>(null), ver = useRef(''), timer = useRef<ReturnType<typeof setTimeout> | null>(null), chain = useRef(Promise.resolve()), saving = useRef(false);
-  const [sel, setSel] = useState<string | null>(null), [selEdge, setSelEdge] = useState<string | null>(null), [writing, setWriting] = useState<string[]>([]);
+  const [sel, setSel] = useState<string | null>(null), [selEdge, setSelEdge] = useState<string | null>(null), [writing, setWriting] = useState<string[]>([]), [hover, setHover] = useState<string | null>(null);
   // 초안 미리 보기 — 켜면 캔버스가 Claude 초안을 보여 주고 고치기는 막는다
   const draft = q.data?.draft ?? null, [preview, setPreview] = useState(false), shownEng = preview && draft?.engine ? draft.engine : eng;
   useEffect(() => { if (!draft?.engine) setPreview(false); }, [draft?.engine]);
@@ -440,11 +468,14 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
       const e = engines.find(x => x.id === n.engine);
       return e ? { title: n.title, chip: `${KIND[e.kind]} · ${e.name} · 노드 ${e.nodes}`, tone: 'eng', engine: true } : { title: n.title, chip: `공방에 없다 · ${n.engine}`, tone: 'missing', engine: true };
     }
-    if (!n.skill) return writing.includes(n.id) ? { title: n.title, chip: 'Claude 가 쓰는 중…', tone: 'writing' } : { title: n.title, chip: '스킬 없음', tone: 'none' };
-    if (n.skill.from === 'engine') return skills.some(s => s.id === n.skill!.id) ? { title: n.title, chip: `/${n.skill.id}`, tone: 'linked' } : { title: n.title, chip: `없는 스킬 · ${n.skill.id}`, tone: 'missing' };
-    const s = installed.find(x => x.id === n.skill!.id);
-    return s ? { title: n.title, chip: s.call, tone: 'linked' } : { title: n.title, chip: `없는 스킬 · ${n.skill.id}`, tone: 'missing' };
+    if (!n.skill) return writing.includes(n.id) ? { title: n.title, chip: 'Claude 가 쓰는 중…', tone: 'writing', desc: 'Claude 가 스킬을 쓰는 중 — 다 쓰면 오른쪽에서 붙인다' }
+      : { title: n.title, chip: '스킬 없음', tone: 'none', desc: '아직 할 일이 없다 — 오른쪽에서 스킬을 붙인다' };
+    const s = n.skill.from === 'engine' ? skills.find(x => x.id === n.skill!.id) : installed.find(x => x.id === n.skill!.id);
+    return s ? { title: n.title, chip: n.skill.from === 'engine' ? `/${s.id}` : (s as Installed).call, tone: 'linked', desc: skillBrief(s.desc, s.id) }
+      : { title: n.title, chip: `없는 스킬 · ${n.skill.id}`, tone: 'missing', desc: '스킬 파일이 없다 — 오른쪽에서 다시 붙인다' };
   }, [writing, skills, installed, engines]);
+  const order = useMemo(() => orderOf(shownEng), [shownEng]);
+  const look = useCallback((n: WNode): Card => ({ ...card(n), n: order.num.get(n.id), fix: order.fix.has(n.id) }), [card, order]);
 
   // 캔버스 상태 — 노드 크기 · 끄는 중 · 고름은 React Flow 가 들고, 위치 · 연결 · 지우기는 끝날 때 engine.json 으로
   const [nodes, setNodes] = useState<StepNode[]>([]), [edges, setEdges] = useState<RFEdge[]>([]);
@@ -453,15 +484,16 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
     const eng = shownEng;
     setNodes(prev => eng.nodes.map(n => {
       const p = prev.find(x => x.id === n.id);
-      return { ...p, id: n.id, type: 'step' as const, position: p?.dragging ? p.position : { x: n.x, y: n.y }, data: card(n) };
+      return { ...p, id: n.id, type: 'step' as const, position: p?.dragging ? p.position : { x: n.x, y: n.y }, data: { ...look(n), on: n.id === sel, lit: n.id === hover } };
     }));
+    // 「실패하면」 의 최대 번수는 고른 노드 칸에 — 캔버스 글씨는 짧게
     setEdges(prev => eng.edges.map(e => {
       const k = `${e.from}>${e.to}`, base = { ...prev.find(x => x.id === k), id: k, source: e.from, target: e.to };
       return e.fail
-        ? { ...base, className: 'fail', label: `실패하면 · 최대 ${e.max ?? 3}번`, labelStyle: { fill: FAIL, fontSize: 11, fontWeight: 600 }, labelBgStyle: { fill: 'var(--card)' }, markerEnd: { ...EDGE.markerEnd, color: FAIL } }
+        ? { ...base, className: 'fail', label: '실패하면', labelStyle: { fill: FAIL, fontSize: 11, fontWeight: 600 }, labelBgStyle: { fill: 'var(--card)' }, markerEnd: { ...EDGE.markerEnd, color: FAIL } }
         : { ...base, className: '', label: undefined, markerEnd: EDGE.markerEnd };
     }));
-  }, [shownEng, card]);
+  }, [shownEng, look, sel, hover]);
   // 처음 그릴 때 노드가 다 들어온 뒤에 띄워야 화면 맞추기(fitView)가 노드에 맞는다
   const [shown, setShown] = useState(false);
   // 보기 — 엔진은 흐름 지도(단계 칸 · 줄, EngineMap.tsx)가 처음, 캔버스(고치는 곳), 펼쳐 보기(런처럼 노드 한 줄로). 체인은 캔버스만
@@ -492,8 +524,8 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
     let k = e.nodes.length + 1;
     while (e.nodes.some(n => n.id === `n${k}`)) k++;
     const c = f && r ? f.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 }) : { x: 96, y: 28 };
-    let x = Math.round(c.x - 96), y = Math.round(c.y - 28);   // 노드 상자(가로 192) 가운데가 화면 가운데에
-    while (e.nodes.some(n => Math.abs(n.x - x) < 200 && Math.abs(n.y - y) < 80)) y += 96;
+    let x = Math.round(c.x - 112), y = Math.round(c.y - 44);   // 노드 상자(가로 224 · 세로 약 88) 가운데가 화면 가운데에
+    while (e.nodes.some(n => Math.abs(n.x - x) < 232 && Math.abs(n.y - y) < 96)) y += 120;
     update(v => ({ ...v, nodes: [...v.nodes, { id: `n${k}`, title: '새 노드', skill: null, x, y }] }));
     setSel(`n${k}`);
   };
@@ -513,7 +545,7 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
   const askEngine = () => onAsk(`공방 ${KIND[eng!.kind ?? 'chain']} 「${eng!.name}」(${id}/)을 ${eng!.nodes.length ? '고쳐' : '만들어'} 줘 — 공방 CLAUDE.md 의 만들기 스킬대로(묻고 → 스킬 → draft.json 초안).\n하는 일: `);
   const ask = (n: WNode) => {
     const where = `공방 「${eng!.name}」(${id}/)의 노드 「${n.title}」`;
-    if (n.skill?.from === 'engine') onAsk(`${where}가 쓰는 스킬 ${id}/skills/${n.skill.id}/SKILL.md 를 고쳐 줘.\n고칠 점: `);
+    if (n.skill?.from === 'engine' && skills.some(s => s.id === n.skill!.id)) onAsk(`${where}가 쓰는 스킬 ${id}/skills/${n.skill.id}/SKILL.md 를 고쳐 줘.\n고칠 점: `);
     else {
       onAsk(`${where}가 쓸 스킬을 새로 써 줘. ${id}/skills/<이름>/SKILL.md 로 쓴다(이름은 영문 소문자 · 숫자 · -). engine.json 은 고치지 않는다.\n하는 일: `);
       setWriting(w => w.includes(n.id) ? w : [...w, n.id]);
@@ -532,6 +564,9 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
   const node = preview ? undefined : eng.nodes.find(n => n.id === sel), edge = preview ? undefined : eng.edges.find(x => `${x.from}>${x.to}` === selEdge);
   const what = KIND[eng.kind ?? 'chain'], mode = eng.kind === 'engine' ? view : 'canvas';
   const ref = (v: string) => { const at = v.indexOf(':'); return v ? { from: v.slice(0, at) as SkillRef['from'], id: v.slice(at + 1) } : undefined; };
+  // 머리줄 스킬 상태 — 스킬 노드가 다 붙었나, 아니면 안 붙은 첫 노드로 가는 단추
+  const skilled = eng.nodes.filter(n => !n.command && !n.engine), need = skilled.filter(n => card(n).tone !== 'linked');
+  const pick = (k: string) => { setSel(k); setSelEdge(null); setHover(null); setPreview(false); setView('canvas'); };
   return (
     <>
       <div className="space-y-1.5 border-b px-4 py-2">
@@ -539,7 +574,10 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
           <h1 className="text-base font-bold">{eng.name}</h1>
           <span className="rounded-full bg-accent px-2 py-px text-[0.6875rem] font-semibold text-accent-foreground" title={eng.kind === 'engine' ? '체인 · 엔진과 노드를 잇는다' : '스킬 · 명령 노드만 잇는다 — 체인을 이으려면 엔진을 만든다'}>{what}</span>
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={`${root}/${id}`}>{id}/</span>
-          <span className="ml-auto text-xs text-muted-foreground">노드 {eng.nodes.length} · 스킬 {skills.length}</span>
+          {need.length ? <button type="button" onClick={() => pick(need[0].id)} title="눌러서 그 노드를 오른쪽 칸에 연다"
+              className="rounded-full bg-amber-500/15 px-2.5 py-px text-[0.6875rem] font-semibold text-amber-800 hover:underline dark:text-amber-300">스킬 없는 노드 {need.length} · 「{need[0].title}」 ›</button>
+            : skilled.length > 0 && <span className="rounded-full bg-emerald-500/12 px-2.5 py-px text-[0.6875rem] font-semibold text-emerald-700 dark:text-emerald-400">✓ 스킬 {skilled.length}개 모두 붙어 있음</span>}
+          <span className="ml-auto" />
           {/* 이 엔진을 돌리는 런 — 돌리는 단위는 런이고, 엔진 바로 돌리기는 시험(런 화면 「엔진 · 체인 바로 시험」) */}
           {engines.filter(e => e.kind === 'run' && e.engine === id).map(r => (
             <a key={r.id} href={`#/workshop/${r.id}`} title="이 엔진을 돌리는 런" className="rounded-full bg-accent px-2 py-px text-[0.6875rem] font-semibold text-accent-foreground hover:underline">런 {r.name} ›</a>
@@ -584,32 +622,40 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
         </div>
       )}
       <RefWarnings id={id} />
-      {mode === 'map' ? <EngineMap id={id} root={root} claude={claude} onAsk={onAsk} /> : mode === 'flat' ? <Expanded id={id} /> : <div ref={wrap} className="relative min-h-0 flex-1">
-        {shown && (
-          <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} defaultEdgeOptions={EDGE} onInit={i => { flow.current = i; if (addOnInit.current) { addOnInit.current = false; add(); } }}
-            onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onNodeDragStop={onDragStop}
-            onNodesDelete={d => removeNodes(d.map(n => n.id))}
-            onEdgesDelete={d => update(e => ({ ...e, edges: e.edges.filter(x => !d.some(y => y.source === x.from && y.target === x.to)) }))}
-            onNodeClick={(_, n) => { setSel(n.id); setSelEdge(null); }} onEdgeClick={(_, e) => { setSelEdge(e.id); setSel(null); }}
-            onPaneClick={() => { setSel(null); setSelEdge(null); }} deleteKeyCode={preview ? null : ['Backspace', 'Delete']}
-            nodesDraggable={!preview} nodesConnectable={!preview} elementsSelectable={!preview}
-            fitView fitViewOptions={{ padding: 0.3, maxZoom: 1 }} proOptions={{ hideAttribution: true }}>
-            <Background gap={20} size={1.2} />
-            <Controls showInteractive={false} position="bottom-right" />
-            <MiniMap pannable zoomable position="top-right" nodeBorderRadius={8} />
-          </ReactFlow>
-        )}
-        {edge ? <EdgePanel key={selEdge} e={edge} eng={eng}
-          onChange={p => update(x => ({ ...x, edges: x.edges.map(y => y === edge ? { from: y.from, to: y.to, ...p } : y) }))}
-          onRemove={() => { update(x => ({ ...x, edges: x.edges.filter(y => y !== edge) })); setSelEdge(null); }} />
-        : node ? <Inspector key={node.id} n={node} eng={eng} id={id} engines={engines} skills={skills} installed={installed} claude={claude}
-          onChange={(p, wait) => update(e => ({ ...e, nodes: e.nodes.map(x => x.id === node.id ? { ...x, ...p } : x) }), wait)}
-          onAsk={() => ask(node)} onRemove={() => { removeNodes([node.id]); setSel(null); }} />
-          : (
-            <div className="absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-lg border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-xs">
-              {preview ? 'Claude 초안을 미리 보는 중 — 위 띠에서 「적용」 하면 이대로 바뀐다' : eng.nodes.length ?  `노드를 누르면 제목 · ${eng.kind === 'engine' ? '스킬 · 명령 · 체인 · 엔진' : '스킬 · 명령'}을 고른다 · 오른쪽 점을 끌어 다른 노드에 놓으면 이어진다 · 화살표를 누르면 「실패하면」으로 · Delete 로 지운다` : '「+ 노드」로 노드를 놓거나 「Claude 에게 맡기기」로 초안을 받는다'}
+      {mode === 'map' ? <EngineMap id={id} root={root} claude={claude} onAsk={onAsk} /> : mode === 'flat' ? <Expanded id={id} /> : <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div ref={wrap} className="relative min-h-[24rem] min-w-0 flex-1">
+          {shown && (
+            <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} defaultEdgeOptions={EDGE} onInit={i => { flow.current = i; if (addOnInit.current) { addOnInit.current = false; add(); } }}
+              onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onNodeDragStop={onDragStop}
+              onNodesDelete={d => removeNodes(d.map(n => n.id))}
+              onEdgesDelete={d => update(e => ({ ...e, edges: e.edges.filter(x => !d.some(y => y.source === x.from && y.target === x.to)) }))}
+              onNodeClick={(_, n) => { setSel(n.id); setSelEdge(null); }} onEdgeClick={(_, e) => { setSelEdge(e.id); setSel(null); }}
+              onPaneClick={() => { setSel(null); setSelEdge(null); }} deleteKeyCode={preview ? null : ['Backspace', 'Delete']}
+              nodesDraggable={!preview} nodesConnectable={!preview} elementsSelectable={!preview}
+              fitView fitViewOptions={{ padding: 0.3, maxZoom: 1 }} proOptions={{ hideAttribution: true }}>
+              <Background gap={20} size={1.2} />
+              <Controls showInteractive={false} position="bottom-right" />
+              <MiniMap pannable zoomable position="top-right" nodeBorderRadius={8} />
+            </ReactFlow>
+          )}
+          {shownEng!.nodes.length > 0 && (
+            <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[calc(100%-5rem)] flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-card/95 px-3 py-1.5 text-xs text-muted-foreground shadow-xs">
+              {LEGEND.map(([c, label]) => <span key={label} className="flex items-center gap-1.5"><span className={`h-3 w-1 rounded-full ${c}`} />{label}</span>)}
+              {eng.kind === 'engine' && <span className="flex items-center gap-1.5"><span className="h-3 w-1 rounded-full bg-primary" />체인 · 엔진</span>}
+              <span className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed" style={{ borderColor: FAIL }} />실패하면</span>
             </div>
           )}
+        </div>
+        {/* 오른쪽 칸 — 고른 화살표 · 고른 노드, 아무것도 안 고르면 이 체인의 노드 목록. 캔버스를 가리지 않게 옆에 붙인다 */}
+        <aside className="flex max-h-[32rem] shrink-0 flex-col overflow-y-auto border-t bg-card md:max-h-none md:w-[22.5rem] md:border-t-0 md:border-l">
+          {edge ? <EdgePanel key={selEdge} e={edge} eng={eng} onBack={() => setSelEdge(null)}
+            onChange={p => update(x => ({ ...x, edges: x.edges.map(y => y === edge ? { from: y.from, to: y.to, ...p } : y) }))}
+            onRemove={() => { update(x => ({ ...x, edges: x.edges.filter(y => y !== edge) })); setSelEdge(null); }} />
+          : node ? <Inspector key={node.id} n={node} look={look(node)} eng={eng} id={id} engines={engines} skills={skills} installed={installed} claude={claude}
+            onChange={(p, wait) => update(e => ({ ...e, nodes: e.nodes.map(x => x.id === node.id ? { ...x, ...p } : x) }), wait)}
+            onAsk={() => ask(node)} onRemove={() => { removeNodes([node.id]); setSel(null); }} onBack={() => setSel(null)} onPick={pick} />
+          : <NodeList eng={shownEng!} look={look} preview={preview} onPick={pick} onHover={setHover} />}
+        </aside>
       </div>}
     </>
   );
@@ -654,96 +700,192 @@ function Expanded({ id }: { id: string }) {
   );
 }
 
-// 고른 노드 — 제목, 스킬 고르기, Claude 가 새로 쓴 스킬 「연결」, Claude 에게 쓰게 · 고치게 하기
-function Inspector({ n, eng, id, engines, skills, installed, claude, onChange, onAsk, onRemove }: {
-  n: WNode; eng: Engine; id: string; engines: List['engines']; skills: Read['skills']; installed: Installed[]; claude: string | null;
-  onChange: (p: Partial<WNode>, wait?: number) => void; onAsk: () => void; onRemove: () => void;
+// 아무것도 안 고르면 오른쪽 칸 — 이 체인의 노드를 도는 차례대로(번호 · 제목 · 하는 일 · 스킬), 「실패하면」 으로만 불리는 노드는 따로. 줄에 올리면 캔버스의 그 노드가 밝아진다
+function NodeList({ eng, look, preview, onPick, onHover }: { eng: Engine; look: (n: WNode) => Card; preview: boolean; onPick: (id: string) => void; onHover: (id: string | null) => void }) {
+  const cards = eng.nodes.map(n => ({ n, c: look(n) }));
+  const live = cards.filter(x => !x.c.fix).sort((a, b) => (a.c.n ?? Infinity) - (b.c.n ?? Infinity)), fix = cards.filter(x => x.c.fix);
+  const RIGHT: Record<Card['tone'], string> = { linked: 'font-mono text-primary', missing: 'text-destructive', writing: AMBER, none: AMBER, cmd: 'text-muted-foreground', eng: 'text-muted-foreground' };
+  const row = ({ n, c }: { n: WNode; c: Card }) => (
+    <button key={n.id} type="button" disabled={preview} onClick={() => onPick(n.id)} onMouseEnter={() => onHover(n.id)} onMouseLeave={() => onHover(null)} onFocus={() => onHover(n.id)} onBlur={() => onHover(null)}
+      className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left enabled:hover:bg-muted">
+      {c.n !== undefined ? <span className="grid size-5 shrink-0 place-items-center rounded-full bg-accent text-[0.6875rem] font-bold text-accent-foreground">{c.n}</span> : <span className="size-5 shrink-0" />}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <Icon className={`size-3.5 ${TONE_ICON[c.tone][1]}`}>{TONE_ICON[c.tone][0]}</Icon>
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{n.title}</span>
+          <span className={`max-w-32 shrink-0 truncate text-xs ${RIGHT[c.tone]}`}>{c.tone === 'cmd' ? '명령' : c.tone === 'eng' ? '체인 · 엔진' : c.chip}</span>
+        </span>
+        <span className={`mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground ${c.tone === 'cmd' ? 'font-mono break-all' : ''}`}>{c.tone === 'cmd' ? n.command : c.tone === 'eng' ? c.chip : c.desc}</span>
+      </span>
+    </button>
+  );
+  return (
+    <div className="flex min-h-full flex-col">
+      <div className="flex items-baseline gap-2 border-b px-4 py-3">
+        <h2 className="text-sm font-bold">이 {KIND[eng.kind ?? 'chain']}의 노드</h2>
+        <span className="text-xs text-muted-foreground">{eng.nodes.length}개 · 차례대로 돈다</span>
+      </div>
+      <div className="flex-1 space-y-0.5 p-2">
+        {live.map(row)}
+        {fix.length > 0 && <><p className="px-2.5 pt-3 pb-1 text-xs font-bold text-destructive">실패할 때만 불림</p>{fix.map(row)}</>}
+        {!eng.nodes.length && <p className="p-2.5 text-sm text-muted-foreground">「+ 노드」로 노드를 놓거나 「Claude 에게 맡기기」로 초안을 받는다</p>}
+      </div>
+      <p className="border-t px-4 py-2.5 text-xs leading-relaxed text-muted-foreground">
+        {preview ? 'Claude 초안을 미리 보는 중 — 위 띠에서 「적용」 하면 이대로 바뀐다'
+          : '줄을 누르면 그 노드의 스킬을 자세히 본다 · 줄에 올리면 캔버스에서 그 노드가 밝아진다 · 캔버스에서 노드 오른쪽 점을 끌어 다른 노드에 놓으면 이어지고, 화살표를 누르면 「실패하면」 으로 바꾼다 · Delete 로 지운다'}
+      </p>
+    </div>
+  );
+}
+
+// 고른 노드 — 오른쪽 칸. 위는 무엇을 하는 노드인지(역할 · 제목 · 하는 일), 가운데는 붙은 스킬(없으면 붙이는 법 — Claude 가 새로 쓴 스킬 · 고르기 · 쓰게 하기), 아래는 흐름과 접힌 「바꾸기 · 지우기」
+function Inspector({ n, look, eng, id, engines, skills, installed, claude, onChange, onAsk, onRemove, onBack, onPick }: {
+  n: WNode; look: Card; eng: Engine; id: string; engines: List['engines']; skills: Read['skills']; installed: Installed[]; claude: string | null;
+  onChange: (p: Partial<WNode>, wait?: number) => void; onAsk: () => void; onRemove: () => void; onBack: () => void; onPick: (id: string) => void;
 }) {
-  const [title, setTitle] = useState(n.title), [command, setCommand] = useState(n.command ?? '');
+  const [title, setTitle] = useState(n.title), [command, setCommand] = useState(n.command ?? ''), [naming, setNaming] = useState(n.title === '새 노드');
   // 종류 탭은 보기만 바꾼다 — 그 탭에서 새 값(스킬 · 명령 · 체인)을 실제로 골라야 노드가 바뀌고 다른 연결이 빠진다(탭만 눌러 연결이 지워져 저장되던 것을 막는다)
   const now = n.command !== undefined ? 'command' : n.engine !== undefined ? 'engine' : 'skill';
-  const [kind, setKind] = useState<'skill' | 'command' | 'engine'>(now);
+  const [kind, setKind] = useState<'skill' | 'command' | 'engine'>(now), [view, setView] = useState<string | null>(null);
+  const full = useQuery({ queryKey: ['workshop-file', view], queryFn: () => get<string>(`/api/workshop-file?path=${encodeURIComponent(view!)}`, 'text'), enabled: !!view });
   const NOW = { skill: '스킬', command: '명령', engine: '체인 · 엔진' } as const;
   const name = (x: string) => eng.nodes.find(m => m.id === x)?.title ?? x;
-  const ins = eng.edges.filter(e => e.to === n.id).map(e => name(e.from)), outs = eng.edges.filter(e => e.from === n.id).map(e => name(e.to));
+  const prev = eng.edges.filter(e => e.to === n.id).map(e => e.from), next = eng.edges.filter(e => e.from === n.id && !e.fail).map(e => e.to);
+  const fail = eng.edges.find(e => e.from === n.id && e.fail), called = eng.edges.filter(e => e.to === n.id && e.fail);
   const value = n.skill ? `${n.skill.from}:${n.skill.id}` : '';
   const known = !n.skill || (n.skill.from === 'engine' ? skills.some(s => s.id === n.skill!.id) : installed.some(s => s.id === n.skill!.id));
+  const linked = look.tone === 'linked', mine = linked && n.skill?.from === 'engine';   // mine — 이 폴더 스킬이라 고치게 하기 · 전체 보기가 된다
+  const skill = n.skill && (n.skill.from === 'engine' ? skills.find(s => s.id === n.skill!.id) : installed.find(s => s.id === n.skill!.id));
   // Claude 가 새로 썼는데 아직 어느 노드에도 안 붙은 이 폴더 스킬 — 사람이 골라 붙인다(자동으로 붙이지 않는다)
-  const fresh = n.skill ? [] : skills.filter(s => !eng.nodes.some(m => m.skill?.from === 'engine' && m.skill.id === s.id));
+  const fresh = linked ? [] : skills.filter(s => !eng.nodes.some(m => m.skill?.from === 'engine' && m.skill.id === s.id));
   const pick = (v: string) => {
     const at = v.indexOf(':');
     onChange(v ? { skill: { from: v.slice(0, at) as SkillRef['from'], id: v.slice(at + 1) }, command: undefined, engine: undefined } : { skill: null });
   };
+  const rel = (s: string) => `${id}/skills/${s}/SKILL.md`;
+  const fileBtn = (r: string) => <Button size="sm" variant="outline" className="h-8 text-xs" aria-pressed={view === r} onClick={() => setView(view === r ? null : r)}>{view === r ? '전체 접기' : '전체 보기'}</Button>;
+  const file = (r: string) => view === r && <pre className="code-panel max-h-[60vh] whitespace-pre-wrap">{full.data ?? (full.error ? `읽지 못했다 — ${String(full.error)}` : '불러오는 중…')}</pre>;
+  const askTip = claude ? '이 노드 정보를 오른쪽 Claude 입력칸에 넣는다 — 이어 쓰고 보낸다' : '오른쪽에서 공방 Claude 를 먼저 띄운다';
   const field = 'h-8 rounded-md border bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring/50';
-  return (
-    <div className="absolute bottom-3 left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-80 max-w-[calc(100%-1.5rem)] flex-col gap-2.5 overflow-y-auto rounded-xl border bg-card p-3 shadow-lg">
-      <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">제목
-        <input value={title} onChange={e => { setTitle(e.target.value); if (e.target.value.trim()) onChange({ title: e.target.value.trim() }, 500); }} className={field} />
-      </label>
-      <div className="flex gap-0.5 rounded-lg bg-muted p-0.5" role="tablist" aria-label="노드 종류">
-        {([['skill', '스킬'], ['command', '명령'], ...(eng.kind === 'engine' ? [['engine', '체인 · 엔진']] as const : [])] as const).map(([k, label]) => (
-          <button key={k} role="tab" aria-selected={kind === k} onClick={() => setKind(k)}
-            className={`flex-1 rounded-md px-2 py-1 text-xs ${kind === k ? 'bg-card font-semibold shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>{label}</button>
-        ))}
-      </div>
-      {kind !== now && (n.skill || n.command !== undefined || n.engine !== undefined) && (
-        <p className="text-xs text-muted-foreground">지금 이 노드는 {NOW[now]} 노드다 — 여기서 새로 고르거나 적어야 {NOW[kind]}(으)로 바뀐다.</p>
-      )}
-      {kind === 'command' && (
-        <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">명령 — 작업 폴더에서 셸로 돈다 · 끝 코드 0 이면 통과
-          <input value={command} placeholder="pytest -q   또는   $EDITH_ENGINE/test.sh"
-            onChange={e => { setCommand(e.target.value); onChange(e.target.value.trim() ? { command: e.target.value.trim(), skill: null, engine: undefined } : { command: undefined }, 600); }} className={`${field} font-mono text-xs`} />
-          <span className="font-normal">이 폴더 사본은 <code>$EDITH_ENGINE</code>, 작업 문서는 <code>$EDITH_WORK</code></span>
-        </label>
-      )}
-      {kind === 'engine' && (
-        <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">체인 · 엔진 — 이 자리에서 그 안의 노드들이 돈다
-          <div className="flex gap-1.5">
-            <select value={n.engine ?? ''} onChange={e => onChange(e.target.value ? { engine: e.target.value, skill: null, command: undefined } : { engine: undefined })} className={`${field} min-w-0 flex-1`}>
-              <option value="">고르기</option>
-              {n.engine && !engines.some(x => x.id === n.engine) && <option value={n.engine}>공방에 없다 · {n.engine}</option>}
-              {(['chain', 'engine'] as const).map(k => (
-                <optgroup key={k} label={KIND[k]}>
-                  {engines.filter(x => x.id !== id && x.kind === k).map(x => <option key={x.id} value={x.id}>{x.name} ({x.id} · 노드 {x.nodes})</option>)}
-                </optgroup>
-              ))}
-            </select>
-            {n.engine && <a href={`#/workshop/${n.engine}`} className="flex h-8 items-center rounded-md border px-2.5 text-xs font-semibold text-primary hover:bg-accent">열기 →</a>}
-          </div>
-        </label>
-      )}
-      {kind === 'skill' && (
-      <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">스킬
-        <select value={value} onChange={e => pick(e.target.value)} className={field}>
-          <option value="">스킬 없음</option>
-          {!known && <option value={value}>없는 스킬 · {n.skill!.id}</option>}
-          <SkillOptions id={id} skills={skills} installed={installed} />
-        </select>
-      </label>
-      )}
-      {kind === 'skill' && fresh.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-xs font-semibold text-muted-foreground">아직 안 붙은 이 폴더 스킬 — 눌러서 이 노드에 연결</div>
-          {fresh.map(s => (
-            <button key={s.id} onClick={() => onChange({ skill: { from: 'engine', id: s.id }, command: undefined, engine: undefined })}
-              className="flex w-full min-w-0 items-baseline gap-2 rounded-md border px-2 py-1 text-left text-xs hover:border-primary/50 hover:bg-accent">
-              <span className="shrink-0 font-semibold text-primary">연결</span><span className="shrink-0 font-mono">/{s.id}</span>
-              <span className="min-w-0 truncate text-muted-foreground">{s.desc}</span>
-            </button>
+  const role = now === 'command' ? { pill: ROLE.check.pill, label: ROLE.check.label, about: '' }
+    : now === 'engine' ? { pill: CHIP.eng, label: '체인 · 엔진', about: '' }
+    : linked ? { pill: ROLE.claude.pill, label: ROLE.claude.label, about: skill ? skillDetail(skill.desc, skill.id) : '' }
+    : look.tone === 'missing' ? { pill: CHIP.missing, label: '스킬 파일이 없음', about: `스킬 「${n.skill?.id}」 파일이 없다 — 지워졌거나 이름이 바뀌었다. 아래에서 다시 붙인다.` }
+    : look.tone === 'writing' ? { pill: CHIP.writing, label: 'Claude 가 쓰는 중', about: 'Claude 가 이 노드의 스킬을 쓰고 있다. 다 쓰면 아래에 나온다 — 「이 노드에 붙이기」로 붙인다.' }
+    : { pill: CHIP.none, label: '스킬 없음', about: '아직 붙은 스킬이 없다. 아래에서 붙이면 카드와 이 칸에 그 스킬이 하는 일이 나온다.' };
+  const skillSelect = (
+    <select value={value} onChange={e => pick(e.target.value)} className={field} aria-label="스킬 고르기">
+      <option value="">{linked ? '스킬 없음' : '이미 있는 스킬 고르기 — 설명과 같이 나온다'}</option>
+      {!known && <option value={value}>없는 스킬 · {n.skill!.id}</option>}
+      <SkillOptions id={id} skills={skills} installed={installed} />
+    </select>
+  );
+  // 가운데 — 종류 탭(kind)대로. 탭을 바꿔도 노드는 새 값을 고르거나 적을 때 바뀐다
+  const main = kind === 'command' ? (
+    <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">명령 — 작업 폴더에서 셸로 돈다 · 끝 코드 0 이면 통과
+      <input value={command} placeholder="pytest -q   또는   $EDITH_ENGINE/test.sh"
+        onChange={e => { setCommand(e.target.value); onChange(e.target.value.trim() ? { command: e.target.value.trim(), skill: null, engine: undefined } : { command: undefined }, 600); }} className={`${field} font-mono text-xs`} />
+      <span className="font-normal">이 폴더 사본은 <code>$EDITH_ENGINE</code>, 작업 문서는 <code>$EDITH_WORK</code></span>
+    </label>
+  ) : kind === 'engine' ? (
+    <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">체인 · 엔진 — 이 자리에서 그 안의 노드들이 돈다
+      <div className="flex gap-1.5">
+        <select value={n.engine ?? ''} onChange={e => onChange(e.target.value ? { engine: e.target.value, skill: null, command: undefined } : { engine: undefined })} className={`${field} min-w-0 flex-1`}>
+          <option value="">고르기</option>
+          {n.engine && !engines.some(x => x.id === n.engine) && <option value={n.engine}>공방에 없다 · {n.engine}</option>}
+          {(['chain', 'engine'] as const).map(k => (
+            <optgroup key={k} label={KIND[k]}>
+              {engines.filter(x => x.id !== id && x.kind === k).map(x => <option key={x.id} value={x.id}>{x.name} ({x.id} · 노드 {x.nodes})</option>)}
+            </optgroup>
           ))}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {kind === 'skill' && (!n.skill || n.skill.from === 'engine') && (
-          <Button size="sm" className="h-7 text-xs" onClick={onAsk} disabled={!claude}
-            title={claude ? '이 노드 정보를 오른쪽 Claude 입력칸에 넣는다 — 이어 쓰고 보낸다' : '오른쪽에서 공방 Claude 를 먼저 띄운다'}>
-            {n.skill ? 'Claude 에게 고치게 하기' : 'Claude 에게 쓰게 하기'}
-          </Button>
-        )}
-        <Button size="sm" variant="outline" className="ml-auto h-7 text-xs text-destructive" onClick={onRemove}>노드 지우기</Button>
+        </select>
+        {n.engine && <a href={`#/workshop/${n.engine}`} className="flex h-8 items-center rounded-md border px-2.5 text-xs font-semibold text-primary hover:bg-accent">열기 →</a>}
       </div>
-      <div className="text-xs leading-relaxed text-muted-foreground">
-        <span className="font-mono">{n.id}</span> · 들어옴: {ins.join(', ') || '없음'} · 나감: {outs.join(', ') || '없음'}
+    </label>
+  ) : linked && now === 'skill' ? (
+    <div className="flex flex-col gap-2.5 rounded-lg border p-3.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="text-sm font-bold">붙은 스킬</span><span className="font-mono text-sm font-semibold text-primary">{look.chip}</span>
+        <span className="ml-auto text-xs text-muted-foreground">{mine ? `이 ${KIND[eng.kind ?? 'chain']} 폴더` : '설치된 스킬'}</span>
+      </div>
+      {mine && <>
+        <span className="font-mono text-xs break-all text-muted-foreground">{rel(n.skill!.id)}</span>
+        <div className="flex flex-wrap gap-2"><Button size="sm" className="h-8 text-xs" onClick={onAsk} disabled={!claude} title={askTip}>Claude 에게 고치게 하기</Button>{fileBtn(rel(n.skill!.id))}</div>
+        <span className="text-xs leading-relaxed text-muted-foreground">고치면 다음 런부터 적용된다(도는 런은 시작할 때의 사본으로 돈다).</span>
+        {file(rel(n.skill!.id))}
+      </>}
+    </div>
+  ) : (
+    <>
+      {fresh.map(s => (
+        <div key={s.id} className="flex flex-col gap-2 rounded-lg border-2 border-primary/60 p-3.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-primary">{look.tone === 'writing' ? 'Claude 가 방금 쓴 스킬' : '아직 안 붙은 이 폴더 스킬'}</span>
+            {look.tone === 'writing' && <span className="ml-auto rounded-full bg-primary px-2 py-px text-[0.625rem] font-bold text-primary-foreground">새로 생김</span>}
+          </div>
+          <span className="font-mono text-base font-semibold text-primary">/{s.id}</span>
+          {s.desc && <p className="text-sm leading-relaxed">{skillDetail(s.desc, s.id)}</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" className="h-8 text-xs" onClick={() => onChange({ skill: { from: 'engine', id: s.id }, command: undefined, engine: undefined })}>이 노드에 붙이기</Button>{fileBtn(rel(s.id))}
+          </div>
+          {file(rel(s.id))}
+        </div>
+      ))}
+      <div className="flex flex-col gap-2">
+        <span className="text-sm font-bold">{fresh.length ? '다른 방법' : '스킬 붙이기'}</span>
+        {skillSelect}
+        <Button size="sm" variant="outline" className="h-8 self-start text-xs" onClick={onAsk} disabled={!claude} title={askTip}>Claude 에게 새로 쓰게 하기</Button>
+        {now === 'skill' && <button type="button" onClick={() => setKind('command')} className="self-start text-xs text-primary underline-offset-2 hover:underline">명령 노드로 바꾸기</button>}
+      </div>
+    </>
+  );
+  const chip = 'max-w-full truncate rounded-full border bg-card px-3 py-1 text-xs hover:bg-muted';
+  return (
+    <div className="flex min-h-full flex-col">
+      <div className="flex items-center justify-between border-b px-4 py-2.5">
+        <button type="button" onClick={onBack} className="flex items-center gap-1 text-sm font-semibold text-primary hover:underline"><Icon className="size-3.5">{CHEVRON_L}</Icon>노드 목록</button>
+        <span className="text-xs text-muted-foreground tabular-nums">{look.fix ? '실패할 때만' : `${look.n ?? '–'} / ${eng.nodes.length}`}</span>
+      </div>
+      <div className="flex flex-1 flex-col gap-4 p-4">
+        <div className="flex flex-col gap-2">
+          <span className={`self-start rounded-full px-2.5 py-0.5 text-xs font-semibold ${role.pill}`}>{role.label}</span>
+          {naming
+            ? <input autoFocus value={title} aria-label="제목" onChange={e => { setTitle(e.target.value); if (e.target.value.trim()) onChange({ title: e.target.value.trim() }, 500); }}
+                onBlur={() => { setNaming(false); if (!title.trim()) setTitle(n.title); }} onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setNaming(false); }} className={`${field} h-9 text-base font-bold`} />
+            : <h2 className="flex items-start gap-2 text-xl font-bold"><span className="min-w-0 break-words">{title}</span>
+                <button type="button" onClick={() => setNaming(true)} aria-label="제목 고치기" title="제목 고치기" className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md border text-muted-foreground hover:bg-muted"><Icon className="size-3.5">{PENCIL}</Icon></button></h2>}
+          {role.about && <p className="text-sm leading-relaxed">{role.about}</p>}
+        </div>
+        {kind !== now && (n.skill || n.command !== undefined || n.engine !== undefined) && (
+          <p className="text-xs text-muted-foreground">지금 이 노드는 {NOW[now]} 노드다 — 여기서 새로 고르거나 적어야 {NOW[kind]}(으)로 바뀐다. <button type="button" onClick={() => setKind(now)} className="text-primary hover:underline">그대로 두기</button></p>
+        )}
+        {main}
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-bold">흐름</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {prev.map(k => <button key={k} type="button" onClick={() => onPick(k)} className={chip}>← {name(k)}</button>)}
+            <span className="text-xs font-bold text-primary">이 노드</span>
+            {next.map(k => <button key={k} type="button" onClick={() => onPick(k)} className={chip}>{name(k)} →</button>)}
+          </div>
+          <span className="text-sm leading-relaxed text-muted-foreground">{called.length ? `${called.map(e => `「${name(e.from)}」`).join(' · ')} 이 실패하면 불려 고친다 — 고친 뒤 그 노드를 다시 돌린다`
+            : fail ? `실패하면 → 「${name(fail.to)}」 이 고친 뒤 이 노드를 다시 돌린다 · 최대 ${fail.max ?? 3}번` : '실패 화살표 없음 — 실패하면 확인 필요로 멈춘다'}</span>
+        </div>
+        <details className="mt-auto border-t pt-3">
+          <summary className="cursor-pointer text-sm font-semibold">바꾸기 · 지우기 <span className="ml-1 text-xs font-normal text-muted-foreground">다른 스킬 · 명령 노드로 · 노드 지우기</span></summary>
+          <div className="mt-3 flex flex-col gap-2.5">
+            <div className="flex gap-0.5 rounded-lg bg-muted p-0.5" role="tablist" aria-label="노드 종류">
+              {([['skill', '스킬'], ['command', '명령'], ...(eng.kind === 'engine' ? [['engine', '체인 · 엔진']] as const : [])] as const).map(([k, label]) => (
+                <button key={k} role="tab" aria-selected={kind === k} onClick={() => setKind(k)}
+                  className={`flex-1 rounded-md px-2 py-1 text-xs ${kind === k ? 'bg-card font-semibold shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>{label}</button>
+              ))}
+            </div>
+            {kind === 'skill' && linked && now === 'skill' && skillSelect}
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[0.6875rem] text-muted-foreground" title="노드 키">{n.id}</span>
+              <Button size="sm" variant="outline" className="ml-auto h-7 text-xs text-destructive" onClick={onRemove}>노드 지우기</Button>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   );
@@ -797,11 +939,12 @@ function SkillOptions({ id, skills, installed }: { id: string; skills: Read['ski
 }
 
 // 고른 화살표 — 보통 또는 「실패하면」(앞 노드가 실패하면 뒤 노드로 고치고 앞 노드를 다시, 최대 몇 번)
-function EdgePanel({ e, eng, onChange, onRemove }: { e: WEdge; eng: Engine; onChange: (p: Partial<WEdge>) => void; onRemove: () => void }) {
+function EdgePanel({ e, eng, onChange, onRemove, onBack }: { e: WEdge; eng: Engine; onChange: (p: Partial<WEdge>) => void; onRemove: () => void; onBack: () => void }) {
   const name = (x: string) => eng.nodes.find(m => m.id === x)?.title ?? x;
   const pill = (on: boolean) => `flex-1 rounded-md px-2 py-1 text-xs ${on ? 'bg-card font-semibold shadow-sm' : 'text-muted-foreground hover:text-foreground'}`;
   return (
-    <div className="absolute bottom-3 left-3 z-10 flex w-80 max-w-[calc(100%-1.5rem)] flex-col gap-2.5 rounded-xl border bg-card p-3 shadow-lg">
+    <div className="flex flex-col gap-2.5 p-4">
+      <button type="button" onClick={onBack} className="flex items-center gap-1 self-start text-sm font-semibold text-primary hover:underline"><Icon className="size-3.5">{CHEVRON_L}</Icon>노드 목록</button>
       <div className="text-sm font-semibold">「{name(e.from)}」 → 「{name(e.to)}」</div>
       <div className="flex gap-0.5 rounded-lg bg-muted p-0.5">
         <button className={pill(!e.fail)} onClick={() => onChange({ fail: undefined, max: undefined })}>보통</button>
@@ -865,7 +1008,7 @@ function ClaudePanel({ id, fold, setFold }: { id: string | null; fold: boolean; 
         : (
           <div className="space-y-3 rounded-xl border bg-card p-4 text-sm">
             <p>공방 Claude 가 아직 없다. 띄우면 herdr 에 「공방」 워크스페이스를 만들고 공방 폴더에서 Claude 를 연다.</p>
-            <p className="text-xs text-muted-foreground">노드에서 「Claude 에게 쓰게 하기」를 누르면 여기 입력칸에 그 노드 정보가 들어온다. 스킬을 다 쓰면 노드에서 「연결」을 누른다.</p>
+            <p className="text-xs text-muted-foreground">노드에서 「Claude 에게 쓰게 하기」를 누르면 여기 입력칸에 그 노드 정보가 들어온다. 스킬을 다 쓰면 노드 칸에서 「이 노드에 붙이기」를 누른다.</p>
             {herdr.error && !herdr.data ? <p className="text-xs text-destructive">herdr 에 닿지 않는다 — {String(herdr.error)}</p>
               : <Button size="sm" onClick={() => void start()} disabled={busy}>{busy ? '띄우는 중… (최대 1분)' : '공방 Claude 띄우기'}</Button>}
           </div>
