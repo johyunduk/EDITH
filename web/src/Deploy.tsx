@@ -1,6 +1,6 @@
 // 배포 — 안건(tag)마다 꺾쇠 카드, 레포마다 단계 선(커밋 → 올림 → dev → stage → prod), 그 브랜치를 다루는 런이 붙는다(서버 src/deploy.ts deployBoard). 주소는 #/deploy(옛 #/results 도).
 // 결과 화면을 품었다(2026-10-26): 런이 워크트리를 만들면 바로 「작업」 칸이 빛나고(지금 노드), 런이 끝나면 그 런 단추(커밋하러 가기 · 푸시 · 안건에 합치기 · dev …)가 그 단계 칸에.
-// 안건 QA 이슈 런은 레포 밑 「↳ 이슈」 줄(작업 → 커밋 → 안건에 합침). stage 올리기는 EDITH 단추 하나 — 안건의 레포를 모두 먼저 보고 하나라도 안 되면 아무것도 안 올린다. 운영은 런의 명령 복사만.
+// 안건 QA 이슈 런은 레포 밑 「↳ 이슈」 줄(작업 → 커밋 → 안건에 합침). stage · 운영 올리기는 레포 줄마다 EDITH 단추(충돌이면 「<환경> 머지 준비」 먼저). 운영은 확인 창이 나갈 커밋 · 바뀌는 파일 범위 · 충돌 표시 · 푼 파일에서 빠진 줄 · 배포 전 할 일을 먼저 본다.
 // 배포일 · 배포 조치 뽑기(공방 훅 on: prep) · 정리(운영까지 다 나가면 — 워크트리 · 워크스페이스 · 로컬 브랜치, src/cleanup.ts)는 카드 머리, 배포 조치(환경마다 배포 전 · 후) · 메모 · 기록 · 연기 · 보관은 오른쪽 패널.
 // 단계 선의 환경 칸 밑에 남은 배포 조치 수, 올릴 때 배포 전 할 일이 남았으면 확인 창에서 한 번 더. 목록에 없는 런 일은 「목록에 없음」 카드로.
 // 보관한 것은 쌓이니 화면은 수만 받고, 「COMPLETE」 창을 열 때 최근부터 조금씩(찾기 · 더 보기 — /api/deploy/done).
@@ -14,11 +14,11 @@ import { copyText, toast } from './copy.ts';
 
 type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
 type EnvState = Reach & { name: string; conflicts?: number; files?: string[]; prep?: { branch: string; ready: boolean; merging?: string } };   // prep — 그 환경 머지 브랜치(서버 deployBoard)
-type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: string; dirty?: number; behind?: number; stale?: boolean; envs: EnvState[]; error?: string };
-type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; wait?: string };   // wait — 아직 누를 때가 아니면 그 까닭(서버 markWait)
+type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: string; dirty?: number; behind?: number; stale?: boolean; empty?: boolean; envs: EnvState[]; error?: string };   // empty — 등록 뒤 커밋 없음
+type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; row?: boolean; wait?: string };   // row — 레포 줄마다(그 줄 레포만), wait — 아직 누를 때가 아니면 그 까닭(서버 markWait)
 type RepoReach = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
-type Act = { label: string; at: number; code: number | null; note?: string };   // 런 단추 기록 — code null 이면 도는 중
-type RunLink = { id: number; title: string; tag?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; acting?: Act; last?: Act };
+type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };   // 런 단추 기록 — code null 이면 도는 중, repo — 레포 줄 단추로 그 레포만
+type RunLink = { id: number; title: string; tag?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act };   // path — 이 항목에 해당하는 그 런 워크트리
 // 런 단추가 도는지 · 마지막 결과 — 카드 깊숙한 단계 칸이 읽는다(DeployPage 가 1.5초마다 /api/runs/<번호>/acted 로 채운다)
 const ActCtx = createContext<{ busy: (run: number) => Act | null; last: (run: number) => Act | null; now: number }>({ busy: () => null, last: () => null, now: 0 });
 type Task = { env: string; text: string; done: boolean; hand?: boolean };   // hand — 사람이 패널에서 적은 줄
@@ -29,7 +29,7 @@ type Left = { id: string; repo: string; branch: string; tag?: string; agenda?: s
 type Board = { rev: number; envs: { name: string; ref: string }[]; items: Item[]; done: number; repos: { path: string; name: string; fetched?: number }[]; extra: { run: RunLink; repos: RepoReach[] }[];
   hooks: { prep: boolean; cleanup: boolean }; leftover: Left[] };
 type Group = { key: string; tag: string; agenda?: string; items: Item[]; date?: string; deferred: boolean; done?: string };
-type Pick = { run: RunLink; action: Action };
+type Pick = { run: RunLink; action: Action; repo?: string };   // repo — 레포 줄 단추면 그 줄 워크트리(그 레포만 돈다)
 type Send = (path: string, b: Record<string, unknown>, ok?: string) => Promise<boolean>;
 type Filter = 'all' | 'next' | 'work' | 'check' | 'clean';
 
@@ -87,7 +87,7 @@ function itemSteps(x: Item, envs: Board['envs']): Step[] {
   const es = envs.map((e, i) => ({ e, r: s.envs[i] })).filter(v => v.r && v.r.state !== 'missing'), out = es.some(v => reached(v.r)), run = (x.runs ?? []).find(r => r.state !== 'done' && !r.issue);
   return mark([
     ...(run ? [work(run)] : []),
-    { key: 'commit', name: '커밋', state: s.dirty ? 'todo' : 'done', ...(s.dirty ? { note: `커밋 안 한 파일 ${s.dirty}` } : {}) },
+    { key: 'commit', name: '커밋', state: s.dirty || s.empty ? 'todo' : 'done', ...(s.dirty ? { note: `커밋 안 한 파일 ${s.dirty}` } : s.empty ? { note: '아직 커밋 없음' } : {}) },
     { key: 'push', name: '올림', state: s.pushed || s.remote || out ? 'done' : 'todo', ...(s.pushed || s.remote ? {} : { note: out ? 'origin 에 브랜치 없음' : '아직 안 올림' }) },
     ...es.map(({ e, r }) => {
       // 들어가기 전이면 배포 전, 들어간 뒤면 배포 후 할 일
@@ -162,7 +162,7 @@ export function DeployPage() {
   const v = q.data;
   const all = useMemo(() => v ? groupsOf(v.items) : [], [v]);
   // 런 단추 — 누른 것(pressed)과 서버가 도는 중이라 한 것을 1.5초마다 보고, 끝 코드가 차면 토스트 · 다시 읽기. 명령이 몇십 초 걸려도 눌렸는지 보이게
-  const [pressed, setPressed] = useState<{ run: number; label: string; at: number }[]>([]), [now, setNow] = useState(Date.now()), seen = useRef(new Set<string>());
+  const [pressed, setPressed] = useState<{ run: number; label: string; at: number; repo?: string }[]>([]), [now, setNow] = useState(Date.now()), seen = useRef(new Set<string>());
   const runs = useMemo(() => v ? [...v.items.flatMap(x => x.runs ?? []), ...v.extra.map(e => e.run)] : [], [v]);
   const said = (id: number) => runs.find(r => r.id === id && r.acting)?.acting;
   const watching = [...new Set([...pressed.map(p => p.run), ...runs.filter(r => r.acting).map(r => r.id)])];
@@ -171,7 +171,7 @@ export function DeployPage() {
   const busy = (id: number): Act | null => {
     const r = latest(id), p = pressed.find(x => x.run === id);
     if (r?.code === null) return r;
-    if (p && !(r && r.at >= p.at - 2000)) return { label: p.label, at: p.at, code: null };   // 누른 직후 — 기록이 아직 안 생겼다
+    if (p && !(r && r.at >= p.at - 2000)) return { label: p.label, at: p.at, code: null, ...(p.repo ? { repo: p.repo } : {}) };   // 누른 직후 — 기록이 아직 안 생겼다
     return r ? null : said(id) ?? null;
   };
   const lastOf = (id: number) => { const r = latest(id); return r && r.code !== null ? r : runs.find(x => x.id === id)?.last ?? null; };
@@ -206,7 +206,7 @@ export function DeployPage() {
   const flags = (g: Group) => {
     const ss = stepsOf(g), last = v.envs.at(-1)!;
     return { next: ss.some(s => s.state === 'next'), work: g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done')), check: ss.some(s => s.state === 'partial' || s.state === 'check') || g.items.some(x => (x.runs ?? []).some(r => r.now?.includes('사람 확인'))),
-      clean: g.items.every(x => reached(x.state?.envs.at(-1)) && !x.tasks.some(t => t.env === last.name && !t.done)) };
+      clean: flagsClean(g, v) };
   };
   const looseFlags = (e: Board['extra'][number]) => { const ss = e.repos.flatMap(x => looseSteps(x, e.run)); return { next: ss.some(s => s.state === 'next'), work: e.run.state !== 'done', check: ss.some(s => s.state === 'partial' || s.state === 'check'), clean: false }; };
   const needle = find.trim().toLowerCase();
@@ -290,8 +290,8 @@ export function DeployPage() {
       {open && <Panel g={open} v={v} all={all} send={send} onClose={() => setPanel(null)} />}
       {archive && <DoneSheet onOpen={setOld} onClose={() => setArchive(false)} />}
       {old && <Panel g={old} v={v} all={all} send={async (p, b, ok) => { const r = await send(p, b, ok); if (r) setOld(null); return r; }} onClose={() => setOld(null)} />}
-      {pick && <ActionDialog pick={pick} onClose={() => setPick(null)} onStarted={() => setPressed(ps => [...ps.filter(x => x.run !== pick.run.id), { run: pick.run.id, label: pick.action.label, at: Date.now() }])} />}
-      {push && <PushDialog g={push.g} env={push.env} items={push.items} prep={v.hooks.prep} onClose={() => setPush(null)} />}
+      {pick && <ActionDialog pick={pick} onClose={() => setPick(null)} onStarted={() => setPressed(ps => [...ps.filter(x => x.run !== pick.run.id), { run: pick.run.id, label: pick.action.label, at: Date.now(), ...(pick.repo ? { repo: pick.repo } : {}) }])} />}
+      {push && <PushDialog g={push.g} env={push.env} items={push.items} prep={v.hooks.prep} prod={push.env === v.envs.at(-1)!.name} onClose={() => setPush(null)} />}
       {files && <Sheet title={files.title} onClose={() => setFiles(null)}><ul className="space-y-1 font-mono text-xs">{files.list.map(f => <li key={f}>{f}</li>)}</ul></Sheet>}
       {adding && <AddSheet v={v} onClose={() => setAdding(false)} send={send} />}
       {clean && <CleanSheet ids={clean.ids} title={clean.title} onClose={() => setClean(null)} />}
@@ -314,14 +314,16 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
   const ids = g.items.map(x => x.id), tasks = g.items.flatMap(x => x.tasks), working = g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done'));
   const warn = g.items.flatMap(x => {
     const s = x.state, n = repoName(x.repo);
-    return s?.error ? [`${n} — ${s.error}`] : [...(s?.stale ? [`${n} 배포 조치를 뽑은 뒤 커밋이 더 생겼다 — ${v.hooks.prep ? '「다시 뽑기」' : '/deploy-prep 으로 다시'}`] : []), ...(s?.behind ? [`${n} origin 에만 있는 커밋 ${s.behind}`] : [])];
+    return s?.error ? [`${n} — ${s.error}`] : [...(s?.stale ? [`${n} 배포 조치를 뽑은 뒤 커밋이 더 생겼다 — ${v.hooks.prep ? '「다시 뽑기」(런이 도는 중이면 끝난 뒤)' : '/deploy-prep 으로 다시'}`] : []), ...(s?.behind ? [`${n} origin 에만 있는 커밋 ${s.behind}`] : [])];
   });
-  // 같은 런 단추는 카드에 한 번 — 그 단계가 지금 차례인 첫 줄에만(런 단추는 런 전체에 돈다)
-  const used = new Set<string>(), place = (runs: RunLink[], s: Step, branch: string, list = true) => runs.flatMap(r => r.actions.filter(a => fits(a, s) && !(list && a.reach === 'origin/stage') && !used.has(`${r.id}:${a.n}`)).map(a => (used.add(`${r.id}:${a.n}`), { run: r, action: withFlow(a, branch, r.issue?.branch) })));
+  // 같은 런 단추는 카드에 한 번 — 그 단계가 지금 차례인 첫 줄에만(런 단추는 런 전체에 돈다). 레포 줄 단추(row — 푸시 · dev)는 줄마다, 누르면 그 줄 레포만
+  const one = (r: RunLink, a: Action) => a.row && r.path ? `${r.id}:${a.n}:${r.path}` : `${r.id}:${a.n}`;
+  const used = new Set<string>(), place = (runs: RunLink[], s: Step, branch: string, list = true) => runs.flatMap(r => r.actions.filter(a => fits(a, s) && !(list && a.reach === 'origin/stage') && !used.has(one(r, a))).map(a => (used.add(one(r, a)), { run: r, action: withFlow(a, branch, r.issue?.branch), ...(a.row && r.path ? { repo: r.path } : {}) })));
   // 가운데 환경(stage) 단추 — 레포 줄마다(사용자 결정 2026-10-26). 충돌이 있으면 「stage 머지 준비」(머지 브랜치에서 Claude 가 푼다) → 「stage 에 올리기」(푼 머지 커밋을 올린다)
   const promote = (x: Item) => (s: Step) => {
     const i = v.envs.findIndex(e => e.name === s.env), e = x.state?.envs[i];
-    if (!s.act || i <= 0 || i >= v.envs.length - 1 || !e) return null;
+    if (!s.act || i <= 0 || !e) return null;
+    const prod = i === v.envs.length - 1;   // 운영 — 누르면 파이프라인이 바로 돈다(확인 창이 서버 strictCheck 를 보인다)
     const env = s.env!, ref = v.envs[i].ref, clash = e.conflicts ?? 0, p = e.prep, ready = !!p?.ready, glow = { boxShadow: `0 4px 12px ${mix(30)}` };
     return (
       <div className="flex flex-col items-center">
@@ -336,8 +338,9 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
         )}
         <Tip flow={[clash ? `${p?.branch ?? '머지 브랜치'} → ${ref} (푼 머지 커밋)` : `${x.branch} → ${ref} (머지 커밋)`]}
           wait={clash && !ready ? `${env} 와 충돌 ${clash}곳 — 앞 단추(${env} 머지 준비) 먼저` : undefined}
-          hint="올리기 직전에 origin 을 다시 받고 앞 환경 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋을 본다 — 걸리면 올리지 않는다">
-          <Button size="sm" className="mt-1 h-8 font-bold shadow-md" style={clash && !ready ? undefined : glow} disabled={clash > 0 && !ready} onClick={() => onPush(env, x)}>{env} 에 올리기 ›</Button>
+          hint={prod ? '누르면 확인 창에서 나갈 커밋 · 바뀌는 파일 범위 · 충돌 표시 · 푼 파일에서 빠진 줄 · 배포 전 할 일을 먼저 본다 — 올리는 즉시 운영 파이프라인이 돈다'
+            : '올리기 직전에 origin 을 다시 받고 앞 환경 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋을 본다 — 걸리면 올리지 않는다'}>
+          <Button size="sm" variant={prod ? 'destructive' : 'default'} className="mt-1 h-8 font-bold shadow-md" style={clash && !ready || prod ? undefined : glow} disabled={clash > 0 && !ready} onClick={() => onPush(env, x)}>{env} 에 올리기 ›</Button>
         </Tip>
       </div>
     );
@@ -345,6 +348,8 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
   // 운영까지 다 나갔으면 「정리」, 배포 조치를 아직 안 뽑았으면 「배포 조치 뽑기」(공방 훅이 있을 때) — 뽑는 동안 · 실패는 그 자리에
   const finished = flagsClean(g, v), pulling = g.items.filter(x => x.prep?.code === null), failed = pulling.length ? [] : g.items.filter(x => x.prep?.code);
   const blank = !tasks.length && !g.items.some(x => x.block), stale = g.items.some(x => x.state?.stale), glow = { boxShadow: `0 4px 12px ${mix(30)}` };
+  // 아직 바뀌는 중 — 커밋이 없는 레포가 있거나 그 안건을 다루는 런이 안 끝났다. 지금 뽑으면 곧 낡으니 뽑기 단추를 숨긴다(패널의 「뽑기」 는 그대로)
+  const changing = g.items.some(x => x.state?.empty || (x.runs ?? []).some(r => r.state !== 'done' && r.state !== 'dropped'));
   const pull = () => pullPrep(ids, () => qc.invalidateQueries({ queryKey: ['deploy'] }));
   return (
     <Bracketed label={g.tag}>
@@ -355,11 +360,11 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
         <span className="ml-auto flex flex-wrap items-center gap-2">
           {failed.length > 0 && <span className="max-w-72 truncate text-xs text-rose-700 dark:text-rose-300" title={failed.map(x => `${repoName(x.repo)} — ${x.prep!.note ?? `끝 코드 ${x.prep!.code}`}`).join('\n')}>뽑기 실패 — {failed[0].prep!.note ?? `끝 코드 ${failed[0].prep!.code}`}</span>}
           {pulling.length > 0 && <Button size="sm" variant="outline" className="h-8 text-primary" disabled><span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-current" />뽑는 중 · 레포 {pulling.length}개</Button>}
-          {v.hooks.prep && !pulling.length && blank && !finished && <><span className="text-xs text-amber-800 dark:text-amber-300">아직 안 뽑음 — 레포 {g.items.length}개</span>
+          {v.hooks.prep && !pulling.length && blank && !finished && !changing && <><span className="text-xs text-amber-800 dark:text-amber-300">아직 안 뽑음 — 레포 {g.items.length}개</span>
             <Button size="sm" className="h-8 font-bold" style={glow} onClick={() => void pull()}>배포 조치 뽑기</Button></>}
-          {v.hooks.prep && !pulling.length && !blank && stale && <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => void pull()}>다시 뽑기</Button>}
+          {v.hooks.prep && !pulling.length && !blank && stale && !changing && <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => void pull()}>다시 뽑기</Button>}
           <DateField g={g} all={all} onPick={date => void send('edit', { ids, date })} />
-          {(!blank || !v.hooks.prep || finished) && <Button size="sm" variant="outline" className="h-8 text-primary" aria-haspopup="dialog" onClick={onPanel}>{tasks.length ? `배포 조치 ${tasks.filter(t => t.done).length}/${tasks.length}` : '배포 조치 없음'}</Button>}
+          {(!blank || !v.hooks.prep || finished || changing) && <Button size="sm" variant="outline" className="h-8 text-primary" aria-haspopup="dialog" onClick={onPanel}>{tasks.length ? `배포 조치 ${tasks.filter(t => t.done).length}/${tasks.length}` : '배포 조치 없음'}</Button>}
           {finished && <><span className="text-xs text-muted-foreground">운영까지 다 나감</span><Button size="sm" className="h-8 font-bold" style={glow} aria-haspopup="dialog" onClick={onClean}>정리</Button></>}
         </span>
       </div>
@@ -392,7 +397,9 @@ async function pullPrep(ids: string[], again: () => Promise<unknown>) {
   catch (e) { toast(`뽑지 못했다 — ${(e as Error).message}`, 7000); }
   await again();
 }
-const flagsClean = (g: Group, v: Board) => g.items.every(x => reached(x.state?.envs.at(-1)) && !x.tasks.some(t => t.env === v.envs.at(-1)!.name && !t.done));
+// 정리 가능 — 레포가 다 운영에 들어갔고 운영 할 일이 끝났고, 그 안건을 다루는 런이 다 끝났을 때(도는 런의 워크트리를 치우지 않게)
+const flagsClean = (g: Group, v: Board) => g.items.every(x => !x.state?.empty && reached(x.state?.envs.at(-1)) && !x.tasks.some(t => t.env === v.envs.at(-1)!.name && !t.done))
+  && !g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done' && r.state !== 'dropped'));
 
 // 목록에 없는 런 일 — 그 런이 남긴 레포 칸(edith-repos.json)만으로. 등록은 스킬(edith deploy add)이나 「+ 항목」
 function LooseCard({ e, onPick, onFiles }: { e: Board['extra'][number]; onPick: (p: Pick) => void; onFiles: (x: { title: string; list: string[] }) => void }) {
@@ -458,12 +465,13 @@ function Track({ steps, acts, extra, onPick, name, onFiles }: { steps: Step[]; a
 
 // 런 단추 — 그 런의 단추가 도는 동안 「도는 중 · N초」(같은 런 다른 단추는 막는다 — 서버도 한 런에 하나만), 끝나면 아래에 마지막 결과 한 줄
 function RunButton({ p, onPick, small }: { p: Pick; onPick: (p: Pick) => void; small?: boolean }) {
-  const ctx = useContext(ActCtx), b = ctx.busy(p.run.id), mine = b?.label === p.action.label, l = ctx.last(p.run.id), done = !b && l?.label === p.action.label ? l : null;
+  const ctx = useContext(ActCtx), b = ctx.busy(p.run.id), same = (x: Act | null) => x?.label === p.action.label && (x.repo ?? '') === (p.repo ?? '');
+  const mine = same(b) ? b : null, l = ctx.last(p.run.id), done = !b && same(l) ? l : null;
   return (
     <div className="flex flex-col items-center gap-0.5">
       <Tip flow={flowLines(p.action)} wait={p.action.wait} hint={p.action.hint}>
         <Button size="sm" variant={small || p.action.copy ? 'outline' : 'default'} disabled={!!b || !!p.action.wait} className={small ? 'h-8 text-primary' : 'mt-1 h-8 font-bold shadow-md'} style={small || p.action.copy || p.action.wait ? undefined : { boxShadow: `0 4px 12px ${mix(30)}` }} onClick={() => onPick(p)}>
-          {mine ? <><span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-current" />{p.action.label} — 도는 중 · {Math.max(0, Math.round((ctx.now - b.at) / 1000))}초</> : small ? p.action.label : `${p.action.label} ›`}
+          {mine ? <><span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-current" />{p.action.label} — 도는 중 · {Math.max(0, Math.round((ctx.now - mine.at) / 1000))}초</> : small ? p.action.label : `${p.action.label} ›`}
         </Button>
       </Tip>
       {done && <span className={`text-[0.6875rem] ${done.code === 0 ? 'text-muted-foreground' : 'text-rose-700 dark:text-rose-300'}`} title={done.note}>{done.code === 0 ? `✓ ${at(done.at)} 끝` : `✗ 끝 코드 ${done.code}`}</span>}
@@ -492,7 +500,7 @@ function Note({ s, name, onFiles }: { s: Step; name: string; onFiles: (x: { titl
   if (e.state === 'partial') return <span className={`${cls} text-amber-800 dark:text-amber-300`}>{e.n}개 중 {e.k}개 · <button type="button" className="underline-offset-2 hover:underline" onClick={() => onFiles({ title: `빠진 파일 — ${name}`, list: e.missing ?? [] })}>빠진 파일</button></span>;
   if (e.state === 'subject') return <span className={`${cls} text-blue-800 dark:text-blue-300`} title={`같은 제목 커밋 「${e.subject}」 이 있는데 변경이 그대로는 맞지 않는다 — 들어간 뒤 고쳐졌을 수 있다`}>제목만 같음 · {at(e.at)}</span>;
   if (s.conflicts) return <span className={`${cls} text-amber-800 dark:text-amber-300`}>충돌 {s.conflicts}곳</span>;
-  if (s.state === 'next') return <span className={cls}>{s.key === 'via' ? '안건에 합칠 차례' : s.last ? '운영은 사람이' : '올릴 차례'}</span>;
+  if (s.state === 'next') return <span className={cls}>{s.key === 'via' ? '안건에 합칠 차례' : s.last ? '올리면 운영 배포' : '올릴 차례'}</span>;
   return null;
 }
 
@@ -737,14 +745,21 @@ function Notes({ x, many, send }: { x: Item; many: boolean; send: Send }) {
 }
 
 // 다음 환경에 올리기 — 레포 줄 하나(서버는 여럿도 받는다 — 모두 먼저 보고 하나라도 안 되면 아무것도 안 올린다)
-function PushDialog({ g, env, items, prep, onClose }: { g: Group; env: string; items: Item[]; prep: boolean; onClose: () => void }) {
+// 운영 확인(서버 promoteCheck) — 레포마다 나갈 커밋 · 막는 까닭 · 충돌을 푼 파일에서 빠진 줄 · 남은 배포 전 할 일
+type Check = { env: string; repos: { id: string; name: string; bad?: string; skip?: string; before: string[]; strict?: { commits: string[]; files: number; conflicts: string[]; hard: string[]; lost: { file: string; side: string; line: string }[] } }[] };
+function PushDialog({ g, env, items, prep, prod, onClose }: { g: Group; env: string; items: Item[]; prep: boolean; prod: boolean; onClose: () => void }) {
   const [busy, setBusy] = useState(false), qc = useQueryClient(), i = items[0]?.state?.envs.findIndex(e => e.name === env) ?? -1;
+  const [chk, setChk] = useState<Check | null>(null), [cerr, setCerr] = useState(''), [ack, setAck] = useState(false);
+  useEffect(() => { if (prod) post<Check>('/api/deploy/promote-check', { ids: items.map(x => x.id), env }).then(setChk, (e: Error) => setCerr(e.message)); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const hard = chk ? chk.repos.flatMap(r => [...(r.bad ? [r.bad] : []), ...(r.strict?.hard ?? []).map(h => `${r.name} — ${h}`), ...(r.before.length ? [`${r.name} — ${env} 배포 전 할 일 ${r.before.length}개 체크 안 됨: ${r.before.map(plain).join(' · ')}`] : [])]) : [];
+  const lost = chk?.repos.flatMap(r => (r.strict?.lost ?? []).map(l => ({ ...l, repo: r.name }))) ?? [];
+  const ready = !prod || (!!chk && !hard.length && (!lost.length || ack));
   const prepped = items.filter(x => x.state?.envs[i]?.conflicts && x.state.envs[i].prep?.ready).map(x => x.state!.envs[i].prep!.branch), before = leftIn(items, env, '전');
   // 배포 조치를 한 번도 안 뽑은 레포 — 할 일이 없는지 모르는 것(뽑으면 할 일이 없어도 「따로 할 일 없음」 한 줄이 생긴다)
   const unpicked = prep ? items.filter(x => !x.block && !x.tasks.length) : [];
   const go = async () => {
     setBusy(true);
-    try { const r = await post<{ text: string }>('/api/deploy/promote', { ids: items.map(x => x.id), env }); toast(r.text, 6000); onClose(); }
+    try { const r = await post<{ text: string }>('/api/deploy/promote', { ids: items.map(x => x.id), env, ...(prod && ack ? { ack: true } : {}) }); toast(r.text, 6000); onClose(); }
     catch (e) { toast(`올리지 않았다 — ${(e as Error).message}`, 9000); setBusy(false); }
     await qc.invalidateQueries({ queryKey: ['deploy'] });
   };
@@ -754,17 +769,39 @@ function PushDialog({ g, env, items, prep, onClose }: { g: Group; env: string; i
         {prepped.length
           ? <p>충돌을 푼 머지 브랜치 <span className="font-mono">{prepped.join(', ')}</span> 를 <span className="font-mono">{env}</span> 로 그대로 올립니다(앞당기기, 강제 push 아님).</p>
           : <p>브랜치를 <span className="font-mono">{env}</span> 에 머지 커밋으로 합쳐 올립니다(작업 트리 없이, 강제 push 아님). 이미 들어갔으면 건너뜁니다.</p>}
+        {prod && <div className="space-y-2">
+          <p className="rounded-lg border border-rose-400 bg-rose-500/10 px-3 py-2 font-semibold text-rose-800 dark:text-rose-300">운영입니다 — 올리는 즉시 운영 배포 파이프라인이 돕니다. DDL · 환경변수 같은 배포 전 일은 먼저.</p>
+          {cerr ? <p className="text-rose-700 dark:text-rose-300">확인하지 못했다 — {cerr}</p> : !chk ? <Empty>확인하는 중… origin 을 받고 레포마다 나갈 커밋 · 바뀌는 파일 범위 · 충돌 표시 · 푼 파일에서 빠진 줄을 본다</Empty> : chk.repos.map(r => (
+            <div key={r.id} className="space-y-1 rounded-lg border px-3 py-2">
+              <p className="font-semibold">{r.name}{r.skip && <span className="ml-2 font-normal text-muted-foreground">{r.skip}</span>}</p>
+              {r.strict && <>
+                <p className="text-xs text-muted-foreground">바뀌는 파일 {r.strict.files}개{r.strict.conflicts.length ? ` · 충돌 ${r.strict.conflicts.length}곳(${r.strict.conflicts.join(', ')})을 머지 브랜치에서 푼 커밋` : ' · 충돌 없음'}</p>
+                <details><summary className="cursor-pointer text-xs text-primary">운영으로 나갈 커밋 {r.strict.commits.length}개</summary>
+                  <ul className="mt-1 space-y-0.5 font-mono text-[0.6875rem]">{r.strict.commits.map(c => <li key={c} className="truncate" title={c}>{c}</li>)}</ul></details>
+              </>}
+            </div>
+          ))}
+          {hard.length > 0 && <div className="space-y-1 rounded-lg border border-rose-400 bg-rose-500/10 px-3 py-2.5">
+            <p className="font-semibold text-rose-800 dark:text-rose-300">막힘 — 아래를 고친 뒤 다시</p>
+            <ul className="list-disc space-y-0.5 pl-5">{hard.map((h, k) => <li key={k} className="break-words">{h}</li>)}</ul>
+          </div>}
+          {lost.length > 0 && <div className="space-y-1.5 rounded-lg border border-amber-400 bg-amber-500/10 px-3 py-2.5">
+            <p className="font-semibold text-amber-800 dark:text-amber-300">충돌을 푼 파일에서 빠진 줄 {lost.length}개 — 일부러 뺀 건지 확인</p>
+            <ul className="space-y-0.5 font-mono text-xs">{lost.map((l, k) => <li key={k} className="break-all"><span className="text-muted-foreground">{l.repo} · {l.file} · {l.side} 쪽</span> {l.line}</li>)}</ul>
+            <label className="flex items-center gap-2 pt-1 font-semibold"><input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} className="accent-[var(--primary)]" />빠진 줄을 확인했다 — 이대로 운영에 올린다</label>
+          </div>}
+        </div>}
         {unpicked.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-400 bg-amber-500/10 px-3 py-2.5">
           <p className="min-w-0 flex-1 basis-60"><span className="font-semibold text-amber-800 dark:text-amber-300">배포 조치를 아직 안 뽑았다</span> — DB · 환경변수 같은 할 일이 있는지 모른다.</p>
           <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => void pullPrep(unpicked.map(x => x.id), () => qc.invalidateQueries({ queryKey: ['deploy'] })).then(onClose)}>배포 조치 뽑기</Button>
         </div>}
-        {before.length > 0 && <div className="space-y-1.5 rounded-lg border border-amber-400 bg-amber-500/10 px-3 py-2.5">
+        {!prod && before.length > 0 && <div className="space-y-1.5 rounded-lg border border-amber-400 bg-amber-500/10 px-3 py-2.5">
           <p className="font-semibold text-amber-800 dark:text-amber-300">{env} 배포 전 할 일 {before.length}개가 아직 체크 안 됐다</p>
           <ul className="list-disc space-y-0.5 pl-5">{before.map((t, k) => <li key={k} className="break-words">{plain(t.text)}</li>)}</ul>
           <p className="text-xs text-muted-foreground">먼저 하고 패널에서 체크하거나, 이미 했으면 그대로 올린다.</p>
         </div>}
         <p className="text-muted-foreground">올리기 직전에 origin 을 다시 받고 봅니다 — 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋. 걸리면 올리지 않습니다. 팀이 같이 쓰는 브랜치라 되돌리려면 따로 되돌림 커밋이 필요합니다.</p>
-        <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button disabled={busy} onClick={() => void go()}>{busy ? '올리는 중…' : `${before.length || unpicked.length ? '그래도 ' : ''}${env} 에 올리기`}</Button></div>
+        <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button variant={prod ? 'destructive' : 'default'} disabled={busy || !ready} onClick={() => void go()}>{busy ? '올리는 중…' : prod ? `운영(${env})에 올리기` : `${before.length || unpicked.length ? '그래도 ' : ''}${env} 에 올리기`}</Button></div>
       </div>
     </Sheet>
   );
@@ -772,12 +809,12 @@ function PushDialog({ g, env, items, prep, onClose }: { g: Group; env: string; i
 
 // 런 단추 확인 창 — 무엇을 돌리는지(단추 설명 · 명령) 보여 주고 사람이 누를 때만. 돌리는 것은 런 화면 단추와 같다(POST /api/runs/<번호>/action)
 function ActionDialog({ pick, onClose, onStarted }: { pick: Pick; onClose: () => void; onStarted: () => void }) {
-  const [text, setText] = useState(''), [busy, setBusy] = useState(false), { run, action: a } = pick;
+  const [text, setText] = useState(''), [busy, setBusy] = useState(false), { run, action: a, repo } = pick;
   if (a.copy) return <CopyDialog pick={pick} onClose={onClose} />;
   const go = async () => {
     setBusy(true);
     try {
-      await post(`/api/runs/${run.id}/action`, { n: a.n, ...(a.ask ? { text } : {}) });
+      await post(`/api/runs/${run.id}/action`, { n: a.n, ...(repo ? { repo } : {}), ...(a.ask ? { text } : {}) });
       toast(`「${a.label}」 을 돌리는 중 — 끝나면 알린다`, 3000);
       onStarted();
       onClose();
@@ -788,6 +825,7 @@ function ActionDialog({ pick, onClose, onStarted }: { pick: Pick; onClose: () =>
       <div className="space-y-4">
         {a.flow && <p className="font-mono text-xs leading-5 font-semibold whitespace-pre-line text-primary">{a.flow}</p>}
         {a.hint && <p className="text-sm whitespace-pre-line">{a.hint}</p>}
+        {repo && <p className="text-sm font-semibold">이 줄 레포만 — <span className="font-mono text-xs break-all">{repo}</span></p>}
         <div className="space-y-1.5"><p className="text-xs font-semibold text-muted-foreground">돌릴 명령</p>
           <pre className="overflow-x-auto rounded-lg bg-[var(--code)] px-3 py-2.5 font-mono text-xs text-[var(--code-foreground)]">{a.command}</pre></div>
         {a.ask && <label className="block space-y-1.5 text-sm"><span className="text-xs font-semibold text-muted-foreground">{a.ask}</span><input value={text} onChange={e => setText(e.target.value)} className="h-9 w-full rounded-md border bg-card px-2.5 outline-none focus:ring-2 focus:ring-ring/40" /></label>}

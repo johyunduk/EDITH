@@ -17,6 +17,7 @@ import { lastLine, timeline } from './timeline.ts';
 import { refWarnings } from './refs.ts';
 import { livePort } from './live.ts';
 import { readSummary } from './runSummary.ts';
+import { readRefs } from './repos.ts';
 import { BRANCH, check, NAME, readEngine, ROOT as WORKSHOP, type Engine, type SkillRef } from './workshop.ts';
 
 // 엔진 브랜치(feature/edith-engine)의 runs/ 와 섞이지 않게 따로 둔다
@@ -36,7 +37,7 @@ export type Run = {
   id: number; engine: string; name: string; cwd: string; input: string; created: number; branch?: string;   // branch = 새 워크트리로 돌 때 그 브랜치
   def?: string;   // 공방 런(kind run)으로 시작했으면 그 폴더 — 런 설정 사본은 run/, engine 은 그 런이 돌린 엔진
   unattended?: boolean;   // 무인 — 사람을 기다리지 않는다(unattend). 엔진은 run.json · $EDITH_UNATTENDED 로 안다
-  state: 'queued' | 'running' | 'check' | 'stopped' | 'done'; reason?: string;   // queued = 동시 런 한도에 걸려 줄 서 있다
+  state: 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped'; reason?: string;   // queued = 동시 런 한도에 걸려 줄 서 있다, dropped = 버림(끝 — 기록만)
   owner?: { pid: number; port: number }; pane?: string;
   steps: Step[]; nodes: Record<string, NodeRun>; fixing?: { fixer: string; for: string }[];   // 고치는 중 — 갈래마다 하나
   panes?: Record<string, { pane?: string; claude?: string[] }>;   // 갈래의 pane · Claude 인자(본 줄은 pane · claude)
@@ -540,7 +541,7 @@ export function startQueued() {
 // ── 돌리기 — 실행마다 고리 하나(2초마다). 사람이 누른 것(멈춤 · 이어서 · 건너뛰기)은 줄에 넣었다가 고리가 처리한다 ──
 // 갈래가 여럿이면 갈래마다 노드 하나씩 동시에 — 한 갈래가 확인 필요로 멈춰도 다른 갈래는 계속 돈다(런은 「확인 필요」 로 보이며).
 // 줄의 되돌리기는 런 단추가 넣는다(되돌릴 노드 중 도는 것은 멈추고). 화면의 「이 노드부터 다시」 는 돌지 않을 때만 받는다.
-type Action = { do: 'stop' } | { do: 'resume' } | { do: 'skip'; key: string } | { do: 'rewind'; to: string; by: string; reason: string };
+type Action = { do: 'stop' } | { do: 'resume' } | { do: 'skip'; key: string } | { do: 'rewind'; to: string; by: string; reason: string } | { do: 'drop'; reason: string };
 const driving = new Set<number>(), queued = new Map<number, Action[]>(), procs = new Map<string, ChildProcess>(), exits = new Map<string, number>();
 // 명령 프로세스 · 끝 코드는 시도마다 따로 — 멈춘 시도가 늦게 끝나도 다음 시도의 결과로 읽히지 않게
 const pk = (r: Run, key: string) => `${r.id}:${key}:${r.nodes[key].attempt}`;
@@ -551,7 +552,9 @@ const moving = (r: Run) => r.state === 'running' || (r.state === 'check'
   && (r.steps.some(s => ACTIVE.includes(r.nodes[s.key].state)) || (n => n !== 'done' && n.length > 0)(nextSteps(r))));
 const checks = (r: Run) => r.steps.filter(s => r.nodes[s.key].state === 'check').length;
 function apply(r: Run, a: Action) {
+  if (r.state === 'dropped') return;
   if (a.do === 'stop') return stopNow(r);
+  if (a.do === 'drop') { stopNow(r); r.state = 'dropped'; r.reason = a.reason; return; }
   if (a.do === 'skip') return skip(r, a.key);
   if (a.do === 'resume') return void (r.state !== 'done' && resume(r, s => readOutcome(r, s)));
   const e = rewindLive(r, a.to, a.by, a.reason);
@@ -574,6 +577,7 @@ function rewindLive(r: Run, to: string, by: string, reason: string) {
 export function act(id: number, a: { do: 'stop' | 'resume' | 'skip' | 'rewind'; key?: unknown }) {
   const r = loadRun(id);
   if (!r) throw new Error('없는 런이다');
+  if (r.state === 'dropped') throw new Error('버린 런이다 — 기록만 남았다');
   if ((a.do === 'skip' || a.do === 'rewind') && (typeof a.key !== 'string' || !r.nodes[a.key])) throw new Error('없는 노드다');
   // shortcut: 화면의 되돌리기는 돌지 않을 때만(어느 갈래도) — 멈춘 뒤 되돌린다
   if (a.do === 'rewind' && (driving.has(id) || r.state === 'running')) throw new Error('도는 중이다 — 멈춘 뒤 되돌린다');
@@ -594,6 +598,16 @@ export function act(id: number, a: { do: 'stop' | 'resume' | 'skip' | 'rewind'; 
   }
   saveRun(r);
   if (moving(r)) drive(id);
+}
+// 버림 — 엔진의 「버리기」 단추가 치운 런(POST /api/runs/:id/drop). 도는 노드는 끊고, 끝 상태라 이어서 · 건너뛰기 · 되돌리기 · 런 단추를 막는다(기록은 남는다)
+export function dropRun(id: number, reason: unknown) {
+  const r = loadRun(id);
+  if (!r) throw new Error('없는 런이다');
+  const why = typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 300) : '버림';
+  if (driving.has(id)) return void queue(id, { do: 'drop', reason: why });
+  apply(r, { do: 'drop', reason: why });
+  saveRun(r);
+  setTimeout(startQueued, 0);
 }
 function stopNow(r: Run) {
   for (const s of r.steps) {
@@ -803,8 +817,9 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // flow — 배포 화면이 단추 설명 앞에 붙이는 브랜치 흐름(「{branch} → origin/{branch}」 — {branch} 원본 · {issue} 이슈 브랜치 · {tail} 원본 끝 토막을 그 줄 브랜치로 채운다)
 // ready — 배포 화면이 이 단추를 켜는 조건: 그 브랜치(「merge/{tail}」 — {branch} · {tail})에 원본 최신과 단추 칸(reach 가 브랜치면)이 다 들어 있을 때(src/deploy.ts markWait)
 // until — 거꾸로, 그 브랜치에 다 들어 있으면 막는다(이미 한 준비 단추)
+// row — 배포 화면이 레포 줄마다 놓는다: 누르면 그 줄 워크트리(런이 남긴 edith-repos.json 의 path)만 EDITH_ACTION_REPO 로 — 명령이 그 레포만 다룬다. 런 화면에서 누르면 레포 전부
 // on: "prep" · "cleanup" — 배포 화면 훅(deployHook — 배포 조치 뽑기 · 정리 때 엔진 몫의 일)
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string; row?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
 // reach — 배포 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
 // copy — 명령의 출력을 사람이 복사해 직접 돌릴 글로 돌려준다(결과 화면 확인 창 · 런 화면 단추 기록에 복사 단추). 이 명령은 아무것도 바꾸지 않아야 한다 — 바꾸는 일은 사람이 그 글로
 // 런 설정 사본(run/)에 단추가 있으면 그것, 없으면 엔진 사본의 것
@@ -817,27 +832,32 @@ function parseActions(text: () => string): RunAction[] {
     const a = JSON.parse(text()) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
       && (x.on === undefined || ['results', 'picks', 'request', 'prep', 'cleanup'].includes(x.on)) && (x.when === undefined || x.when === 'done')
-      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean') && (x.flow === undefined || typeof x.flow === 'string') && [x.ready, x.until].every(t => t === undefined || (typeof t === 'string' && /^[\w{][\w{}./-]{0,120}$/.test(t)))).slice(0, 16) : [];
+      && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean') && (x.row === undefined || typeof x.row === 'boolean') && (x.flow === undefined || typeof x.flow === 'string') && [x.ready, x.until].every(t => t === undefined || (typeof t === 'string' && /^[\w{][\w{}./-]{0,120}$/.test(t)))).slice(0, 16) : [];
   } catch { return []; }
 }
 export const readActions = (r: Run) => allActions(r).filter(x => !x.on).slice(0, 12);
-type Acted = { label: string; at: number; text?: string; code: number | null; note?: string };
+type Acted = { label: string; at: number; text?: string; code: number | null; note?: string; repo?: string };   // repo — 레포 줄 단추로 그 레포만 돌렸으면
 const acting = new Set<number>();
 // copy 단추면 끝날 때까지 기다려 출력(64KB 까지)과 끝 코드를 돌려준다 — 화면이 그 글을 복사하게
-export async function runAction(id: number, n: unknown, text: unknown): Promise<{ output?: string; code?: number }> {
+export async function runAction(id: number, n: unknown, text: unknown, repo?: unknown): Promise<{ output?: string; code?: number }> {
   const r = loadRun(id);
   if (!r) throw new Error('없는 런이다');
   const a = typeof n === 'number' ? readActions(r)[n] : undefined;
   if (!a) throw new Error('없는 단추다');
+  if (r.state === 'dropped') throw new Error('버린 런이다 — 단추를 쓸 수 없다');
   // 화면은 끝나기 전에 감추지만, 목록 차례(n)가 그대로라 여기서도 막는다
   if (a.when === 'done' && r.state !== 'done') throw new Error(`「${a.label}」 는 런이 끝난 뒤에 쓴다`);
   const t = typeof text === 'string' ? text.trim() : '';
   if (a.ask && !t) throw new Error(`${a.ask} — 글을 넣는다`);
   if (t.length > 4000) throw new Error('글은 4000자까지');
+  // 레포 줄 단추 — 그 런이 남긴 레포 칸의 워크트리만 받는다(브라우저가 보낸 경로를 그대로 명령에 넘기지 않게)
+  const only = typeof repo === 'string' ? repo : '';
+  if (only && (!a.row || !readRefs(join(dirOf(id), 'work')).some(x => x.path === only))) throw new Error('이 런의 레포 줄 단추가 아니다');
   if (acting.has(id)) throw new Error('다른 단추 명령이 도는 중이다');
   acting.add(id);
-  if (!a.copy) { launch(r, a, t, {}, () => acting.delete(id)); return {}; }
-  return new Promise(ok => launch(r, a, t, {}, (code, log) => { acting.delete(id); ok({ output: tail(log, 64 * 1024) ?? '', code }); }));
+  const env: Record<string, string> = only ? { EDITH_ACTION_REPO: only } : {};
+  if (!a.copy) { launch(r, a, t, env, () => acting.delete(id)); return {}; }
+  return new Promise(ok => launch(r, a, t, env, (code, log) => { acting.delete(id); ok({ output: tail(log, 64 * 1024) ?? '', code }); }));
 }
 // 새 런 칸의 고르기 목록 — 공방 엔진 폴더(사본이 아니라 공방 것) actions.json 의 on: "picks" 명령(예: 일감 목록에서 고르면 입력칸에 그 주소).
 // 사람이 「고르기」 를 열 때만 그 엔진 폴더에서 돈다(런이 없다 — 환경 변수는 EDITH_ENGINE · EDITH_WORKSHOP). 표준 출력의 JSON [{label, note?, input}] 만 받는다
@@ -927,7 +947,7 @@ export function runPicks(engine: unknown): Promise<Pick[]> {
 // 단추 · 결과 반영 명령을 작업 폴더의 셸로 — 기록(actions/<시각>.json · .log)을 남기고, 끝 코드 0 에 되돌림 파일이 있으면 되돌린다.
 // done 은 기록 파일을 다 쓴 뒤(끝 코드 · 기록 경로와 함께)
 function launch(r: Run, a: RunAction, t: string, env: Record<string, string>, done: (code: number, log: string) => void) {
-  const id = r.id, d = join(dirOf(id), 'actions'), at = Date.now(), meta: Acted = { label: a.label, at, ...(t ? { text: t } : {}), code: null };
+  const id = r.id, d = join(dirOf(id), 'actions'), at = Date.now(), meta: Acted = { label: a.label, at, ...(t ? { text: t } : {}), ...(env.EDITH_ACTION_REPO ? { repo: env.EDITH_ACTION_REPO } : {}), code: null };
   mkdirSync(d, { recursive: true, mode: 0o700 });
   const put = () => writeFileSync(join(d, `${at}.json`), JSON.stringify(meta), { mode: 0o600 });
   put();

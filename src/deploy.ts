@@ -125,7 +125,8 @@ async function fetchedAt(repo: string) {
 // prep — 그 환경의 머지 브랜치(merge-stage/<끝>) 상태: ready 원본 끝 · 환경을 다 품었다(충돌을 풀었다), merging 그 워크트리에서 아직 머지 중(Claude 가 푸는 중) — 배포 화면 레포 줄 단추가 본다
 export type EnvState = Reach & { name: string; conflicts?: number; files?: string[]; prep?: { branch: string; ready: boolean; merging?: string } };
 // remote — 이 맥에 브랜치가 없고 origin 것만, pushed — 이 맥 브랜치가 origin 과 같거나 origin 에 다 있다(origin 에 브랜치가 없으면 false)
-export type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: string; dirty?: number; behind?: number; stale?: boolean; envs: EnvState[]; error?: string };
+// empty — 등록한 뒤 커밋이 하나도 없다(갓 만든 브랜치 — 끝이 운영의 한 지점이라 「들어감」 으로 보이지 않게 환경은 모두 none)
+export type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: string; dirty?: number; behind?: number; stale?: boolean; empty?: boolean; envs: EnvState[]; error?: string };
 // 항목 하나의 코드 상태 — 환경마다 어디까지, 안 들어간 환경은 그대로 합치면 충돌할 파일
 // shortcut: 충돌은 브랜치를 그 환경에 바로 합칠 때 기준 — stage 를 거쳐 나가는 운영(stage → master)의 실제 충돌과 다를 수 있다, 운영 칸이 틀리게 보이면 앞 환경 기준으로
 export async function stateOf(x: Item, envs: Env[], base = envs.at(-1)!.ref): Promise<ItemState> {
@@ -133,11 +134,13 @@ export async function stateOf(x: Item, envs: Env[], base = envs.at(-1)!.ref): Pr
   const { local, remote, tip } = await tipOf(x);
   if (!tip) return { envs: [], error: `브랜치 ${x.branch} 가 이 맥에도 origin 에도 없다` };
   const start = x.start ?? await out(x.repo, ['merge-base', base, tip]) ?? tip;
+  const empty = !!x.start && (x.start === tip || await out(x.repo, ['rev-list', '--count', `${x.start}..${tip}`]) === '0');
   const [wt, behind, ahead, es] = await Promise.all([
     worktreeOf(x.repo, x.branch),
     local && remote && local !== remote ? out(x.repo, ['rev-list', '--count', `${local}..${remote}`]).then(Number) : 0,
     local && remote && local !== remote ? out(x.repo, ['rev-list', '--count', `${remote}..${local}`]).then(Number) : 0,
     Promise.all(envs.map(async (e): Promise<EnvState> => {
+      if (empty) return { ref: e.ref, state: 'none', name: e.name };
       const r = await reachOf(x.repo, start, e.ref, tip);
       if (reached(r) || r.state === 'missing') return { ...r, name: e.name };
       const c = await conflictsOf(x.repo, e.ref, tip);
@@ -146,7 +149,7 @@ export async function stateOf(x: Item, envs: Env[], base = envs.at(-1)!.ref): Pr
   ]);
   const dirty = wt ? (await out(wt, ['status', '--porcelain']))?.split('\n').filter(Boolean).length : undefined;
   return { tip, ...(local ? {} : { remote: true }), pushed: !!remote && !ahead, ...(wt ? { worktree: wt, dirty } : {}), ...(behind ? { behind } : {}),
-    ...(x.block ? { stale: !tip.startsWith(x.block.end) } : {}), envs: es };
+    ...(x.block ? { stale: !tip.startsWith(x.block.end) } : {}), ...(empty ? { empty: true } : {}), envs: es };
 }
 
 // 화면 — 보관 안 한 항목과 그 코드 상태, 레포마다 마지막 받은 때. 보관한 것은 수(done)만 — 쌓이니 목록은 deployDone 으로 따로 연다
@@ -176,8 +179,9 @@ export function deployDone(q = '', before?: string, limit = 40, file = DEPLOY_FI
 // via(이슈 → 안건 브랜치)가 있으면 안건 항목 밑 「이슈 줄」(그 런의 레포 상태 issue). 목록에 없는 런 일은 extra(런 하나 = 카드 하나), 보관한 항목의 런은 뺀다.
 // 단추(reach 가 적힌 런 단추)는 끝난 런만 — 도는 런은 지금 노드(now)만 ──
 // acting — 지금 도는 런 단추(누른 때부터 끝 코드가 찰 때까지), last — 마지막으로 끝난 단추(끝 코드 · 까닭)
-export type Act = { label: string; at: number; code: number | null; note?: string };
-export type RunLink = { id: number; title: string; tag?: string; state: Run['state']; now?: string; created: number; actions: ReachAction[]; issue?: ReachRepo; acting?: Act; last?: Act };
+export type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };
+// path — 이 항목에 해당하는 그 런의 워크트리(레포 줄 단추 row 가 그 레포만 돌게)
+export type RunLink = { id: number; title: string; tag?: string; state: Run['state']; now?: string; created: number; actions: ReachAction[]; issue?: ReachRepo; path?: string; acting?: Act; last?: Act };
 // 런이 지금 하는 노드 — 사람 확인이 먼저
 const nowOf = (r: Run) => {
   const at = (st: string[]) => r.steps.filter(s => st.includes(r.nodes[s.key]?.state)).map(s => s.title);
@@ -200,15 +204,15 @@ export async function deployBoard(file = DEPLOY_FILE) {
     }));
     // 레포 상태(git 이 무겁다)는 이슈 줄 · 목록에 없는 런 일에만
     const repos = at.some(a => a && (a.via || (!a.id && !a.old))) ? await runRepos(full) : [];
-    const tag = runTag(full), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}) }));
+    const tag = runTag(full), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) }));
     const acting = done.find(a => a.code === null), last = done.find(a => a.code !== null);
-    const link = (issue?: ReachRepo): RunLink => ({ id: full.id, title: runTitle(full), ...(tag ? { tag } : {}), state: full.state,
+    const link = (issue?: ReachRepo, path?: string): RunLink => ({ id: full.id, title: runTitle(full), ...(tag ? { tag } : {}), state: full.state, ...(path ? { path } : {}),
       ...(full.state === 'done' ? {} : { now: nowOf(full) }), created: full.created, actions: full.state === 'done' ? runActions(full) : [], ...(issue ? { issue } : {}),
       ...(acting ? { acting } : {}), ...(last ? { last } : {}) });
     const loose: ReachRepo[] = [];
     at.forEach((a, i) => {
       if (!a) return;
-      if (a.id) (links[a.id] ??= []).push(link(a.via ? repos[i] : undefined));
+      if (a.id) (links[a.id] ??= []).push(link(a.via ? repos[i] : undefined, refs[i].path));
       else if (!a.old && repos[i]) loose.push(repos[i]);
     });
     if (loose.length) extra.push({ run: link(), repos: loose });
@@ -216,13 +220,13 @@ export async function deployBoard(file = DEPLOY_FILE) {
   const items = v.items.map(x => ({ ...x, runs: (links[x.id] ?? []).sort((a, b) => b.id - a.id) }));
   // 단추 목록은 항목마다 따로 만든 것(link)이라 그 항목 브랜치로 막아도 다른 항목에 번지지 않는다
   await each(items, 4, x => markWait(x, x.runs.flatMap(r => r.actions)));
-  // 가운데 환경(stage)이 아직이면 그 머지 브랜치 상태 — 레포 줄의 「stage 머지 준비」 · 「stage 에 올리기」 가 본다
+  // 아직 안 들어간 환경(stage · 운영)이면 그 머지 브랜치 상태 — 레포 줄의 「<환경> 머지 준비」 · 「<환경> 에 올리기」 가 본다
   await each(items, 4, async x => {
     const tip = x.state?.tip;
     if (!tip) return;
     for (const [i, e] of v.envs.entries()) {
       const es = x.state!.envs[i];
-      if (i === 0 || i === v.envs.length - 1 || !es || reached(es) || es.state === 'missing') continue;
+      if (i === 0 || !es || reached(es) || es.state === 'missing') continue;
       const branch = mergeBranch(x, e), wt = await mergeTree(x.repo, branch);
       es.prep = { branch, ready: !!(await prepared(x, e, tip)), ...(wt && await out(wt, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']) ? { merging: wt } : {}) };
     }
@@ -361,44 +365,94 @@ export async function importItems(t: string, file = DEPLOY_FILE) {
 
 // 다음 환경에 올리기 — 화면은 레포 줄마다 하나씩 보낸다(사용자 결정 2026-10-26 오전 — 안건 단위 한 번에서 바꿈). 여럿을 받으면 레포마다 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋을 먼저 다 보고,
 // 하나라도 걸리면 아무 레포도 올리지 않는다. 다 되면 레포마다 브랜치를 --no-ff 머지 커밋으로(작업 트리 없이 merge-tree) 만들어 push(강제 아님).
-// 충돌이 있어도 「stage 머지 준비」 로 머지 브랜치에서 푼 것(prepared — 원본 끝 · 환경을 다 품었다)이 있으면 그 커밋을 올린다.
-// 처음 환경(dev — 머지 브랜치로 검증하고 올린다)과 마지막 환경(운영 — 사람이 직접, 사용자 결정 2026-10-24)은 여기서 올리지 않는다. 이미 들어간 레포는 건너뛴다.
+// 충돌이 있어도 「<환경> 머지 준비」 로 머지 브랜치에서 푼 것(prepared — 원본 끝 · 환경을 다 품었다)이 있으면 그 커밋을 올린다.
+// 처음 환경(dev — 머지 브랜치로 검증하고 올린다)은 여기서 올리지 않는다. 마지막 환경(운영)도 올린다(사용자 결정 2026-10-26 오후 — 그전엔 사람이 직접) —
+// master 에 push 하면 운영 파이프라인이 바로 돌아서 strictCheck 를 더 본다: 걸리면(hard) 막고, 충돌을 푼 파일에서 빠진 줄은 사람이 확인 창에서 보고 ack 해야 올린다.
+// 운영의 「배포 전」 할 일이 남았으면 막는다
 // shortcut: push 는 레포마다 따로라 앞 레포를 올린 뒤 뒤 레포 push 가 거절되면(그사이 그 환경이 바뀜) 반만 올라간다 — 그때는 결과에 어느 레포까지 올렸는지 적는다
-export async function promoteMany(b: { ids?: unknown; env?: unknown }, file = DEPLOY_FILE) {
+type Lost = { file: string; side: string; line: string };
+export type Strict = { commits: string[]; files: number; conflicts: string[]; hard: string[]; lost: Lost[] };
+type Plan = { x: Item; name: string; bad?: string; skip?: string; c?: string; strict?: Strict };
+const isAnc = async (repo: string, a: string, b: string) => (await git(repo, ['merge-base', '--is-ancestor', a, b])).code === 0;
+const lines = (t: string | null) => t?.split('\n').filter(Boolean) ?? [];
+// 충돌을 푼 파일에서 빠진 줄 — 갈라진 곳 뒤 원본이 더한 줄 · 대상이 더한 줄 중 푼 판에 없는 것(글자 · 숫자가 없는 줄은 뺀다)
+async function lostLines(repo: string, base: string, into: string, tip: string, c: string, file: string): Promise<Lost[]> {
+  const have = new Set((await out(repo, ['show', `${c}:${file}`]) ?? '').split('\n').map(l => l.trim()));
+  const added = async (to: string) => [...new Set(lines(await out(repo, ['diff', '-U0', base, to, '--', file])).filter(l => l.startsWith('+') && !l.startsWith('+++')).map(l => l.slice(1).trim()).filter(l => /[\p{L}\p{N}]/u.test(l)))];
+  const [mine, theirs] = await Promise.all([added(tip), added(into)]);
+  return [...mine.filter(l => !have.has(l)).map(line => ({ file, side: '원본', line })), ...theirs.filter(l => !have.has(l)).map(line => ({ file, side: '운영', line }))].slice(0, 40);
+}
+// 운영 올리기 확인 — 올릴 커밋 c 가 ① 지금 운영(into) · 원본 끝(tip)을 다 품고 ② 운영과 다른 파일이 원본이 바꾼 파일 안에만 있고 ③ 그 파일에 충돌 표시가 없나(hard),
+// ④ 충돌을 푼 파일에서 양쪽이 더한 줄이 빠지지 않았나(lost — 사람이 확인). commits 는 이번에 운영으로 나가는 원본 커밋(머지 빼고)
+export async function strictCheck(repo: string, into: string, tip: string, c: string, conflicts: string[]): Promise<Strict> {
+  const base = await out(repo, ['merge-base', into, tip]), hard: string[] = [];
+  const commits = lines(await out(repo, ['log', '--no-merges', '--format=%h %s', `${into}..${tip}`])).slice(0, 40);
+  const mine = new Set(base ? lines(await out(repo, ['diff', '--name-only', base, tip])) : []), changed = lines(await out(repo, ['diff', '--name-only', into, c]));
+  if (!(await isAnc(repo, into, c)) || !(await isAnc(repo, tip, c))) hard.push('올릴 커밋이 지금 운영 · 원본 끝을 다 품지 않았다 — 머지 준비를 다시');
+  const outside = changed.filter(f => !mine.has(f));
+  if (outside.length) hard.push(`원본이 바꾸지 않은 파일이 같이 바뀐다(${outside.length}) — ${outside.slice(0, 6).join(', ')}`);
+  if (changed.length) {
+    const m = await git(repo, ['grep', '-n', '-I', '-E', '^(<<<<<<<|>>>>>>>)( |$)', c, '--', ...changed.slice(0, 500)]);
+    if (m.code === 0) hard.push(`충돌 표시가 남았다 — ${lines(m.stdout).slice(0, 5).map(l => l.split(':').slice(1, 3).join(':')).join(', ')}`);
+  }
+  const lost = base ? (await Promise.all(conflicts.map(f => lostLines(repo, base, into, tip, c, f)))).flat() : [];
+  return { commits, files: changed.length, conflicts, hard, lost };
+}
+// 레포 하나 — 올릴 커밋(c)을 정하거나 막을 까닭(bad) · 건너뛸 까닭(skip). 운영이면 strict 도
+async function planOne(x: Item, s: Store, i: number): Promise<Plan> {
+  const env = s.envs[i], prev = s.envs[i - 1], to = env.ref.replace(/^origin\//, ''), last = i === s.envs.length - 1, name = named(x.repo, x.branch);
+  const st = await stateOf(x, [prev, env], s.envs.at(-1)!.ref);
+  if (st.error) return { x, name, bad: `${name} — ${st.error}` };
+  if (st.dirty) return { x, name, bad: `${name} — 워크트리에 커밋 안 한 변경 ${st.dirty}개` };
+  if (st.behind) return { x, name, bad: `${name} — origin/${x.branch} 에 이 맥에 없는 커밋 ${st.behind}개 — 받은 뒤 다시` };
+  if (st.envs[1]?.state === 'missing') return { x, name, skip: `${name} — ${env.ref} 가 없는 레포라 건너뜀` };
+  if (reached(st.envs[1])) return { x, name, skip: `${name} — 이미 ${env.name} 에 있다` };
+  if (!reached(st.envs[0])) return { x, name, bad: `${name} — 아직 ${prev.name} 에 다 들어가지 않았다` };
+  const into = (await commit(x.repo, env.ref))!, conflicts = await conflictsOf(x.repo, into, st.tip!);
+  if (conflicts === null) return { x, name, bad: `${name} — ${env.ref} 와 합쳐 보지 못했다` };
+  let c: string | null | undefined;
+  if (conflicts.length) {
+    c = await prepared(x, env, st.tip!);
+    if (!c) return { x, name, bad: `${name} — ${env.name} 와 충돌 ${conflicts.length}곳: ${conflicts.slice(0, 5).join(', ')} — 「${env.name} 머지 준비」 로 먼저 푼다` };
+  } else {
+    const tree = (await out(x.repo, ['merge-tree', '--write-tree', '--no-messages', into, st.tip!]))?.split('\n')[0];
+    c = tree && await out(x.repo, ['commit-tree', tree, '-p', into, '-p', st.tip!, '-m', `Merge branch '${x.branch}' into ${to}`]);
+    if (!c) return { x, name, bad: `${name} — 머지 커밋을 만들지 못했다` };
+  }
+  return { x, name, c, ...(last ? { strict: await strictCheck(x.repo, into, st.tip!, c, conflicts) } : {}) };
+}
+async function plansOf(b: { ids?: unknown; env?: unknown }, file: string) {
   if (!Array.isArray(b.ids) || !b.ids.length || b.ids.length > 20) throw new Error('올릴 항목이 없다');
   const s = loadStore(file), xs = b.ids.map(id => s.items.find(i => i.id === id && !i.done)), i = s.envs.findIndex(e => e.name === b.env);
   if (xs.some(x => !x)) throw new Error('없거나 보관한 항목이 있다 — 화면이 다시 읽은 뒤 다시');
-  if (i <= 0 || i >= s.envs.length - 1) throw new Error(`${String(b.env)} 은 여기서 올리지 않는다(처음 · 마지막 환경)`);
-  const env = s.envs[i], prev = s.envs[i - 1], to = env.ref.replace(/^origin\//, '');
+  if (i <= 0) throw new Error(`${String(b.env)} 은 여기서 올리지 않는다(처음 환경은 머지 브랜치로)`);
   const fetched = await each([...new Set((xs as Item[]).map(x => x.repo))], 3, async r => { const f = await git(r, ['fetch', '--quiet', 'origin'], 90_000); return f.code === 0 ? null : `${basename(r)} 받지 못했다 — ${(f.stderr || f.stdout).trim().split('\n')[0]}`; });
   if (fetched.some(Boolean)) throw new Error(fetched.filter(Boolean).join('\n'));
   // 먼저 다 본다 — 머지 커밋은 만들어 두기만(push 전에는 아무 브랜치도 안 바뀐다)
-  const plans = await each(xs as Item[], 3, async x => {
-    const name = named(x.repo, x.branch), st = await stateOf(x, [prev, env], s.envs.at(-1)!.ref);
-    if (st.error) return { x, name, bad: `${name} — ${st.error}` };
-    if (st.dirty) return { x, name, bad: `${name} — 워크트리에 커밋 안 한 변경 ${st.dirty}개` };
-    if (st.behind) return { x, name, bad: `${name} — origin/${x.branch} 에 이 맥에 없는 커밋 ${st.behind}개 — 받은 뒤 다시` };
-    if (st.envs[1]?.state === 'missing') return { x, name, skip: `${name} — ${env.ref} 가 없는 레포라 건너뜀` };
-    if (reached(st.envs[1])) return { x, name, skip: `${name} — 이미 ${env.name} 에 있다` };
-    if (!reached(st.envs[0])) return { x, name, bad: `${name} — 아직 ${prev.name} 에 다 들어가지 않았다` };
-    const into = (await commit(x.repo, env.ref))!, conflicts = await conflictsOf(x.repo, into, st.tip!);
-    if (conflicts === null) return { x, name, bad: `${name} — ${env.ref} 와 합쳐 보지 못했다` };
-    if (conflicts.length) {
-      const c = await prepared(x, env, st.tip!);
-      return c ? { x, name, c } : { x, name, bad: `${name} — ${env.name} 와 충돌 ${conflicts.length}곳: ${conflicts.slice(0, 5).join(', ')} — 「${env.name} 머지 준비」 로 먼저 푼다` };
-    }
-    const tree = (await out(x.repo, ['merge-tree', '--write-tree', '--no-messages', into, st.tip!]))?.split('\n')[0];
-    const c = tree && await out(x.repo, ['commit-tree', tree, '-p', into, '-p', st.tip!, '-m', `Merge branch '${x.branch}' into ${to}`]);
-    return c ? { x, name, c } : { x, name, bad: `${name} — 머지 커밋을 만들지 못했다` };
-  });
-  const bad = plans.flatMap(p => 'bad' in p && p.bad ? [p.bad] : []), skip = plans.flatMap(p => 'skip' in p && p.skip ? [p.skip] : []);
+  return { s, i, env: s.envs[i], plans: await each(xs as Item[], 3, x => planOne(x, s, i)) };
+}
+// 운영 올리기 확인 창 — 레포마다 나갈 커밋 · 막는 까닭 · 빠진 줄 · 남은 배포 전 할 일(올리지는 않는다)
+export async function promoteCheck(b: { ids?: unknown; env?: unknown }, file = DEPLOY_FILE) {
+  const { env, plans } = await plansOf(b, file);
+  return { env: env.name, repos: plans.map(p => ({ id: p.x.id, name: p.name, ...(p.bad ? { bad: p.bad } : {}), ...(p.skip ? { skip: p.skip } : {}), ...(p.strict ? { strict: p.strict } : {}),
+    before: p.x.tasks.filter(t => t.env === env.name && !/^배포 후/.test(t.text) && !t.done).map(t => t.text) })) };
+}
+export async function promoteMany(b: { ids?: unknown; env?: unknown; ack?: unknown }, file = DEPLOY_FILE) {
+  const { s, i, env, plans } = await plansOf(b, file), last = i === s.envs.length - 1, to = env.ref.replace(/^origin\//, '');
+  const bad = plans.flatMap(p => {
+    if (p.bad) return [p.bad];
+    if (!last || !p.c) return [];
+    const before = p.x.tasks.filter(t => t.env === env.name && !/^배포 후/.test(t.text) && !t.done);
+    return [...(p.strict!.hard.map(h => `${p.name} — ${h}`)), ...(before.length ? [`${p.name} — ${env.name} 배포 전 할 일 ${before.length}개가 체크 안 됐다`] : []),
+      ...(p.strict!.lost.length && b.ack !== true ? [`${p.name} — 충돌을 푼 파일에서 빠진 줄 ${p.strict!.lost.length}개 — 확인 창에서 보고 확인한 뒤`] : [])];
+  }), skip = plans.flatMap(p => p.skip ? [p.skip] : []);
   if (bad.length) throw new Error([`${env.name} 에 아무 레포도 올리지 않았다`, ...bad, ...skip].join('\n'));
   const done: string[] = [];
   for (const p of plans) {
-    if (!('c' in p) || !p.c) continue;
+    if (!p.c) continue;
     const r = await git(p.x.repo, ['push', 'origin', `${p.c}:refs/heads/${to}`], 90_000);
     if (r.code !== 0) throw new Error([`${p.name} — push 거절: ${(r.stderr || r.stdout).trim().split('\n').slice(-1)[0]}`, ...(done.length ? [`앞서 올린 것: ${done.join(', ')}`] : [])].join('\n'));
-    change(file, ANY, t => { const y = t.items.find(k => k.id === p.x.id); if (y) note(y, `${env.name} 에 올림(${p.c.slice(0, 9)})`); });
+    change(file, ANY, t => { const y = t.items.find(k => k.id === p.x.id); if (y) note(y, `${env.name} 에 올림(${p.c!.slice(0, 9)})${p.strict?.lost.length ? ` — 빠진 줄 ${p.strict.lost.length}개 확인하고` : ''}`); });
     done.push(`${p.name} → ${env.ref} (${p.c.slice(0, 9)})`);
   }
   return { ok: true, text: [...done, ...skip].join('\n') || '올릴 것이 없다' };
@@ -430,7 +484,7 @@ async function openClaude(cwd: string, label: string, text: string): Promise<{ p
 export async function prepareMerge(b: { id?: unknown; env?: unknown }, file = DEPLOY_FILE, claude = openClaude) {
   const s = loadStore(file), x = s.items.find(i => i.id === b.id && !i.done), i = s.envs.findIndex(e => e.name === b.env);
   if (!x) throw new Error('없거나 보관한 항목이다 — 화면이 다시 읽은 뒤 다시');
-  if (i <= 0 || i >= s.envs.length - 1 || !/^\w[\w-]*$/.test(s.envs[i].name)) throw new Error(`${String(b.env)} 은 여기서 준비하지 않는다(처음 · 마지막 환경)`);
+  if (i <= 0 || !/^\w[\w-]*$/.test(s.envs[i].name)) throw new Error(`${String(b.env)} 은 여기서 준비하지 않는다(처음 환경은 머지 브랜치로)`);
   const env = s.envs[i], prev = s.envs[i - 1], to = env.ref.replace(/^origin\//, ''), name = named(x.repo, x.branch), mb = mergeBranch(x, env);
   const f = await git(x.repo, ['fetch', '--quiet', 'origin'], 90_000);
   if (f.code !== 0) throw new Error(`${name} 받지 못했다 — ${(f.stderr || f.stdout).trim().split('\n')[0]}`);
@@ -464,6 +518,7 @@ export async function prepareMerge(b: { id?: unknown; env?: unknown }, file = DE
       `2. 푼 파일을 git add 하고 git commit --no-edit 로 머지를 마친다.${rest.length ? ` 이어서 ${rest.join(' · ')} 도 한다(충돌이 나면 같은 방식으로).` : ''}`,
       `3. 바뀐 파일을 그 레포 방식으로 검사한다(문법 검사 · 린트 · 빌드 — 의존성 폴더가 없으면 ${st.worktree ?? x.repo} 의 것을 링크해 쓴다). 실패하면 고치지 말고 멈춰 알린다.`,
       `4. push 하지 않는다 — 사람이 EDITH 배포 화면 「${env.name} 에 올리기」 로 올린다. 끝나면 파일마다 「파일 · 고른 방식 · 이유」 한 줄씩 답한다.`,
+      ...(i === s.envs.length - 1 ? ['5. 운영(이 브랜치가 운영 파이프라인으로 바로 나간다)이라 더 엄격하게 — 양쪽이 더한 줄은 지우지 않는다(같은 자리를 둘 다 고쳤으면 둘 다 살아 있게 합친다), 충돌 파일 밖은 한 글자도 바꾸지 않는다, 검사가 안 되면(의존성 · 도구 없음) 「검사 못 함」 이라고 답한다. 조금이라도 애매하면 멈추고 묻는다. 올리기 확인 창이 빠진 줄 · 바뀐 파일 범위를 다시 본다.'] : []),
     ].join('\n'));
     change(file, ANY, t => { const y = t.items.find(q => q.id === x.id); if (y) note(y, `${env.name} 머지 준비 — 충돌 ${files.length}곳, Claude(${c.pane})`); });
     return { ok: true, pane: c.pane, text: c.error ? `충돌 ${files.length}곳 — Claude 를 띄우지 못했다(${c.error}). pane ${c.pane} 에서 직접 풀거나 다시` : `충돌 ${files.length}곳(${files.join(', ')}) — 새 Claude pane(${c.pane})이 ${wt} 에서 푼다. 끝나면 「${env.name} 에 올리기」 가 켜진다` };

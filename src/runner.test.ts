@@ -320,3 +320,48 @@ test('copy 단추 — 끝날 때까지 기다려 출력 · 끝 코드를 돌려�
     assert.deepEqual(got.plain, {});
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+test('레포 줄 단추(row) — 그 런 레포 칸의 워크트리만 받아 EDITH_ACTION_REPO 로, row 가 아니거나 다른 경로면 막는다', () => {
+  const home = mkdtempSync(join(tmpdir(), 'edith-row-')), dir = join(home, '.local', 'share', 'edith', 'workshop-runs', '9');
+  try {
+    mkdirSync(join(dir, 'engine', 'e'), { recursive: true });
+    mkdirSync(join(dir, 'work'), { recursive: true });
+    writeFileSync(join(dir, 'run.json'), JSON.stringify({ id: 9, engine: 'e', name: 'e', cwd: home, input: '', created: 0, state: 'done', steps: [], nodes: {} }));
+    writeFileSync(join(dir, 'work', 'edith-repos.json'), JSON.stringify([{ path: '/w/fe' }, { path: '/w/be' }]));
+    writeFileSync(join(dir, 'engine', 'e', 'actions.json'), JSON.stringify([
+      { label: '줄', command: 'echo "[$EDITH_ACTION_REPO]"', copy: true, row: true },
+      { label: '전체', command: 'echo "[$EDITH_ACTION_REPO]"', copy: true },
+    ]));
+    const code = `import { runAction } from ${JSON.stringify(join(import.meta.dirname, 'runner.ts'))};
+      const err = async f => { try { await f(); return null; } catch (e) { return e.message; } };
+      console.log(JSON.stringify({ fe: await runAction(9, 0, '', '/w/fe'), all: await runAction(9, 0, ''), other: await err(() => runAction(9, 0, '', '/w/x')), notRow: await err(() => runAction(9, 1, '', '/w/fe')) }));`;
+    const out = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, HOME: home, USERPROFILE: home, EDITH_ACTION_REPO: '' }, encoding: 'utf8' });
+    const got = JSON.parse(out.stdout.trim().split('\n').pop() ?? '{}');
+    assert.equal(got.fe.output, '[/w/fe]\n');   // 그 줄 레포만
+    assert.equal(got.all.output, '[]\n');        // 런 화면처럼 레포 없이 — 레포 전부
+    assert.match(got.other, /레포 줄 단추가 아니다/);
+    assert.match(got.notRow, /레포 줄 단추가 아니다/);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('버림 — 확인 필요 런을 끝 상태로, 까닭을 남기고 이어서 · 건너뛰기 · 런 단추 · 다시 버리기를 막는다', () => {
+  const home = mkdtempSync(join(tmpdir(), 'edith-drop-')), dir = join(home, '.local', 'share', 'edith', 'workshop-runs', '8');
+  try {
+    mkdirSync(join(dir, 'engine', 'e'), { recursive: true });
+    const steps = [{ key: 'a', id: 'a', title: '가', kind: 'command', command: 'true', lane: 'e' }];
+    writeFileSync(join(dir, 'run.json'), JSON.stringify({ id: 8, engine: 'e', name: 'e', cwd: home, input: '', created: 0, state: 'check', reason: '막힘', steps, nodes: { a: { state: 'check', attempt: 1, fails: 0 } } }));
+    writeFileSync(join(dir, 'engine', 'e', 'actions.json'), JSON.stringify([{ label: '버리기', command: 'true' }]));
+    const code = `import { dropRun, act, runAction, loadRun } from ${JSON.stringify(join(import.meta.dirname, 'runner.ts'))};
+      const err = async f => { try { await f(); return null; } catch (e) { return e.message; } };
+      dropRun(8, '  이슈 아님(기획대로)  ');
+      const r = loadRun(8);
+      console.log(JSON.stringify({ state: r.state, reason: r.reason, node: r.nodes.a.state,
+        resume: await err(() => act(8, { do: 'resume' })), skip: await err(() => act(8, { do: 'skip', key: 'a' })),
+        button: await err(() => runAction(8, 0, '')), again: (dropRun(8, '두 번째'), loadRun(8).reason) }));
+      process.exit(0);`;
+    const out = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', timeout: 20_000 });
+    const got = JSON.parse(out.stdout.trim().split('\n').pop() ?? '{}');
+    assert.deepEqual(got, { state: 'dropped', reason: '이슈 아님(기획대로)', node: 'check', resume: '버린 런이다 — 기록만 남았다', skip: '버린 런이다 — 기록만 남았다',
+      button: '버린 런이다 — 단추를 쓸 수 없다', again: '이슈 아님(기획대로)' });   // 확인 필요 노드는 도는 것이 아니라 그대로, 다시 버려도 첫 까닭
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

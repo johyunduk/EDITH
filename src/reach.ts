@@ -87,9 +87,9 @@ const str = (v: unknown, n: number) => typeof v === 'string' && v.trim() ? v.tri
 // via — 먼저 합쳐지는 브랜치(이슈 → 안건)에 들어갔나, headAt — 지금 커밋 시각, actions — 엔진 런 단추 중 단계(reach)가 적힌 것(배포 화면이 그 단계 칸에 놓는다)
 export type ReachRepo = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
 // wait — ready 가 아직 안 찼으면 그 까닭(배포 화면이 단추를 막는다 — src/deploy.ts markWait)
-export type ReachAction = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; ready?: string; until?: string; wait?: string };
+export type ReachAction = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; ready?: string; until?: string; row?: boolean; wait?: string };
 // 런 단추 중 단계(reach)가 적힌 것 — 결과 · 배포 화면이 그 단계 칸에 놓는다(n 은 런 단추 목록의 차례)
-export const runActions = (full: Run): ReachAction[] => readActions(full).flatMap((a, n) => a.reach ? [{ n, label: a.label, reach: a.reach, command: a.command, ...(a.hint ? { hint: a.hint } : {}), ...(a.ask ? { ask: a.ask } : {}), ...(a.danger ? { danger: true } : {}), ...(a.copy ? { copy: true } : {}), ...(a.flow ? { flow: a.flow.slice(0, 300) } : {}), ...(a.ready ? { ready: a.ready } : {}), ...(a.until ? { until: a.until } : {}) }] : []);
+export const runActions = (full: Run): ReachAction[] => readActions(full).flatMap((a, n) => a.reach ? [{ n, label: a.label, reach: a.reach, command: a.command, ...(a.hint ? { hint: a.hint } : {}), ...(a.ask ? { ask: a.ask } : {}), ...(a.danger ? { danger: true } : {}), ...(a.copy ? { copy: true } : {}), ...(a.flow ? { flow: a.flow.slice(0, 300) } : {}), ...(a.ready ? { ready: a.ready } : {}), ...(a.until ? { until: a.until } : {}), ...(a.row ? { row: true } : {}) }] : []);
 // 런 꼬리표 — 받은 요청의 티켓(edith-request.json)
 export const runTag = (full: Run) => str((workJson(full.id, 'edith-request.json') as { tag?: unknown } | null)?.tag, 40);
 // 런 제목 — 요청 · 요약 순서로, 주소뿐인 것은 건너뛴다(없으면 입력 첫 줄)

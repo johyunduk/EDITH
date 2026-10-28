@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addTask, checkTask, deployFile, filesDir, prepItems, prepOf, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, checkTask, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -61,7 +61,7 @@ test('고치기 — 판(rev)이 다르면 막고, 배포일 · 할 일 체크는
   } finally { r.done(); }
 });
 
-test('상태 · 올리기 — dev 에 든 것만 stage 에, 충돌 · dev 전 · 운영은 올리지 않는다', async () => {
+test('상태 · 올리기 — dev 에 든 것만 stage 에, 충돌 · dev 전은 올리지 않고, 운영은 stage 를 거쳐야', async () => {
   const r = repo();
   try {
     await importItems(JSON.stringify({ items: ['feature', 'clash', 'early'].map(branch => ({ repo: r.r, branch })) }), r.file);
@@ -72,7 +72,8 @@ test('상태 · 올리기 — dev 에 든 것만 stage 에, 충돌 · dev 전 ·
     const id = (b: string) => v.items.find(x => x.branch === b)!.id;
     await assert.rejects(promote({ id: id('clash'), env: 'stage' }, r.file), /충돌 1곳: a\.txt/);
     await assert.rejects(promote({ id: id('early'), env: 'stage' }, r.file), /아직 dev/);
-    await assert.rejects(promote({ id: id('feature'), env: 'prod' }, r.file), /올리지 않는다/);
+    await assert.rejects(promote({ id: id('feature'), env: 'prod' }, r.file), /아직 stage 에 다 들어가지 않았다/);
+    await assert.rejects(promote({ id: id('feature'), env: 'dev' }, r.file), /처음 환경/);
     // 안건 단위 — 묶음의 한 레포라도 충돌하면 아무것도 안 올린다(origin 의 stage 그대로)
     const was = execFileSync('git', ['-C', r.o, 'rev-parse', 'stage'], { encoding: 'utf8' }).trim();
     await assert.rejects(promoteMany({ ids: [id('feature'), id('clash')], env: 'stage' }, r.file), /stage 에 아무 레포도 올리지 않았다\n.*clash — stage 와 충돌 1곳/);
@@ -248,4 +249,64 @@ test('복사 파일 보기 — 그 항목 자리 안의 글 파일만, 경로 ·
     for (const bad of ['../../deploy.json', 'out.sql', '.hidden', 'none.sql']) assert.throws(() => deployFile(id, bad, t.file), /없는 파일/, bad);
     assert.throws(() => deployFile('nope', 'mysql-1a2b3c4d.sql', t.file), /없는 파일/);
   } finally { t.done(); }
+});
+
+test('운영 올리기 — 나갈 커밋을 보이고, 충돌 표시 · 원본 밖 파일은 막고, 푼 파일에서 빠진 줄은 확인(ack)해야, 배포 전 할 일이 남으면 막는다', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim(), put = (f: string, t: string) => writeFileSync(join(r.r, f), t);
+  const o = (...a: string[]) => execFileSync('git', ['-C', r.o, ...a], { encoding: 'utf8' }).trim();
+  try {
+    // pp — dev · stage 에 들어간 브랜치. 그 뒤 운영(master)에 같은 파일이 따로 생겨 운영과 충돌한다
+    g('checkout', '-qb', 'pp', 'master'); put('p.txt', 'a\nb\n'); g('add', '.'); g('commit', '-qm', 'feat: 포인트');
+    g('checkout', '-q', 'dev'); g('merge', '-q', '--no-ff', '-m', 'pp → dev', 'pp');
+    g('checkout', '-q', 'stage'); g('merge', '-q', '--no-ff', '-m', 'pp → stage', 'pp');
+    g('checkout', '-q', 'master'); put('p.txt', 'x\n'); g('add', '.'); g('commit', '-qm', 'hotfix: 운영에서 바로');
+    g('push', '-q', 'origin', 'dev', 'stage', 'master');
+    g('worktree', 'add', '-q', join(r.d, 'pp-wt'), 'pp');
+    // feature — stage 에 올린 뒤 운영으로(충돌 없음)
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature' }, { repo: r.r, branch: 'pp', tasks: [{ env: 'prod', text: '배포 전 DB — DDL 1개' }] }] }), r.file);
+    const id = (b: string) => loadStore(r.file).items.find(x => x.branch === b)!.id;
+    await promote({ id: id('feature'), env: 'stage' }, r.file);
+    const c = await promoteCheck({ ids: [id('feature')], env: 'prod' }, r.file);
+    assert.deepEqual(c.repos[0].strict?.commits.map(l => l.split(' ').slice(1).join(' ')), ['feat: 기능']);
+    assert.deepEqual([c.repos[0].strict?.hard, c.repos[0].strict?.lost], [[], []]);
+    assert.match((await promote({ id: id('feature'), env: 'prod' }, r.file)).text, /feature → origin\/master/);
+    assert.equal(o('show', 'master:f.txt'), 'f');
+    // pp — 충돌이라 머지 준비 먼저
+    await assert.rejects(promote({ id: id('pp'), env: 'prod' }, r.file), /prod 와 충돌 1곳: p\.txt — 「prod 머지 준비」 로 먼저/);
+    const asked: string[] = [];
+    await prepareMerge({ id: id('pp'), env: 'prod' }, r.file, async (cwd, _l, text) => { asked.push(cwd, text); return { pane: 'w1:p2' }; });
+    assert.match(asked[1], /운영\(이 브랜치가 운영 파이프라인으로 바로 나간다\)이라 더 엄격하게/);
+    const wt = asked[0], w = (...a: string[]) => execFileSync('git', ['-C', wt, ...a], { encoding: 'utf8' }).trim();
+    // 잘못 푼 셈 — 충돌 표시를 남기고 원본 밖 파일(a.txt)까지 고침
+    writeFileSync(join(wt, 'p.txt'), '<<<<<<< HEAD\nx\n=======\na\nb\n>>>>>>> pp\n'); writeFileSync(join(wt, 'a.txt'), 'oops\n'); w('add', '.'); w('commit', '-q', '--no-edit');
+    let k = (await promoteCheck({ ids: [id('pp')], env: 'prod' }, r.file)).repos[0];
+    assert.match(k.strict!.hard.join('\n'), /원본이 바꾸지 않은 파일이 같이 바뀐다\(1\) — a\.txt/);
+    assert.match(k.strict!.hard.join('\n'), /충돌 표시가 남았다 — p\.txt:1/);
+    await assert.rejects(promote({ id: id('pp'), env: 'prod', ack: true } as never, r.file), /충돌 표시/);
+    // 다시 푼 셈 — 표시 · a.txt 는 되돌렸지만 원본의 b 를 빠뜨림
+    writeFileSync(join(wt, 'p.txt'), 'x\na\n'); w('checkout', 'HEAD~1', '--', 'a.txt'); w('add', '.'); w('commit', '-qm', 'fix');
+    k = (await promoteCheck({ ids: [id('pp')], env: 'prod' }, r.file)).repos[0];
+    assert.deepEqual([k.strict!.hard, k.strict!.lost, k.before], [[], [{ file: 'p.txt', side: '원본', line: 'b' }], ['배포 전 DB — DDL 1개']]);
+    await assert.rejects(promote({ id: id('pp'), env: 'prod', ack: true } as never, r.file), /prod 배포 전 할 일 1개가 체크 안 됐다/);
+    const s0 = loadStore(r.file);
+    checkTask({ rev: s0.rev, id: id('pp'), env: 'prod', text: '배포 전 DB — DDL 1개', was: false }, r.file);
+    await assert.rejects(promote({ id: id('pp'), env: 'prod' }, r.file), /빠진 줄 1개 — 확인 창에서/);
+    assert.match((await promoteMany({ ids: [id('pp')], env: 'prod', ack: true }, r.file)).text, /pp → origin\/master/);
+    assert.equal(o('show', 'master:p.txt'), 'x\na');
+    assert.match(loadStore(r.file).items.find(x => x.branch === 'pp')!.log.at(-1)!.text, /^prod 에 올림\(.*\) — 빠진 줄 1개 확인하고/);
+  } finally { r.done(); }
+});
+
+test('갓 만든 브랜치(등록 뒤 커밋 없음) — 끝이 운영의 한 지점이어도 「들어감」 이 아니라 아무 환경에도 없음(empty)', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim();
+  try {
+    g('branch', 'fresh', 'master');
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'fresh' }] }), r.file);
+    let st = (await deployView(r.file)).items[0].state!;
+    assert.equal(st.empty, true);
+    assert.deepEqual(st.envs.map(e => e.state), ['none', 'none', 'none']);
+    g('checkout', '-q', 'fresh'); writeFileSync(join(r.r, 'n.txt'), 'n\n'); g('add', '.'); g('commit', '-qm', 'feat: 새것'); g('checkout', '-q', 'master');
+    st = (await deployView(r.file)).items[0].state!;
+    assert.equal(st.empty, undefined, '커밋이 생기면 보통대로');
+  } finally { r.done(); }
 });

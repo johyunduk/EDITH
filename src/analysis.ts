@@ -406,7 +406,7 @@ export function runAnalysis(id: number) {
     };
   });
   const last = Math.max(r.created, ...events.map(e => e.t));
-  const end = r.state === 'done' ? last : Date.now(), recs = records(id);
+  const end = r.state === 'done' || r.state === 'dropped' ? last : Date.now(), recs = records(id);
   return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created, timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
     flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: use, compare: compare(r),
     sameCode: sameCode(events), repoPick: repoPick(id, recs), across: across(r), outside };

@@ -23,14 +23,14 @@ import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } f
 import { canShoot, screenshot } from './screenshot.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
 import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, syncGuide } from './workshop.ts';
-import { act, acted, actionsOf, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
+import { act, acted, actionsOf, dropRun, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
 import { repoDiff, repoStatus } from './repos.ts';
 import { listOutputs, readOutput } from './outputs.ts';
 import { livePort, stream } from './live.ts';
 import { runAnalysis } from './analysis.ts';
 import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
 import { brief, dayAi, todoOp, todoState } from './today.ts';
-import { addItem, addTask, checkTask, deployBoard, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteMany } from './deploy.ts';
+import { addItem, addTask, checkTask, deployBoard, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteCheck, promoteMany } from './deploy.ts';
 import { cleanRun, cleanStart, cleanState } from './cleanup.ts';
 import { withAgenda } from './agenda.ts';
 
@@ -240,7 +240,7 @@ export function serve(port: number) {
       if (path === '/api/deploy/clean-plan' && req.method === 'GET') return reply(res, 200, cleanState(url.searchParams.get('ids') ?? ''));
       if (path === '/api/deploy/file' && req.method === 'GET') { try { return reply(res, 200, deployFile(url.searchParams.get('id'), url.searchParams.get('name'))); } catch (e) { return reply(res, 404, { error: (e as Error).message }); } }
       if (path === '/api/deploy/done' && req.method === 'GET') return reply(res, 200, deployDone(url.searchParams.get('q') ?? '', url.searchParams.get('before') ?? undefined));
-      const dp = path.match(/^\/api\/deploy\/(fetch|edit|task|task-add|add|promote|prepare|prep|clean-plan|clean)$/);
+      const dp = path.match(/^\/api\/deploy\/(fetch|edit|task|task-add|add|promote|promote-check|prepare|prep|clean-plan|clean)$/);
       if (dp && req.method === 'POST') {
         const b = (await body(req) ?? {}) as Record<string, unknown>;
         try {
@@ -249,6 +249,7 @@ export function serve(port: number) {
           if (dp[1] === 'task') return reply(res, 200, checkTask(b));
           if (dp[1] === 'task-add') return reply(res, 200, addTask(b));
           if (dp[1] === 'prep') return reply(res, 200, prepItems(b));
+          if (dp[1] === 'promote-check') return reply(res, 200, await promoteCheck(b));
           if (dp[1] === 'clean-plan') return reply(res, 200, cleanStart(b));
           if (dp[1] === 'clean') return reply(res, 200, await cleanRun(b));
           if (dp[1] === 'add') return reply(res, 200, await addItem(b));
@@ -269,7 +270,7 @@ export function serve(port: number) {
       // 런 단추 기록(최근 5개, code null 이면 도는 중) — 배포 화면이 단추를 누른 뒤 끝났는지만 가볍게 본다
       const rac = path.match(/^\/api\/runs\/(\d{1,6})\/acted$/);
       if (rac && req.method === 'GET') return reply(res, 200, acted(Number(rac[1])).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}) })));
-      const ru = path.match(/^\/api\/runs\/(\d{1,6})(?:\/(stop|resume|skip|rewind|action))?$/);
+      const ru = path.match(/^\/api\/runs\/(\d{1,6})(?:\/(stop|resume|skip|rewind|action|drop))?$/);
       if (ru && !ru[2] && req.method === 'GET') { const v = runView(Number(ru[1])); return v ? reply(res, 200, withAgenda([v])[0]) : reply(res, 404, '없는 런'); }
       // 런의 레포 커밋 상태 — 엔진이 남긴 edith-repos.json 의 레포를 git 으로 읽는다(src/repos.ts)
       const rp = path.match(/^\/api\/runs\/(\d{1,6})\/repos$/);
@@ -295,9 +296,10 @@ export function serve(port: number) {
       const ra = path.match(/^\/api\/runs\/(\d{1,6})\/analysis$/);
       if (ra && req.method === 'GET') { const v = runAnalysis(Number(ra[1])); return v ? reply(res, 200, v) : reply(res, 404, '없는 런'); }
       if (ru?.[2] && req.method === 'POST') {
-        const b = await body(req) as { key?: unknown; n?: unknown; text?: unknown };
+        const b = await body(req) as { key?: unknown; n?: unknown; text?: unknown; reason?: unknown; repo?: unknown };   // repo — 레포 줄 단추(row)의 그 줄 워크트리
         try {
-          if (ru[2] === 'action') return reply(res, 200, { ok: true, ...await runAction(Number(ru[1]), b.n, b.text) });
+          if (ru[2] === 'action') return reply(res, 200, { ok: true, ...await runAction(Number(ru[1]), b.n, b.text, b.repo) });
+          if (ru[2] === 'drop') { dropRun(Number(ru[1]), b.reason); return reply(res, 200, { ok: true }); }
           act(Number(ru[1]), { do: ru[2] as 'stop' | 'resume' | 'skip' | 'rewind', key: b.key });
           return reply(res, 200, { ok: true });
         } catch (e) { return fail(e); }

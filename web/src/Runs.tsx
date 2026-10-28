@@ -20,7 +20,7 @@ import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStat
 import type { FlowStep } from './stepFlow.ts';
 
 type Step = FlowStep & { skill?: string; command?: string; max?: number };
-type RunState = 'queued' | 'running' | 'check' | 'stopped' | 'done';
+type RunState = 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped';   // dropped = 버림(엔진 「버리기」) — 기록만, 아무것도 못 한다
 type Run = {
   id: number; engine: string; name: string; cwd: string; input: string; created: number; state: RunState; reason?: string; pane?: string; dir: string; branch?: string; unattended?: boolean;
   tag?: string; title?: string; agenda?: string;   // 런 이름표 — 티켓 · 짧은 제목(서버 runLabel) · 안건 이름(배포 목록 tag — src/agenda.ts)
@@ -43,12 +43,14 @@ type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'workt
 type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number; tag?: string; title?: string; agenda?: string };
 type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; at: number };
 
-const RUN_LABEL: Record<RunState, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝' };
+const RUN_LABEL: Record<RunState, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝', dropped: '버림' };
 const RUN_TONE: Record<RunState, string> = {
   queued: 'bg-violet-500/15 text-violet-700 dark:text-violet-300',
   running: 'bg-sky-500/15 text-sky-700 dark:text-sky-400', check: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
   stopped: 'bg-muted text-muted-foreground', done: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  dropped: 'bg-muted text-muted-foreground line-through',
 };
+const ended = (s: RunState) => s === 'done' || s === 'dropped';
 const PLAY = <path d="M6 4.5v15l12.5-7.5z" />;
 const KIND = { chain: '체인', engine: '엔진' } as const;
 // 노션 로고(채운 모양) — simple-icons notion.svg(CC0)
@@ -342,7 +344,7 @@ function RunDetail({ r }: { r: Run }) {
         {r.unattended && <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground" title="확인 필요를 사람에게 넘기지 않고 다시 돌리거나 건너뛴다">무인</span>}
         <span className="text-sm text-muted-foreground tabular-nums">{done}/{live.length}</span>
         <span className="h-1.5 w-28 overflow-hidden rounded-full bg-muted"><span className="block h-full bg-emerald-500" style={{ width: `${live.length ? done / live.length * 100 : 0}%` }} /></span>
-        {r.state !== 'done' && <span className="text-xs text-muted-foreground tabular-nums">{dur(Date.now() - r.created)}째</span>}
+        {!ended(r.state) && <span className="text-xs text-muted-foreground tabular-nums">{dur(Date.now() - r.created)}째</span>}
         <span className="ml-auto flex flex-wrap gap-1.5">
           {notion && (
             <a href={notion} target="_blank" rel="noreferrer" title={`노션에서 열기 — ${notion}`}
@@ -384,6 +386,9 @@ function RunDetail({ r }: { r: Run }) {
           줄 서 있다 — 동시에 도는 런이 한도(설정 「런」)에 찼다. 도는 런이 끝나면 먼저 온 것부터 시작한다. 「지금 시작」 은 한도를 넘어 바로 시작한다.
         </p>
       )}
+      {r.state === 'dropped' && (
+        <p className="rounded-lg border bg-muted px-3 py-2 text-sm text-muted-foreground">버린 런 — {r.reason ?? '버림'}. 기록만 남아 이어서 · 단추 · 노드 조작을 쓸 수 없다.</p>
+      )}
       {(r.state === 'check' || r.state === 'stopped') && r.reason && (
         <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">{r.reason}</p>
       )}
@@ -401,7 +406,7 @@ function RunDetail({ r }: { r: Run }) {
         </div>
       )}
       {view !== 'summary' && <>
-        {r.actions.length > 0 && <Actions r={r} />}
+        {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
         <div className="grid gap-3 md:grid-cols-[repeat(auto-fit,minmax(20rem,1fr))]"><Repos id={r.id} /><Outputs id={r.id} /></div>
       </>}
       {r.live && watch && <Live id={r.id} />}
@@ -479,7 +484,7 @@ function SummaryView({ r, s, toTimeline }: { r: Run; s: Summary; toTimeline: () 
           )}
         </section>
       )}
-      {r.actions.length > 0 && <Actions r={r} />}
+      {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
       <button type="button" onClick={toTimeline} className="flex w-full items-center gap-2 rounded-xl border bg-card px-4 py-2.5 text-left text-sm hover:border-primary/60">
         <span className="font-semibold">지나온 길</span><span className="text-xs text-muted-foreground">체인마다 걸린 시간 · 고친 것 · 건너뛴 것</span><span className="ml-auto text-xs font-semibold text-primary">타임라인으로 ›</span>
       </button>
@@ -628,12 +633,12 @@ function NodeDetail({ r, s, busy, armed, arm, act, bare }: {
         <span className="text-xs text-muted-foreground">{bare ? '' : `${place(s)}${s.track ? ` · 갈래 ${s.track}` : ''} · `}{s.kind === 'command' ? '명령' : '스킬'} · {NODE[n.state][0]} · 시도 {n.attempt}{n.fails ? ` · 고침 ${n.fails}` : ''} · 키 <span className="font-mono">{s.key}</span></span>
         <span className="ml-auto flex gap-1.5">
           {/* 이 노드와 화살표로 뒤에 이어진 노드를 처음으로 — 작업 문서는 그대로. 두 번 눌러 한다 */}
-          {n.state !== 'wait' && !s.fixOnly && (
+          {n.state !== 'wait' && !s.fixOnly && r.state !== 'dropped' && (
             <Button size="sm" variant="outline" disabled={busy || r.state === 'running'} title={r.state === 'running' ? '도는 중에는 못 한다 — 「멈춤」 뒤에' : '이 노드와 뒤에 이어진 노드를 처음으로 돌려 여기서부터 다시 돈다(작업 문서는 그대로)'}
               className={`h-7 text-xs ${armed === s.key ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-500/90' : ''}`}
               onClick={() => { if (armed !== s.key) return arm(s.key); arm(''); void act('rewind', s.key); }}>{armed === s.key ? '뒤 노드도 처음으로 — 한 번 더' : '이 노드부터 다시'}</Button>
           )}
-          {['check', 'stopped', 'wait'].includes(n.state) && !s.fixOnly && (
+          {['check', 'stopped', 'wait'].includes(n.state) && !s.fixOnly && r.state !== 'dropped' && (
             <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => void act('skip', s.key)}>건너뛰기</Button>
           )}
         </span>
