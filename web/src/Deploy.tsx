@@ -635,67 +635,152 @@ function HandTask({ g, v, send }: { g: Group; v: Board; send: Send }) {
   );
 }
 
-// 정리 — 미리보기(서버가 레포마다 코드가 들어갔나 · 커밋 안 한 변경 · 워크스페이스 · 공방 훅으로 확인 — 훅에 따라 1분쯤 걸린다)를 보고, 통과한 레포만 치운다(src/cleanup.ts)
-type Line = { what: string; ref: string; parts?: string; ok: boolean; check: string };
-type CleanPlan = { id: string; name: string; branch: string; lines: Line[]; ok: boolean };
-type CleanState = { missing?: true; done?: boolean; since?: number; plans?: CleanPlan[]; error?: string };
-// 확인은 서버가 뒤에서 하고(몇 분 걸릴 수 있다) 화면은 2초마다 본다 — 그사이 EDITH 를 다시 켜면 서버가 잊으니(missing) 「다시 확인」
+// 정리 — 미리보기(서버가 레포마다 코드가 들어갔나 · 커밋 안 한 변경 · 워크스페이스 · 공방 훅으로 확인 — 훅에 따라 몇 분)를 보고, 통과한 레포(와 넘기기로 고른 레포)만 치운다(src/cleanup.ts).
+// 걸린 레포를 위에 펼쳐 까닭 · 고치기(훅 fix 단추) · 넘기기를 두고, 통과한 레포는 한 줄로 접는다(시안 A, 2026-10-28)
+type Line = { what: string; ref: string; parts?: string; ok: boolean; check: string; skippable?: true; fix?: string };
+type CleanPlan = { id: string; name: string; branch: string; lines: Line[]; ok: boolean; targets: { worktree?: string; local: boolean; spaces: unknown[] }[] };
+type Fix = { at: number; ok: boolean; text: string };
+type CleanState = { missing?: true; done?: boolean; since?: number; plans?: CleanPlan[]; error?: string; fixes?: Record<string, Fix> };
+// 걸린 줄이 모두 엔진이 넘겨도 된다고 한 확인이면 「넘기고 정리」 를 고를 수 있다(EDITH 자신의 확인은 못 넘긴다 — 서버가 다시 본다)
+const skippable = (p: CleanPlan) => !p.ok && p.lines.some(l => !l.ok) && p.lines.filter(l => !l.ok).every(l => l.skippable);
+const hhmm = (t: number) => new Date(t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+// 치울 것 한 줄 — 워크트리 · 워크스페이스 · 로컬 브랜치 수
+const sweep = (p: CleanPlan) => [[p.targets.filter(t => t.worktree).length, '워크트리'], [p.targets.reduce((k, t) => k + t.spaces.length, 0), '워크스페이스'], [p.targets.filter(t => t.local).length, '로컬 브랜치']]
+  .flatMap(([k, w]) => k ? [`${w} ${k}`] : []).join(' · ') || '치울 것 없음 — 보관만';
+const Ico = ({ d, className = '' }: { d: string; className?: string }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`size-3.5 shrink-0 ${className}`}><path d={d} /></svg>;
+const LineList = ({ lines }: { lines: Line[] }) => (
+  <div className="text-xs">{lines.map((l, i) => (
+    <div key={i} className="grid grid-cols-[4rem_minmax(0,1fr)_minmax(0,9rem)] items-start gap-x-2 border-t border-border/60 py-1.5 first:border-t-0">
+      <span className="text-muted-foreground">{l.what}</span>
+      <span className="min-w-0"><span className="block font-mono break-all">{l.ref}</span>{l.parts && <span className="block whitespace-pre-line text-muted-foreground">{l.parts}</span>}</span>
+      <span className={l.ok ? 'text-emerald-700 dark:text-emerald-400' : 'font-semibold text-rose-700 dark:text-rose-300'}>{l.ok ? '✓' : '✕'} {l.check}</span>
+    </div>))}
+  </div>
+);
+// 확인은 서버가 뒤에서 하고(몇 분 걸릴 수 있다) 화면은 2초마다 본다 — 그사이 EDITH 를 다시 켜면 서버가 잊으니(missing) 「다시 확인」.
+// 창을 다시 열면 서버가 기억하는 앞 결과(같은 항목)를 그대로 보인다 — 새로 보는 것은 「다시 확인」
 function CleanSheet({ ids, title, onClose }: { ids: string[]; title: string; onClose: () => void }) {
   const qc = useQueryClient(), [plans, setPlans] = useState<CleanPlan[] | null>(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [res, setRes] = useState<string | null>(null);
-  const [since, setSince] = useState(0), [now, setNow] = useState(Date.now()), round = useRef(0);
-  const look = async () => {
-    const n = ++round.current;
-    setPlans(null); setErr(''); setSince(Date.now());
-    try { await post('/api/deploy/clean-plan', { ids }); } catch (e) { setErr(`EDITH 에 닿지 않았다 — ${(e as Error).message}`); return; }
+  const [since, setSince] = useState(0), [now, setNow] = useState(Date.now()), [skip, setSkip] = useState<Set<string>>(new Set()), round = useRef(0);
+  const [fixes, setFixes] = useState<Record<string, Fix>>({}), [fixing, setFixing] = useState('');
+  const state = () => get<CleanState>(`/api/deploy/clean-plan?ids=${encodeURIComponent(ids.join(','))}`);
+  const shown = (s: CleanState) => { if (s.error) setErr(s.error); else setPlans(s.plans ?? []); setFixes(s.fixes ?? {}); };
+  const watch = async (n: number) => {
     for (;;) {
       await new Promise(ok => setTimeout(ok, 2000));
       if (n !== round.current) return;
       let s: CleanState;
-      try { s = await get<CleanState>(`/api/deploy/clean-plan?ids=${encodeURIComponent(ids.join(','))}`); } catch { continue; }   // 다시 켜는 중이면 잠깐 닿지 않는다
+      try { s = await state(); } catch { continue; }   // 다시 켜는 중이면 잠깐 닿지 않는다
       if (n !== round.current) return;
       if (s.missing) { setErr('확인이 끊겼다 — 그사이 EDITH 를 다시 켰다. 「다시 확인」'); return; }
-      if (s.done) { if (s.error) setErr(s.error); else setPlans(s.plans ?? []); return; }
+      if (s.done) return shown(s);
     }
   };
-  useEffect(() => { void look(); return () => { round.current++; }; }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const look = async () => {
+    const n = ++round.current;
+    setPlans(null); setErr(''); setSkip(new Set()); setFixes({}); setSince(Date.now()); setNow(Date.now());
+    try { await post('/api/deploy/clean-plan', { ids }); } catch (e) { setErr(`EDITH 에 닿지 않았다 — ${(e as Error).message}`); return; }
+    await watch(n);
+  };
+  // 열 때 — 앞 결과가 있으면 그것(끝났으면 그대로, 보는 중이면 이어서), 없으면 새로
+  const open = async () => {
+    const n = ++round.current;
+    const s = await state().catch(() => null);
+    if (n !== round.current) return;
+    if (!s || s.missing) return look();
+    setSince(s.since ?? Date.now());
+    if (s.done) return shown(s);
+    await watch(n);
+  };
+  useEffect(() => { void open(); return () => { round.current++; }; }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (plans || err) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [plans, err]);
-  const pass = plans?.filter(p => p.ok) ?? [];
+  const stuck = plans?.filter(p => !p.ok) ?? [], pass = plans?.filter(p => p.ok) ?? [], over = stuck.filter(p => skippable(p) && skip.has(p.id));
   const go = async () => {
     setBusy(true);
     try {
-      const r = await post<{ text: string; done: string[]; stopped: string[] }>('/api/deploy/clean', { ids: pass.map(p => p.id) });
+      const r = await post<{ text: string; done: string[]; stopped: string[] }>('/api/deploy/clean', { ids: [...pass, ...over].map(p => p.id), skip: over.map(p => p.id) });
       setRes(r.text); toast(r.stopped.length ? `정리 ${r.done.length} · 남음 ${r.stopped.length}` : `${r.done.length}개 레포를 정리했다`, 4000);
     } catch (e) { toast(`정리하지 못했다 — ${(e as Error).message}`, 8000); }
     setBusy(false);
     await Promise.all(['deploy', 'deploy-done'].map(k => qc.invalidateQueries({ queryKey: [k] })));
   };
+  // 고치기 — 훅이 그 일을 맡기고 바로 돌아온다(끝났는지는 「다시 확인」)
+  const fix = async (p: CleanPlan, l: Line) => {
+    const k = `${p.id}\n${l.ref}`;
+    setFixing(k);
+    try { const f = await post<Fix>('/api/deploy/clean-fix', { id: p.id, ref: l.ref }); setFixes(x => ({ ...x, [k]: f })); toast(`${l.fix} — ${f.text}`, 4000); }
+    catch (e) { toast(`${l.fix} 못 함 — ${(e as Error).message}`, 8000); }
+    setFixing('');
+  };
+  const chip = (text: string, warn: boolean) => <span className={`rounded-full px-2.5 text-xs leading-6 font-semibold ${warn ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300' : 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-300'}`}>{text}</span>;
   return (
-    <Sheet side title={`정리 — ${title}`} sub="통과한 레포만 치운다 · 걸린 레포는 그대로 두고 까닭을 남긴다" onClose={onClose}>
-      <div className="space-y-3">
-        {err ? <p className="text-sm text-rose-700 dark:text-rose-300">{err}</p>
-          : !plans ? <Empty>확인하는 중… {Math.max(0, Math.round((now - since) / 1000))}초 — 코드가 들어갔나 · 커밋 안 한 변경 · 워크스페이스 · 엔진 훅(몇 분 걸릴 수 있다 — 창을 닫아도 서버는 계속 본다)</Empty>
-          : plans.map(p => (
-            <section key={p.id} className={`space-y-1 rounded-lg border px-3 py-2.5 ${p.ok ? '' : 'border-amber-400'}`}>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">{p.name}</span><span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{p.branch}</span><span className="flex-1" />
-                <span className={`shrink-0 rounded-full px-2 text-xs leading-5 font-semibold ${p.ok ? 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-300' : 'bg-amber-500/12 text-amber-800 dark:text-amber-300'}`}>{p.ok ? '통과' : '멈춤'}</span>
-              </div>
-              {p.lines.map((l, i) => (
-                <div key={i} className="grid grid-cols-[4.5rem_minmax(0,1fr)_9rem] items-start gap-x-3 border-t border-border/60 py-1.5 text-sm">
-                  <span className="text-muted-foreground">{l.what}</span>
-                  <span className="min-w-0"><span className="block font-mono text-xs break-all">{l.ref}</span>{l.parts && <span className="block text-xs text-muted-foreground">{l.parts}</span>}</span>
-                  <span className={`text-xs font-semibold ${l.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-300'}`}>{l.ok ? '✓' : '✕'} {l.check}</span>
-                </div>
-              ))}
-            </section>
-          ))}
-        <p className="text-xs leading-relaxed text-muted-foreground">원격 브랜치(origin/…)는 남긴다 · 레포 본 체크아웃은 건드리지 않는다 · 이어진 런 기록은 런 화면에 남는다 · 레포를 다 치우면 보관한다.</p>
-        {res && <pre role="status" className="rounded-lg border border-primary/50 bg-primary/5 px-3 py-2 text-xs whitespace-pre-wrap">{res}</pre>}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" onClick={onClose}>{res ? '닫기' : '취소'}</Button>
-          {!res && (plans || err) && <Button variant="outline" onClick={() => void look()}>다시 확인</Button>}
-          {!res && <Button disabled={busy || !pass.length} onClick={() => void go()}>{busy ? '정리하는 중…' : `통과한 ${pass.length}개 레포 정리`}</Button>}
+    <Sheet side title={`정리 — ${title}`} sub="통과했거나 넘기기로 고른 레포만 치운다" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {plans ? `${hhmm(since)} 에 확인한 결과 · 레포 ${plans.length}개${now - since > 10 * 60_000 ? ' — 오래됐다(정리할 때 엔진 확인을 한 번 더 본다)' : ''}` : err ? '' : `${hhmm(since)} 에 시작한 확인 — ${Math.max(0, Math.round((now - since) / 1000))}초째 (창을 닫았다 열어도 이 확인을 이어서 본다)`}
+          </span>
+          {!res && (plans || err) && <Button size="sm" variant="outline" className="h-8 gap-1.5 text-primary" onClick={() => void look()}><Ico d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />다시 확인</Button>}
         </div>
+        {err && <p className="text-sm text-rose-700 dark:text-rose-300">{err}</p>}
+        {!plans && !err && <Empty>코드가 들어갔나 · 커밋 안 한 변경 · 워크스페이스 · 엔진 훅을 본다 — 몇 분 걸릴 수 있다(창을 닫아도 서버는 계속 본다)</Empty>}
+        {res && <pre role="status" className="rounded-lg border border-primary/50 bg-primary/5 px-3 py-2 text-xs whitespace-pre-wrap">{res}</pre>}
+        {plans && !res && <>
+          <div className="flex gap-2">{stuck.length > 0 && chip(`확인 필요 ${stuck.length}`, true)}{pass.length > 0 && chip(`통과 ${pass.length}`, false)}</div>
+          {stuck.length > 0 && <section className="space-y-2" aria-label="확인 필요">
+            <h3 className="text-sm font-bold">확인 필요</h3>
+            {stuck.map(p => {
+              const bad = p.lines.filter(l => !l.ok), good = p.lines.filter(l => l.ok), fixable = bad.filter(l => l.fix), can = skippable(p), chosen = can && skip.has(p.id);
+              return (
+                <div key={p.id} className="space-y-2.5 rounded-lg border border-amber-400/70 bg-card px-3.5 py-3">
+                  <div className="flex items-baseline gap-2"><span className="font-semibold">{p.name}</span><span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{p.branch}</span></div>
+                  {bad.map((l, i) => {
+                    const f = fixes[`${p.id}\n${l.ref}`];
+                    return (
+                      <div key={i} className="space-y-1">
+                        <p className="flex items-center gap-1.5 text-sm font-semibold text-rose-700 dark:text-rose-300"><Ico d="M12 8v5M12 16.5v.5M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18" />{l.check}</p>
+                        <p className="text-xs text-muted-foreground">{l.what} · <span className="font-mono">{l.ref}</span></p>
+                        {l.parts && <p className="text-xs leading-relaxed whitespace-pre-line">{l.parts}</p>}
+                        {f && <p role="status" className={`rounded-md px-2.5 py-1.5 text-xs ${f.ok ? 'bg-primary/10 text-primary' : 'bg-rose-500/10 text-rose-700 dark:text-rose-300'}`}>{l.fix} — {f.text} · {hhmm(f.at)}{f.ok ? ' · 끝나면 「다시 확인」' : ''}</p>}
+                      </div>
+                    );
+                  })}
+                  {good.length > 0 && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">통과한 확인 {good.length}줄</summary><div className="mt-1"><LineList lines={good} /></div></details>}
+                  {(fixable.length > 0 || can) && <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    {fixable.map(l => { const k = `${p.id}\n${l.ref}`; return (
+                      <Button key={l.ref} size="sm" variant="outline" className="h-8 text-primary" disabled={!!fixing} onClick={() => void fix(p, l)}>{fixing === k ? '맡기는 중…' : `${l.fix}${fixable.length > 1 ? ` · ${l.ref}` : ''}`}</Button>); })}
+                    {can && <label className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold">
+                      <input type="checkbox" className="size-4 accent-primary" checked={chosen} onChange={e => setSkip(k => { const n = new Set(k); if (e.target.checked) n.add(p.id); else n.delete(p.id); return n; })} />넘기고 정리
+                    </label>}
+                    <span className="flex-1" />
+                    {chosen && <span className="rounded-full bg-muted px-2 text-xs leading-5 font-semibold">넘김</span>}
+                  </div>}
+                </div>
+              );
+            })}
+          </section>}
+          {pass.length > 0 && <section className="space-y-2" aria-label="통과">
+            <h3 className="text-sm font-bold">통과</h3>
+            <div className="rounded-lg border bg-card">{pass.map(p => (
+              <details key={p.id} className="group border-t first:border-t-0">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 [&::-webkit-details-marker]:hidden">
+                  <Ico d="M5 12.5l4.5 4.5L19 7.5" className="text-emerald-700 dark:text-emerald-400" />
+                  <span className="min-w-0 flex-1"><span className="flex items-baseline gap-2"><span className="text-sm font-semibold">{p.name}</span><span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{p.branch}</span></span>
+                    <span className="block text-xs text-muted-foreground">{sweep(p)}</span></span>
+                  <Ico d="M6 9l6 6 6-6" className="text-muted-foreground transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="px-3.5 pb-2.5"><LineList lines={p.lines} /></div>
+              </details>))}
+            </div>
+          </section>}
+          <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">치우는 것 · 남기는 것</summary>
+            <p className="mt-1.5 leading-relaxed">워크스페이스 닫기 → 워크트리 제거(강제 아님) → 로컬 브랜치 삭제 → 다 치우면 보관. 원격 브랜치(origin/…) · 레포 본 체크아웃 · 이어진 런 기록은 남긴다. 걸린 레포는 아무것도 지우지 않고 까닭을 남긴다.</p>
+          </details>
+          <div className="sticky bottom-0 -mx-5 -mb-4 flex items-center gap-3 border-t bg-background px-5 py-3">
+            <span className="flex-1 text-xs text-muted-foreground">정리 {pass.length + over.length}{over.length ? ` (넘김 ${over.length})` : ''}{stuck.length - over.length ? ` · 남김 ${stuck.length - over.length}` : ''}</span>
+            <Button disabled={busy || !pass.length && !over.length} onClick={() => void go()}>{busy ? '정리하는 중…' : `${pass.length + over.length}개 레포 정리`}</Button>
+          </div>
+        </>}
       </div>
     </Sheet>
   );

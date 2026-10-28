@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanPlan, cleanRun, cleanStart, cleanState, contentIn, parseLines, spacesOf, type Space } from './cleanup.ts';
+import { cleanFix, cleanPlan, cleanRun, cleanStart, cleanState, contentIn, parseLines, spacesOf, type Space } from './cleanup.ts';
 import { importItems, loadStore } from './deploy.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -118,5 +118,51 @@ test('미리보기는 뒤에서 — 시작하면 바로 돌아오고 상태로 �
     const res = await cleanRun({ ids: [id] }, r.file, ws, async () => {}, hook);
     assert.equal(res.done.length, 1);
     assert.equal(readFileSync(count, 'utf8').trim().split('\n').length, 1, '정리 때 훅 확인을 다시 돌리지 않았다');
+  } finally { r.done(); }
+});
+
+test('넘기고 정리 — 엔진이 넘겨도 된다고 한 확인(skippable)만, 사람이 그 항목을 골랐을 때만. EDITH 자신의 확인은 못 넘긴다', async () => {
+  const r = repo();
+  try {
+    assert.deepEqual(parseLines('{"lines":[{"what":"작업 문서","ref":"a","ok":false,"check":"문서에 없음","skippable":true},{"what":"b","ref":"b","ok":false,"check":"x","skippable":"yes"}]}').map(l => l.skippable), [true, undefined]);
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature', tag: '기능' }] }), r.file);
+    const id = loadStore(r.file).items[0].id, ws = async (): Promise<Space[]> => [];
+    const hook = { dir: r.d, action: { label: '정리', command: `if [ "$EDITH_CLEAN_MODE" = check ]; then echo '{"lines":[{"what":"작업 문서","ref":"a.notes","ok":false,"check":"문서에 없음 — 2건","skippable":true}]}'; fi` } };
+    // 커밋 안 한 파일(EDITH 확인)이 같이 걸리면 넘기기로 해도 멈춘다
+    writeFileSync(join(r.wt, 'tmp.txt'), 'x');
+    let res = await cleanRun({ ids: [id], skip: [id] }, r.file, ws, async () => {}, hook);
+    assert.match(res.stopped[0], /커밋 안 한 파일 1/);
+    rmSync(join(r.wt, 'tmp.txt'));
+    // 넘기기로 안 하면 멈춘다
+    res = await cleanRun({ ids: [id] }, r.file, ws, async () => {}, hook);
+    assert.match(res.stopped[0], /문서에 없음 — 2건/);
+    assert.equal(existsSync(r.wt), true);
+    // 넘기기로 하면 치우고, 기록에 넘긴 확인을 남긴다
+    res = await cleanRun({ ids: [id], skip: [id] }, r.file, ws, async () => {}, hook);
+    assert.equal(res.done.length, 1);
+    assert.equal(existsSync(r.wt), false);
+    assert.match(loadStore(r.file).items[0].log.at(-1)!.text, /넘긴 확인: 문서에 없음 — 2건/);
+  } finally { r.done(); }
+});
+
+test('고치기 — 훅이 단추(fix)를 단 걸린 줄만, 그 줄을 fix 모드로 훅에 넘기고 마지막 줄을 남긴다(창을 다시 열어도)', async () => {
+  const r = repo();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature', tag: '기능' }] }), r.file);
+    const id = loadStore(r.file).items[0].id, ws = async (): Promise<Space[]> => [], got = join(r.d, 'fix-env');
+    const hook = { dir: r.d, action: { label: '정리', command: `case "$EDITH_CLEAN_MODE" in
+      check) echo '{"lines":[{"what":"작업 문서","ref":"a.notes","ok":false,"check":"문서에 없음 — 1건","parts":"- 결과 표","skippable":true,"fix":"문서에 반영"},{"what":"작업 문서","ref":"b.notes","ok":false,"check":"문서에 없음 — 1건"}]}';;
+      fix) printf '%s|%s|%s' "$EDITH_CLEAN_REF" "$EDITH_CLEAN_DETAIL" "$EDITH_CLEAN_BRANCH" > "${got}"; echo '도우미에게 맡겼다';;
+    esac` } };
+    assert.equal(parseLines('{"lines":[{"what":"a","ref":"a","ok":false,"check":"x","fix":"  반영  "}]}')[0].fix, '반영');
+    await assert.rejects(cleanFix({ id, ref: 'a.notes' }, r.file, hook), /고칠 줄을 못 찾았다/, '미리보기 전에는 못 고친다');
+    cleanStart({ ids: [id] }, r.file, ws, hook);
+    let st = cleanState(id);
+    for (let i = 0; i < 100 && !st.done; i++) { await new Promise(ok => setTimeout(ok, 50)); st = cleanState(id); }
+    await assert.rejects(cleanFix({ id, ref: 'b.notes' }, r.file, hook), /고칠 줄을 못 찾았다/, '단추가 없는 줄');
+    const f = await cleanFix({ id, ref: 'a.notes' }, r.file, hook);
+    assert.deepEqual([f.ok, f.text], [true, '도우미에게 맡겼다']);
+    assert.equal(readFileSync(got, 'utf8'), 'a.notes|문서에 없음 — 1건\n- 결과 표|feature');
+    assert.equal(cleanState(id).fixes?.[`${id}\na.notes`]?.text, '도우미에게 맡겼다');
   } finally { r.done(); }
 });
