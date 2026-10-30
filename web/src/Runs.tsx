@@ -104,6 +104,9 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
 function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
   const qc = useQueryClient(), q = useQuery({ queryKey: ['requests'], queryFn: () => get<Req[]>('/api/requests'), refetchInterval: 5000 });
   const [no, setNo] = useState<string | null>(null), [why, setWhy] = useState('');
+  // 접기 — 쌓이면 목록이 새 런 칸을 밀어내니 머리줄만 남긴다. 이 브라우저에 기억한다
+  const [fold, setFoldState] = useState(() => { try { return localStorage.getItem('edith.runs.requests') === 'off'; } catch { return false; } });
+  const setFold = (v: boolean) => { setFoldState(v); try { localStorage.setItem('edith.runs.requests', v ? 'off' : 'on'); } catch { /* 저장 안 됨 */ } };
   // 엔진 이름(id 대신) — 새 런 칸과 같은 목록
   const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { id: string; name: string }[] }>('/api/workshop') });
   if (!q.data?.length) return null;
@@ -111,8 +114,11 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
   const reject = (r: Req) => post(`/api/requests/${r.id}/reject`, { reason: why }).then(() => { setNo(null); setWhy(''); return qc.invalidateQueries({ queryKey: ['requests'] }); }, (e: Error) => toast(`하지 못했다 — ${e.message}`, 5000));
   return (
     <div className="mb-2 space-y-1 rounded-lg border border-sky-500/40 bg-sky-500/5 p-1.5">
-      <p className="px-1 text-[0.6875rem] font-semibold text-sky-700 dark:text-sky-400">받은 요청 {q.data.length}</p>
-      {q.data.map(r => {
+      <button type="button" onClick={() => setFold(!fold)} aria-expanded={!fold} title={fold ? '받은 요청 펴기' : '받은 요청 접기'}
+        className="flex w-full items-center gap-1 rounded px-1 text-left text-[0.6875rem] font-semibold text-sky-700 hover:bg-sky-500/10 dark:text-sky-400">
+        <span aria-hidden className="w-2.5">{fold ? '▸' : '▾'}</span>받은 요청 {q.data.length}
+      </button>
+      {!fold && q.data.map(r => {
         // 제목 — 요청이 준 것, 없으면 입력 첫 줄(주소뿐이면 주소 대신 「노션」 단추로)
         const link = notionUrl(r.input), first = r.input.split('\n')[0].trim(), head = r.title ?? (link && !/\s/.test(first) && notionUrl(first) === link ? '' : first);
         return (
@@ -405,6 +411,7 @@ function RunDetail({ r }: { r: Run }) {
           ))}
         </div>
       )}
+      <Waiting r={r} />
       {view !== 'summary' && <>
         {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
         <div className="grid gap-3 md:grid-cols-[repeat(auto-fit,minmax(20rem,1fr))]"><Repos id={r.id} /><Outputs id={r.id} /></div>
@@ -586,7 +593,7 @@ function Sheet({ title, sub, onClose, children }: { title: string; sub?: string;
   );
 }
 
-// 산출물 — 엔진이 작업 문서에 남긴 edith-outputs.json(서버 src/outputs.ts). 파일은 누르면 보기 창(.md 는 글로), 주소는 새 탭
+// 산출물 — 엔진이 작업 문서에 남긴 edith-outputs.json(서버 src/outputs.ts). 파일은 누르면 보기 창(.md 는 글로, .html · .svg 는 그림으로), 주소는 새 탭
 type OutputItem = { label: string; path?: string; url?: string; node?: string; note?: string; error?: string };
 const useOutputs = (id: number) => useQuery({ queryKey: ['run-outputs', id], queryFn: () => get<OutputItem[]>(`/api/runs/${id}/outputs`), refetchInterval: 15_000 });
 function Outputs({ id }: { id: number }) {
@@ -598,6 +605,18 @@ function Outputs({ id }: { id: number }) {
       <OutputChips id={id} items={q.data.map((o, i) => [o, i])} />
     </section>
   );
+}
+// 답 기다리는 노드 — 그 노드와 바로 앞 노드가 남긴 산출물(승인 카드가 가리키는 ERD 같은 것)을 답하기 전에 바로 연다. 답은 오른쪽 런 pane
+function Waiting({ r }: { r: Run }) {
+  const outs = (useOutputs(r.id).data ?? []).map((o, i): [OutputItem, number] => [o, i]);
+  const ws = r.steps.filter(s => r.nodes[s.key].state === 'blocked').map(s => ({ s, items: outs.filter(([o]) => o.node && [s.key, ...s.deps].includes(o.node)) })).filter(w => w.items.length);
+  return ws.map(({ s, items }) => (
+    <div key={s.key} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+      <span className="font-semibold text-amber-800 dark:text-amber-300">답 기다림 — {s.title}{s.track ? ` · 갈래 ${s.track}` : ''}</span>
+      <span className="text-xs text-muted-foreground">답은 오른쪽 런 pane · 보고 답할 것</span>
+      <OutputChips id={r.id} items={items} />
+    </div>
+  ));
 }
 function OutputChips({ id, items }: { id: number; items: [OutputItem, number][] }) {
   const [view, setView] = useState<number | null>(null);
@@ -613,7 +632,10 @@ function OutputChips({ id, items }: { id: number; items: [OutputItem, number][] 
       {view !== null && (
         <Sheet title={items.find(([, i]) => i === view)?.[0].label ?? ''} sub={one.data?.path} onClose={() => setView(null)}>
           {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
-            : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} /> : <pre className="code-panel whitespace-pre-wrap">{one.data.text}</pre>)}
+            : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
+              // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
+              : /\.(html?|svg)$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={one.data.text} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
+              : <pre className="code-panel whitespace-pre-wrap">{one.data.text}</pre>)}
         </Sheet>
       )}
     </>

@@ -627,6 +627,22 @@ export function deployFile(id: unknown, name: unknown, file = DEPLOY_FILE) {
   if (t.includes('\0')) throw gone();
   return { name, text: t };
 }
+// 「변경」 — 이 항목 브랜치가 운영(마지막 환경)에 더할 것. 워크트리가 어느 브랜치를 꺼냈든 상관없이 커밋끼리 본다:
+// 브랜치 끝(이 맥 → 없으면 origin)과 운영이 갈라진 곳부터 그 끝까지 + 그 사이 커밋. 커밋 안 한 변경은 들지 않아 수만 알린다. 2MB 넘으면 자른다
+export async function deployDiff(id: unknown, file = DEPLOY_FILE) {
+  const s = loadStore(file), x = s.items.find(i => i.id === id);
+  if (!x) throw new Error('없는 항목이다');
+  const base = s.envs.at(-1)!.ref, [{ tip, local }, at, wt] = await Promise.all([tipOf(x), commit(x.repo, base), worktreeOf(x.repo, x.branch)]);
+  if (!tip) throw new Error(`브랜치 ${x.branch} 가 이 맥에도 origin 에도 없다`);
+  if (!at) throw new Error(`${base} 가 없다 — 「새로 받기」 뒤 다시`);
+  const from = await out(x.repo, ['merge-base', at, tip]);
+  if (!from) throw new Error(`${x.branch} 와 ${base} 가 갈라진 곳이 없다`);
+  const [d, log, dirty] = await Promise.all([git(x.repo, ['diff', '--no-color', '--no-ext-diff', from, tip]), out(x.repo, ['log', '--format=%h %s', `${from}..${tip}`]), wt ? out(wt, ['status', '--porcelain']) : null]);
+  if (d.code) throw new Error(`git diff 실패 — ${d.stderr.split('\n')[0]}`);
+  const max = 2 * 1024 * 1024;
+  return { name: basename(x.repo), branch: local ? x.branch : `origin/${x.branch}`, base, from: from.slice(0, 7), commits: log ? log.split('\n').slice(0, 100) : [],
+    dirty: dirty ? dirty.split('\n').filter(Boolean).length : 0, text: d.stdout.length > max ? `${d.stdout.slice(0, max)}\n… (2MB 에서 잘림)\n` : d.stdout };
+}
 // 배포 조치 바꾸기(deploy-prep) — 블록 파일 {"base", "end", "tasks": {"<env>": ["<할 일>"]}, "notes"?: ["<메모>"]}. 준 환경의 할 일을 통째로 바꾸고, 같은 환경 · 같은 글이면 체크를 살린다
 export async function cliBlock(path: string, branch: string, raw: string, file = DEPLOY_FILE) {
   let b: { base?: unknown; end?: unknown; tasks?: unknown; notes?: unknown };

@@ -31,7 +31,7 @@ import { livePort, stream } from './live.ts';
 import { runAnalysis } from './analysis.ts';
 import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
 import { brief, dayAi, todoOp, todoState } from './today.ts';
-import { addItem, addTask, checkTask, deployBoard, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteCheck, promoteMany } from './deploy.ts';
+import { addItem, addTask, checkTask, deployBoard, deployDiff, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteCheck, promoteMany } from './deploy.ts';
 import { cleanFix, cleanRun, cleanStart, cleanState } from './cleanup.ts';
 import { withAgenda } from './agenda.ts';
 
@@ -236,6 +236,7 @@ export function serve(port: number) {
       // · 배포 조치 뽑기(공방 훅 on: prep — 기다리지 않는다) · 정리 미리보기 · 정리(src/cleanup.ts — 워크트리 · 워크스페이스 · 로컬 브랜치, 공방 훅 on: cleanup) · 걸린 확인 고치기(같은 훅 fix)
       if (path === '/api/deploy' && req.method === 'GET') return reply(res, 200, await deployBoard());
       if (path === '/api/deploy/clean-plan' && req.method === 'GET') return reply(res, 200, cleanState(url.searchParams.get('ids') ?? ''));
+      if (path === '/api/deploy/diff' && req.method === 'GET') { try { return reply(res, 200, await deployDiff(url.searchParams.get('id'))); } catch (e) { return reply(res, 404, { error: (e as Error).message }); } }
       if (path === '/api/deploy/file' && req.method === 'GET') { try { return reply(res, 200, deployFile(url.searchParams.get('id'), url.searchParams.get('name'))); } catch (e) { return reply(res, 404, { error: (e as Error).message }); } }
       if (path === '/api/deploy/done' && req.method === 'GET') return reply(res, 200, deployDone(url.searchParams.get('q') ?? '', url.searchParams.get('before') ?? undefined));
       const dp = path.match(/^\/api\/deploy\/(fetch|edit|task|task-add|add|promote|promote-check|prepare|prep|clean-plan|clean-fix|clean)$/);

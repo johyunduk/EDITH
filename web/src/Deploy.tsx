@@ -11,6 +11,7 @@ import { get, post } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Bracketed, Empty, GRID_BG, mix } from './ui.tsx';
 import { copyText, toast } from './copy.ts';
+import { DiffView } from './Diff.tsx';
 
 type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
 type EnvState = Reach & { name: string; conflicts?: number; files?: string[]; prep?: { branch: string; ready: boolean; merging?: string } };   // prep — 그 환경 머지 브랜치(서버 deployBoard)
@@ -311,6 +312,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
     setPreparing(null);
     await qc.invalidateQueries({ queryKey: ['deploy'] });
   };
+  const [diff, setDiff] = useState<string | null>(null);
   const ids = g.items.map(x => x.id), tasks = g.items.flatMap(x => x.tasks), working = g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done'));
   const warn = g.items.flatMap(x => {
     const s = x.state, n = repoName(x.repo);
@@ -372,7 +374,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
       <div className="mt-2">
         {g.items.map(x => (
           <Fragment key={x.id}>
-            <Row name={repoName(x.repo)} branch={`${x.branch}${x.state?.remote ? ' (origin)' : ''}`} label={own(x) ? undefined : `${x.ticket}${x.tag ? ` ${x.tag}` : ''}`} runs={(x.runs ?? []).filter(r => !r.issue)} error={x.state?.error}>
+            <Row name={repoName(x.repo)} branch={`${x.branch}${x.state?.remote ? ' (origin)' : ''}`} label={own(x) ? undefined : `${x.ticket}${x.tag ? ` ${x.tag}` : ''}`} runs={(x.runs ?? []).filter(r => !r.issue)} error={x.state?.error} onDiff={() => setDiff(x.id)}>
               <Track steps={itemSteps(x, v.envs)} acts={s => place(leads(x), s, x.branch)} extra={promote(x)} onPick={onPick} name={`${repoName(x.repo)} · ${x.branch}`} onFiles={onFiles} />
             </Row>
             {(x.runs ?? []).filter(r => r.issue).map(r => (
@@ -388,6 +390,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={g.items.flatMap(x => x.notes).join('\n')}>{g.items.flatMap(x => x.notes)[0] ?? '—'}</span>
         <button type="button" className="shrink-0 text-sm font-semibold text-primary hover:underline" onClick={onPanel}>메모 · 기록 ›</button>
       </div>
+      {diff && <DiffSheet id={diff} onClose={() => setDiff(null)} />}
     </Bracketed>
   );
 }
@@ -425,7 +428,7 @@ function LooseCard({ e, onPick, onFiles }: { e: Board['extra'][number]; onPick: 
 
 // 레포 한 줄 — 왼쪽 이름 · 브랜치 · 런, 오른쪽 단계 선
 // label — 안건에 든 이슈 항목의 제 티켓 · 이름(카드 이름은 안건 것이라)
-function Row({ name, branch, label, runs, error, sub, children }: { name: string; branch: string; label?: string; runs: RunLink[]; error?: string; sub?: boolean; children: ReactNode }) {
+function Row({ name, branch, label, runs, error, sub, onDiff, children }: { name: string; branch: string; label?: string; runs: RunLink[]; error?: string; sub?: boolean; onDiff?: () => void; children: ReactNode }) {
   return (
     <div className={`flex flex-wrap items-start gap-x-5 gap-y-2.5 py-3 ${sub ? 'ml-5 border-t border-dashed border-border/80' : 'border-t border-border/70'}`}>
       <div className={`${sub ? 'w-51' : 'w-56'} min-w-0 shrink-0`}>
@@ -433,6 +436,7 @@ function Row({ name, branch, label, runs, error, sub, children }: { name: string
         <div className="truncate font-mono text-[0.6875rem] text-muted-foreground" title={branch}>{branch}</div>
         {label && <div className="truncate text-xs font-semibold text-primary" title={label}>{label}</div>}
         {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} title={r.title} className="mr-2 text-xs font-semibold text-primary hover:underline">런 #{r.id} ›</a>)}
+        {onDiff && <button type="button" onClick={onDiff} title="이 브랜치가 운영에 더할 코드 — 워크트리 체크아웃과 상관없이 커밋으로 본다" className="text-xs font-semibold text-primary hover:underline">변경 ›</button>}
       </div>
       {error ? <p className="text-sm text-rose-700 dark:text-rose-300">{error}</p> : children}
     </div>
@@ -954,19 +958,37 @@ function CopyDialog({ pick, onClose }: { pick: Pick; onClose: () => void }) {
 }
 
 // 창(브라우저 dialog — Esc · 바깥 누르기로 닫힌다). side 면 오른쪽 패널
-function Sheet({ title, sub, onClose, children, side }: { title: string; sub?: string; onClose: () => void; children: ReactNode; side?: boolean }) {
+function Sheet({ title, sub, onClose, children, side, wide }: { title: string; sub?: string; onClose: () => void; children: ReactNode; side?: boolean; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const d = ref.current; d?.showModal(); return () => d?.close(); }, []);
   return (
     <dialog ref={ref} onClose={onClose} onClick={e => { if (e.target === ref.current) onClose(); }} aria-label={title}
       className={side ? 'm-0 ml-auto h-dvh max-h-none w-[min(28rem,100vw)] max-w-none border-l bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/20'
-        : 'm-auto w-[min(34rem,94vw)] max-w-none rounded-xl border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/30'}>
+        : `m-auto ${wide ? 'w-[min(72rem,96vw)]' : 'w-[min(34rem,94vw)]'} max-w-none rounded-xl border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/30`}>
       <div className="flex items-start gap-3 border-b px-5 py-4">
         <span className="min-w-0 flex-1">{sub && <span className="block truncate text-xs text-muted-foreground">{sub}</span>}<span className="block truncate font-semibold">{title}</span></span>
         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onClose}>닫기</Button>
       </div>
-      <div className={side ? 'overflow-auto px-5 py-4' : 'max-h-[70vh] overflow-auto px-5 py-4'}>{children}</div>
+      <div className={side ? 'overflow-auto px-5 py-4' : `${wide ? 'max-h-[80vh]' : 'max-h-[70vh]'} overflow-auto px-5 py-4`}>{children}</div>
     </dialog>
+  );
+}
+
+// 레포 줄 「변경」 — 이 브랜치가 운영에 더할 코드(서버 deployDiff). herdr 워크트리가 다른 브랜치를 꺼내 둬도 커밋으로 보니 그대로 보인다
+type BranchDiff = { name: string; branch: string; base: string; from: string; commits: string[]; dirty: number; text: string };
+function DiffSheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const q = useQuery({ queryKey: ['deploy-diff', id], queryFn: () => get<BranchDiff>(`/api/deploy/diff?id=${encodeURIComponent(id)}`) }), d = q.data;
+  return (
+    <Sheet wide title={d ? `변경 — ${d.name} · ${d.branch}` : '변경'} onClose={onClose}
+      sub={d ? `${d.base} 와 갈라진 곳(${d.from})부터 브랜치 끝까지 · 커밋 ${d.commits.length}개${d.dirty ? ` · 커밋 안 한 변경 ${d.dirty}개는 빠짐` : ''}` : undefined}>
+      {q.isLoading ? <Empty>읽는 중…</Empty> : q.error ? <Empty>{(q.error as Error).message}</Empty> : d && <>
+        {d.commits.length > 0 && (
+          <details className="mb-3 text-xs"><summary className="cursor-pointer font-semibold text-muted-foreground">커밋 {d.commits.length}</summary>
+            <ul className="mt-1.5 space-y-0.5 font-mono">{d.commits.map(c => <li key={c} className="truncate" title={c}>{c}</li>)}</ul></details>
+        )}
+        <DiffView text={d.text} scope={`deploy-${id}`} empty="운영에 더할 변경이 없다 — 이미 다 들어갔다" />
+      </>}
+    </Sheet>
   );
 }
 

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addTask, checkTask, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, checkTask, deployDiff, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -308,5 +308,22 @@ test('갓 만든 브랜치(등록 뒤 커밋 없음) — 끝이 운영의 한 �
     g('checkout', '-q', 'fresh'); writeFileSync(join(r.r, 'n.txt'), 'n\n'); g('add', '.'); g('commit', '-qm', 'feat: 새것'); g('checkout', '-q', 'master');
     st = (await deployView(r.file)).items[0].state!;
     assert.equal(st.empty, undefined, '커밋이 생기면 보통대로');
+  } finally { r.done(); }
+});
+
+test('deployDiff — 워크트리 체크아웃과 상관없이 운영과 갈라진 곳부터 브랜치 끝까지, 이 맥에 없으면 origin 브랜치로', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim();
+  try {
+    g('push', '-q', 'origin', 'early'); g('branch', '-D', 'early');
+    const wt = join(r.d, 'wt'); g('worktree', 'add', '-q', wt, 'feature'); writeFileSync(join(wt, 'x.txt'), 'x\n');
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature' }, { repo: r.r, branch: 'early' }] }), r.file);
+    const [feat, early] = loadStore(r.file).items.map(x => x.id);
+    const a = await deployDiff(feat, r.file);
+    assert.equal(a.branch, 'feature'); assert.equal(a.base, 'origin/master'); assert.equal(a.dirty, 1, '커밋 안 한 새 파일은 수만');
+    assert.match(a.text, /\+\+\+ b\/f\.txt/); assert.doesNotMatch(a.text, /x\.txt/);
+    assert.deepEqual(a.commits.map(c => c.replace(/^\w+ /, '')), ['feat: 기능']);
+    const b = await deployDiff(early, r.file);
+    assert.equal(b.branch, 'origin/early'); assert.match(b.text, /e\.txt/); assert.equal(b.dirty, 0);
+    await assert.rejects(deployDiff('nope', r.file), /없는 항목/);
   } finally { r.done(); }
 });
