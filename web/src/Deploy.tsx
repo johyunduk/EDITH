@@ -11,6 +11,7 @@ import { get, post } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Bracketed, Empty, GRID_BG, mix } from './ui.tsx';
 import { copyText, toast } from './copy.ts';
+import { byTurn } from './deployOrder.ts';
 import { DiffView } from './Diff.tsx';
 
 type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
@@ -213,7 +214,7 @@ export function DeployPage() {
   const needle = find.trim().toLowerCase();
   const hit = (xs: string[]) => !needle || xs.some(s => s.toLowerCase().includes(needle));
   const pass = (f: ReturnType<typeof flags>) => filter === 'all' || f[filter];
-  const shown = live.filter(g => pass(flags(g)) && hit([g.tag, ...tickets(g), ...g.items.flatMap(x => [x.branch, repoName(x.repo), x.tag ?? '', x.ticket ?? '', ...x.notes, ...(x.runs ?? []).flatMap(r => [`#${r.id}`, r.title])])]));
+  const shown = byTurn(live.filter(g => pass(flags(g)) && hit([g.tag, ...tickets(g), ...g.items.flatMap(x => [x.branch, repoName(x.repo), x.tag ?? '', x.ticket ?? '', ...x.notes, ...(x.runs ?? []).flatMap(r => [`#${r.id}`, r.title])])])), stepsOf, v.envs);
   const extra = v.extra.filter(e => pass(looseFlags(e)) && hit([`#${e.run.id}`, e.run.title, e.run.tag ?? '', ...e.repos.flatMap(x => [x.name, x.branch ?? ''])]));
   const count = (f: Filter) => f === 'all' ? live.length + v.extra.length : live.filter(g => flags(g)[f]).length + v.extra.filter(e => looseFlags(e)[f]).length;
   const heads = byDate ? [...new Set(shown.map(g => g.date ?? ''))].sort((a, b) => !a ? 1 : !b ? -1 : a.localeCompare(b)) : [null];
@@ -242,7 +243,7 @@ export function DeployPage() {
         <div className="flex flex-wrap items-center gap-2">
           <div role="group" aria-label="거르기" className="flex flex-wrap gap-2">{pill('all', '전체')}{pill('next', '할 차례')}{pill('work', '작업 중')}{pill('check', '확인 필요')}{pill('clean', '정리 가능')}</div>
           <div role="group" aria-label="보기" className="ml-1 flex overflow-hidden rounded-full border bg-card">
-            {([[false, '안건순'], [true, '배포일순']] as const).map(([d, name]) => (
+            {([[false, '차례순'], [true, '배포일순']] as const).map(([d, name]) => (
               <button key={name} type="button" aria-pressed={byDate === d} onClick={() => setByDate(d)} className={`h-9 px-3.5 text-sm ${byDate === d ? 'bg-accent font-semibold' : 'text-muted-foreground hover:bg-muted'}`}>{name}</button>
             ))}
           </div>
