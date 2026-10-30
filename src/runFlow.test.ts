@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainView, claudeChip, columns, dropShared, merge, notionUrl, phases, short, statusOf } from '../web/src/runFlow.ts';
+import { chainView, claudeChip, columns, dropShared, merge, notionUrl, pastDays, phases, short, statusOf } from '../web/src/runFlow.ts';
 import type { FlowStep } from '../web/src/stepFlow.ts';
 
 // 맨 위: 엔진 i(체인 a · b) → 체인 p → be 갈래(체인 d → e) · fe 갈래(체인 f) → 체인 j. p 에 고치는 노드 x.
@@ -79,4 +79,18 @@ test('런 입력의 노션 주소 — 첫 것만, 둘레 괄호 · 낫표 · 끝
   assert.equal(notionUrl('https://github.com/a/b 와 notion.so 라는 말'), undefined);
   assert.equal(notionUrl('https://app.notion.com/4025b1b0fcd98188bd37e0a4d864af23'), 'https://app.notion.com/p/4025b1b0fcd98188bd37e0a4d864af23');
   assert.equal(notionUrl('https://app.notion.com/p/worksmate/4025b1b0fcd98188bd37e0a4d864af23'), 'https://app.notion.com/p/worksmate/4025b1b0fcd98188bd37e0a4d864af23');
+});
+
+test('지난 런 탭 — 찾기 낱말 · 상태로 거르고 만든 날로 묶는다', () => {
+  const at = (d: number, h: number) => new Date(2026, 9, d, h).getTime(), now = new Date(2026, 9, 30, 18);
+  const runs = [
+    { id: 19, name: '엔진', state: 'done', created: at(30, 12), tag: 'TICKET-12', title: '목록 버튼' },
+    { id: 17, name: '엔진', state: 'done', created: at(30, 9), tag: 'BUG-34', title: '연락처 저장', agenda: '연락처' },
+    { id: 13, name: '엔진', state: 'dropped', created: at(26, 13), title: '한도 계산' },
+  ];
+  assert.deepEqual(pastDays(runs, '', 'all', now).map(([d, rs]) => [d, rs.map(r => r.id)]), [['오늘 10.30', [19, 17]], ['10.26', [13]]]);
+  assert.deepEqual(pastDays(runs, '', 'dropped', now).map(([, rs]) => rs.map(r => r.id)), [[13]]);
+  assert.deepEqual(pastDays(runs, 'bug 연락처', 'all', now).flatMap(([, rs]) => rs.map(r => r.id)), [17]);
+  assert.deepEqual(pastDays(runs, '#13', 'all', now).flatMap(([, rs]) => rs.map(r => r.id)), [13]);
+  assert.deepEqual(pastDays(runs, '없는말', 'all', now), []);
 });

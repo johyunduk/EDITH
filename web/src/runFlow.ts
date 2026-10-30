@@ -86,3 +86,12 @@ export function claudeChip(c?: ClaudeUsed | null) {
   const m = c.model?.replace(/^claude-/, '').split('-')[0], model = m ? m[0].toUpperCase() + m.slice(1) : '기본';
   return [model, c.effort, c.why?.split(/\s/)[0]].filter(Boolean).join(' · ');
 }
+
+// 지난 런 목록(런 화면 「지난 런」 탭) — 찾기 낱말이 모두 들어 있고 상태가 맞는 것만, 만든 날로 묶는다(목록이 새것부터라 같은 날은 붙어 온다). 오늘은 「오늘 M.D」
+type PastRun = { id: number; name: string; state: string; created: number; tag?: string; title?: string; agenda?: string };
+export function pastDays<T extends PastRun>(past: T[], q: string, only: 'all' | 'done' | 'dropped', now = new Date()): [string, T[]][] {
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const day = (t: number) => { const d = new Date(t), s = `${d.getMonth() + 1}.${d.getDate()}`; return d.toDateString() === now.toDateString() ? `오늘 ${s}` : s; };
+  return past.filter(r => (only === 'all' || r.state === only) && words.every(w => [`#${r.id}`, r.tag, r.title, r.agenda, r.name].join(' ').toLowerCase().includes(w)))
+    .reduce<[string, T[]][]>((a, r) => { const k = day(r.created), last = a.at(-1); if (last?.[0] === k) last[1].push(r); else a.push([k, [r]]); return a; }, []);
+}

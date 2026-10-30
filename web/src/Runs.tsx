@@ -15,7 +15,7 @@ import { Attach, upload } from './Attach.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
 import { RunFlow } from './RunFlow.tsx';
 import { RunTimeline, type Entry } from './RunTimeline.tsx';
-import { claudeChip, dropShared, dur, notionUrl, phases, type ClaudeUsed } from './runFlow.ts';
+import { claudeChip, dropShared, dur, notionUrl, pastDays, phases, type ClaudeUsed } from './runFlow.ts';
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
 
@@ -76,16 +76,7 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
         <NewRun req={req} done={() => setReq(null)} />
         {!list.data ? <p className="p-2.5 text-xs text-muted-foreground">불러오는 중…</p>
           : !list.data.length ? <p className="p-2.5 text-xs text-muted-foreground">아직 런이 없다</p>
-          : list.data.map(r => (
-            <a key={r.id} href={`#/runs/${r.id}`} title={r.reason}
-              className={`flex items-center gap-2 rounded-md border-l-2 px-2 py-1.5 ${r.id === n ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`}>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[0.6875rem] text-muted-foreground tabular-nums">#{r.id} {r.name} · {when(r.created)} · {r.done}/{r.total}</span>
-                <span className="line-clamp-2 text-[0.8125rem] font-medium">{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.agenda && <span className="mr-1 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</span>
-              </span>
-              <span className={`shrink-0 rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>
-            </a>
-          ))}
+          : <RunList items={list.data} current={n} />}
       </aside>
       <main className="flex min-h-[32rem] min-w-0 flex-1 flex-col overflow-y-auto">
         {n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
@@ -96,6 +87,68 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
       <RunPane panes={run.data ? [{ track: '', id: run.data.pane }, ...Object.entries(run.data.panes ?? {}).map(([track, v]) => ({ track, id: v.pane }))].filter(x => x.id) as { track: string; id: string }[] : []}
         fold={fold} setFold={setFold} />
     </div>
+  );
+}
+
+// 런 목록 — 「진행 중」(대기 · 도는 중 · 확인 필요 · 멈춤)과 「지난 런」(끝 · 버림) 두 탭. 지난 런은 찾기 · 상태 칩 · 만든 날 묶음.
+// 고른 탭은 이 브라우저에 기억한다. 보는 런이 지난 런이면(주소로 열었거나 보던 런이 끝났거나) 그 탭으로 넘어가 어디 있는지 보이게
+function RunList({ items, current }: { items: Item[]; current?: number }) {
+  const [tab, setTabState] = useState<'live' | 'past'>(() => { try { return localStorage.getItem('edith.runs.tab') === 'past' ? 'past' : 'live'; } catch { return 'live'; } });
+  const setTab = (t: 'live' | 'past') => { setTabState(t); try { localStorage.setItem('edith.runs.tab', t); } catch { /* 저장 안 됨 */ } };
+  const [q, setQ] = useState(''), [only, setOnly] = useState<'all' | 'done' | 'dropped'>('all');
+  const live = items.filter(r => !ended(r.state)), past = items.filter(r => ended(r.state));
+  const cur = items.find(r => r.id === current), curPast = !!cur && ended(cur.state);
+  useEffect(() => { if (curPast) setTab('past'); }, [current, curPast]);
+  const days = pastDays(past, q, only);
+  const tabCls = (on: boolean) => `h-8 rounded-md text-[0.8125rem] transition ${on ? 'bg-card font-semibold text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`;
+  const chip = (on: boolean) => `h-7 rounded-full border px-2.5 text-xs ${on ? 'border-primary bg-accent font-semibold text-accent-foreground' : 'bg-card hover:bg-muted/60'}`;
+  const pill = (r: Item) => <span className={`shrink-0 rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>;
+  const row = (r: Item) => `flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 ${r.id === current ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`;
+  return (
+    <>
+      <div role="tablist" aria-label="런 목록" className="my-1.5 grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+        <button type="button" role="tab" aria-selected={tab === 'live'} onClick={() => setTab('live')} className={tabCls(tab === 'live')}>진행 중 {live.length}</button>
+        <button type="button" role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')} className={tabCls(tab === 'past')}>지난 런 {past.length}</button>
+      </div>
+      {tab === 'live' ? (
+        <div role="tabpanel" aria-label="진행 중">
+          {!live.length && <p className="p-2.5 text-xs text-muted-foreground">진행 중인 런이 없다 — 위 「새 런」에서 시작한다</p>}
+          {live.map(r => (
+            <a key={r.id} href={`#/runs/${r.id}`} title={r.reason} className={row(r)}>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[0.6875rem] text-muted-foreground tabular-nums">#{r.id} {r.name} · {when(r.created)} · {r.done}/{r.total}</span>
+                <span className="line-clamp-2 text-[0.8125rem] font-medium">{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.agenda && <span className="mr-1 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</span>
+              </span>
+              {pill(r)}
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div role="tabpanel" aria-label="지난 런" className="space-y-1.5">
+          <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="#번호 · 티켓 · 제목으로 찾기" aria-label="지난 런 찾기"
+            className="h-8 w-full rounded-md border bg-card px-2.5 text-[0.8125rem] outline-none focus:ring-2 focus:ring-ring/40" />
+          <div role="group" aria-label="상태로 거르기" className="flex flex-wrap gap-1.5">
+            {([['all', `전체 ${past.length}`], ['done', `끝 ${past.filter(r => r.state === 'done').length}`], ['dropped', `버림 ${past.filter(r => r.state === 'dropped').length}`]] as const).map(([k, label]) =>
+              <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)} className={chip(only === k)}>{label}</button>)}
+          </div>
+          {!days.length && <p className="p-2.5 text-xs text-muted-foreground">{past.length ? '맞는 지난 런이 없다' : '아직 끝난 런이 없다'}</p>}
+          {days.map(([d, rs]) => (
+            <div key={d}>
+              <p className="px-1.5 pt-1.5 pb-0.5 text-[0.6875rem] font-semibold text-muted-foreground">{d}</p>
+              {rs.map(r => (
+                <a key={r.id} href={`#/runs/${r.id}`} title={r.reason} className={row(r)}>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[0.6875rem] text-muted-foreground tabular-nums">#{r.id} · {new Date(r.created).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                    <span className={`line-clamp-2 text-[0.8125rem] ${r.state === 'dropped' ? 'text-muted-foreground' : ''}`}>{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.title ?? r.name}</span>
+                  </span>
+                  {pill(r)}
+                </a>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
