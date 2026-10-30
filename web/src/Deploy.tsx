@@ -996,7 +996,8 @@ function DiffSheet({ id, onClose }: { id: string; onClose: () => void }) {
           <details className="mb-3 text-xs"><summary className="cursor-pointer font-semibold text-muted-foreground">커밋 {d.commits.length}</summary>
             <ul className="mt-1.5 space-y-0.5 font-mono">{d.commits.map(c => <li key={c} className="truncate" title={c}>{c}</li>)}</ul></details>
         )}
-        <DiffView text={d.text} scope={`deploy-${id}`} empty="운영에 더할 변경이 없다 — 이미 다 들어갔다" />
+        <DiffView text={d.text} scope={`deploy-${id}`} empty="운영에 더할 변경이 없다 — 이미 다 들어갔다"
+          summarize={cached => post<Record<string, string>>('/api/deploy/diff-summary', { id, cached })} />
       </>}
     </Sheet>
   );

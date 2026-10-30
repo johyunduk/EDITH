@@ -242,6 +242,11 @@ export function serve(port: number) {
       // · 배포 조치 뽑기(공방 훅 on: prep — 기다리지 않는다) · 정리 미리보기 · 정리(src/cleanup.ts — 워크트리 · 워크스페이스 · 로컬 브랜치, 공방 훅 on: cleanup) · 걸린 확인 고치기(같은 훅 fix)
       if (path === '/api/deploy' && req.method === 'GET') return reply(res, 200, await deployBoard());
       if (path === '/api/deploy/clean-plan' && req.method === 'GET') return reply(res, 200, cleanState(url.searchParams.get('ids') ?? ''));
+      // 「변경 ›」 의 AI 요약 — pane 변경 보기와 같은 summarize(파일마다, 같은 diff 는 기억해 둔 것). 화면이 보는 것과 같은 deployDiff 를 서버가 다시 떠서 묻는다
+      if (path === '/api/deploy/diff-summary' && req.method === 'POST') {
+        const b = (await body(req) ?? {}) as { id?: unknown; cached?: unknown };
+        return await deployDiff(b.id).then(d => summarize(d.text, b.cached === true)).then(s => reply(res, 200, s), fail);
+      }
       if (path === '/api/deploy/diff' && req.method === 'GET') { try { return reply(res, 200, await deployDiff(url.searchParams.get('id'))); } catch (e) { return reply(res, 404, { error: (e as Error).message }); } }
       if (path === '/api/deploy/file' && req.method === 'GET') { try { return reply(res, 200, deployFile(url.searchParams.get('id'), url.searchParams.get('name'))); } catch (e) { return reply(res, 404, { error: (e as Error).message }); } }
       if (path === '/api/deploy/done' && req.method === 'GET') return reply(res, 200, deployDone(url.searchParams.get('q') ?? '', url.searchParams.get('before') ?? undefined));
