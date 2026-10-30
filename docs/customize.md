@@ -47,6 +47,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/reach.ts` | 코드가 어디까지 — `reachOf`(커밋 그대로 · 내용 일치 — 임시 인덱스에 거꾸로 적용 · 일부 · 제목만), 런 하나의 레포 상태 `runRepos`(`edith-repos.json` — 커밋 안 한 파일 · 올렸는지 · `via` · 브랜치마다), 런 단추 중 단계(`reach`)가 적힌 것 `runActions` · 런 제목 · 꼬리표 |
 | `src/deploy.ts` · `web/src/Deploy.tsx` | 「배포」 화면(옛 「결과」 를 품음) — 배포 목록(`deploy.json` — 레포 · 브랜치 · 안건 · 배포일 · 연기 · 보관 · 환경별 할 일 · 기록, 화면 쓰기는 판 `rev` 이 같을 때만, 모든 쓰기는 잠금 `deploy.json.lock`), 코드 상태(`reachOf` 를 브랜치 이름으로 — 워크트리 없이, 안 들어간 환경은 `merge-tree` 충돌 수), 보관한 것은 수만 싣고 목록은 「COMPLETE」 창이 열 때 `deployDone`(`/api/deploy/done?q=&before=` — 날짜로 넘겨 같은 날은 안 자름), 런 잇기(`deployBoard` — 런의 `edith-repos.json` 을 본 레포 · 브랜치로, `via` 면 이슈 줄, 목록에 없으면 `extra`), 안건 단위 다음 환경에 올리기(`promoteMany` — 레포를 모두 먼저 보고 하나라도 안 되면 무, 작업 트리 없이 머지 커밋 → 강제 아닌 push, 처음 · 마지막 환경은 안 함), CLI `edith deploy import · add · set · note · task · range · block · check · done · drop · show`(스킬 · 엔진이 쓴다), 직접 한 일 적기(`addTask` — `hand` 줄은 다시 뽑아도 남김), 배포 조치 뽑기(`prepItems` — 공방 훅 `on: "prep"` 을 기다리지 않고, 상태는 `prep`) |
 | `src/cleanup.ts` | 배포 화면 「정리」 — 미리보기(`cleanPlan` — 원본 · 이슈 · `merge/<끝>` · `merge-<환경>/<끝>` 마다 워크트리 · herdr 워크스페이스 · 로컬 브랜치, 코드가 들어갔나는 `contentIn`(합친 트리 = 대상 트리), 커밋 안 한 변경 · stash · 일하는 워크스페이스, 공방 훅 `on: "cleanup"` check)와 정리(`cleanRun` — 훅 run → 워크스페이스 닫기 → 워크트리 제거 → `branch -D` → 보관). 원격 · 본 체크아웃 · 런 기록은 남김 |
+| `src/engineSettings.ts` · `web/src/EngineSettings.tsx` | 설정 › 「엔진 설정」 — 공방 맨 위 폴더 `actions.json` 의 `on: "settings"` 명령마다 표 하나(`settingsPages` — id `<폴더>.<차례>`). 읽기 · 저장은 그 명령을 그 폴더에서(`runHook` — 저장 값은 표준 입력으로만), 엔진이 낸 표는 `parseTable` 이 모양을 맞추고 비밀 칸 값은 참거짓으로만 둔다. 주소 `#/settings/engine/<id>` |
 | `src/analysis.ts` · `src/timeline.ts` · `src/refs.ts` · `src/requests.ts` | 런 분석(노드마다 시간 · 사람 대기 · 토큰 · 노드 안쪽 도구 시간 · 대화 수 · 읽은 파일 — `events.jsonl` 과 Claude 세션 기록, 헛도는 검사(시도마다 코드 지문 `fp` — `runner.ts` `codeFp`), 레포 판단(엔진 기록 `repo-pick` 줄 ↔ `edith-repos.json` · 커밋 수), 흐름(벽시계 일 · 사람 · 빈 시간) · 갈래 병목, 엔진 기록 `edith-records.jsonl` — Codex `usage` 줄, 다시 돈 시간, 같은 엔진 런 비교) · 공방 「적용」 전 검사(스킬이 「없으면」 멈춘다고 적은 작업 문서 파일을 앞 노드가 만드는지 — `previewSteps` 의 `warnings`) · 런 타임라인(`events.jsonl` 을 노드 시도로 묶고 시도마다 결과를 붙여 일어난 차례대로 — 런 화면 기본 보기) · 받은 요청(`requests/<id>.json` → 사람이 열기 · 거절, 답 `<id>.answer.json`, `edith request <id>`) |
 | `src/today.ts` · `web/src/Today.tsx` | 「오늘」 화면 — 마지막으로 일한 평일부터 어제까지 한 일(`~/.claude/history.jsonl` 의 내 말 — 런이 보낸 글 · `paste-cache` 의 붙여넣기까지 보고 거른다, 그 폴더 레포의 내 커밋, 그 기간 움직인 런), 작업마다 한 줄 · 하다 만 일(`claude -p` 하루 한 번 → `today/<날짜>.json`, `src/summary.ts` 의 `claudeJson`), 체크 · 직접 추가 · 이어 받기(`today/<날짜>.todo.json` — 없으면 앞 날 것에서 `carry`), 할 일 중 대기 · 요청 · 배포는 화면이 승인 대기 · 받은 요청 · 배포 할 일 API 를 그대로 읽는다 |
 | `src/settings.ts` | 설정 화면의 플러그인 켜짐(`claude plugin configure <플러그인>@edith`) — 켜고 끌 플러그인은 `PLUGINS` |
@@ -113,6 +114,20 @@ if (req.method === 'POST' && path === '/api/note') {
 1. `route()` 에 `#/notes` 를 알아보는 줄을 더한다.
 2. `<nav>` 에 `<a href="#/notes" className={nav(r.view === 'notes')}>노트</a>`.
 3. 아래 `{r.view === 'skills' ? … : …}` 에 새 화면 컴포넌트를 더한다(새 파일 `web/src/Notes.tsx`).
+
+### 엔진 설정 표 내놓기 — `on: "settings"`
+
+공방 엔진이 쓰는 계정 · API 키 같은 설정을 설정 화면에서 고치게 하려면, 맨 위 엔진 폴더 `actions.json` 에 명령 하나를 둡니다. EDITH 는 표를 그리고 바꿀 것을 넘길 뿐 — 어디에 저장하는지는 그 명령이 정합니다. 한 폴더에 여럿 두면 표도 여럿입니다.
+
+```json
+{ "label": "외부 서비스 키", "on": "settings", "command": "node \"$EDITH_ENGINE/tools/keys.ts\"" }
+```
+
+- **읽기** — `EDITH_SETTINGS=read` 로 부릅니다. 표준 출력에 표 JSON:
+  `{"title", "note"?, "status"?(상태 칸 이름), "fields": [{"key", "label", "type": text | select | bool | secret, "options"?: [{"value", "label"}], "hint"?, "mono"?}], "columns": [표에 보일 칸 key], "groups"?: [{"id", "label", "note"?}], "rows": [{"id", "group"?, "values": {key: 글 | 참거짓}, "note"?, "tone"?: ok | warn | off, "edit"?: [고칠 칸 key], "remove"?: true}], "add"?: [{"label", "group"?, "edit": [key], "values"?}]}`
+- **저장** — `EDITH_SETTINGS=save` 로 부르고 **표준 입력**에 `{"op": "set", "id": <줄 id>, "values"}` · `{"op": "add", "add": <add 차례>, "values"}` · `{"op": "remove", "id"}` 를 줍니다(set 은 바꾼 칸만). 반영한 뒤 표준 출력에 새 표를 냅니다. 받지 않을 값이면 `{"error": "까닭"}` 을 내고 끝 코드 1 — 화면에 그 까닭이 보입니다.
+- **비밀 칸**(`type: "secret"`) — 읽기에서는 값 대신 설정됐는지(`true` · `false`)만 냅니다(글을 내도 EDITH 가 참거짓으로 바꾼다). 화면은 사람이 새로 넣은 값만 보내고, 그 값은 표준 입력으로만 가니 프로세스 목록 · 기록(`~/.local/share/edith/settings/<id>.log` — 표준 출력)에 남지 않습니다. 명령도 그 값을 출력하지 않습니다.
+- 30초 안에 끝나야 합니다. 명령은 그 엔진 폴더에서 돌고, `EDITH_ENGINE`(그 폴더) · `EDITH_WORKSHOP` 을 받습니다.
 
 ### 알림 바꾸기
 

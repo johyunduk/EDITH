@@ -7,6 +7,7 @@ import { HerdrPage } from './Herdr.tsx';
 import { AlertBell, useAlerts } from './Alerts.tsx';
 import { SkillsPage } from './Skills.tsx';
 import { SettingsPage } from './Settings.tsx';
+import { EngineSettingsPage } from './EngineSettings.tsx';
 // 공방은 캔버스 라이브러리(React Flow)를 쓴다 — 공방을 열 때만 불러와 다른 화면의 첫 로딩을 늘리지 않는다
 const WorkshopPage = lazy(() => import('./Workshop.tsx').then(m => ({ default: m.WorkshopPage })));
 const RunsPage = lazy(() => import('./Runs.tsx').then(m => ({ default: m.RunsPage })));
@@ -32,7 +33,7 @@ const SKILLS_MENU = false;
 const MENU = { herdr: 'herdr', skills: '스킬', workshop: '공방', runs: '런', deploy: '배포', today: '오늘', settings: '설정' };
 const route = () => {
   const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/), ws = h.match(/^#\/workshop(?:\/(.+))?/), runs = h.match(/^#\/runs(?:\/(.+))?/);
-  if (h.startsWith('#/settings')) return { view: 'settings' as const, id: undefined };
+  if (h.startsWith('#/settings')) return { view: 'settings' as const, id: h.match(/^#\/settings\/engine\/(.+)/)?.[1] };   // 엔진 설정 표(EngineSettings.tsx)
   if (h.startsWith('#/deploy') || h.startsWith('#/results')) return { view: 'deploy' as const, id: undefined };
   if (h.startsWith('#/today')) return { view: 'today' as const, id: undefined };
   if (ws) return { view: 'workshop' as const, id: ws[1] };
@@ -120,7 +121,7 @@ export default function App() {
           )}
         </span>
       </header>
-      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? <SettingsPage theme={theme} setTheme={setTheme} /> : r.view === 'deploy' ? <DeployPage /> : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
+      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? (r.id ? <EngineSettingsPage key={r.id} id={r.id} /> : <SettingsPage theme={theme} setTheme={setTheme} />) : r.view === 'deploy' ? <DeployPage /> : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
 }

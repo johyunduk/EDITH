@@ -818,8 +818,8 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // ready — 배포 화면이 이 단추를 켜는 조건: 그 브랜치(「merge/{tail}」 — {branch} · {tail})에 원본 최신과 단추 칸(reach 가 브랜치면)이 다 들어 있을 때(src/deploy.ts markWait)
 // until — 거꾸로, 그 브랜치에 다 들어 있으면 막는다(이미 한 준비 단추)
 // row — 배포 화면이 레포 줄마다 놓는다: 누르면 그 줄 워크트리(런이 남긴 edith-repos.json 의 path)만 EDITH_ACTION_REPO 로 — 명령이 그 레포만 다룬다. 런 화면에서 누르면 레포 전부
-// on: "prep" · "cleanup" — 배포 화면 훅(deployHook — 배포 조치 뽑기 · 정리 때 엔진 몫의 일)
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string; row?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+// on: "prep" · "cleanup" — 배포 화면 훅(deployHook — 배포 조치 뽑기 · 정리 때 엔진 몫의 일). on: "settings" — 설정 › 엔진 설정 표(src/engineSettings.ts)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup' | 'settings'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string; row?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
 // reach — 배포 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
 // copy — 명령의 출력을 사람이 복사해 직접 돌릴 글로 돌려준다(결과 화면 확인 창 · 런 화면 단추 기록에 복사 단추). 이 명령은 아무것도 바꾸지 않아야 한다 — 바꾸는 일은 사람이 그 글로
 // 런 설정 사본(run/)에 단추가 있으면 그것, 없으면 엔진 사본의 것
@@ -831,7 +831,7 @@ function parseActions(text: () => string): RunAction[] {
   try {
     const a = JSON.parse(text()) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
-      && (x.on === undefined || ['results', 'picks', 'request', 'prep', 'cleanup'].includes(x.on)) && (x.when === undefined || x.when === 'done')
+      && (x.on === undefined || ['results', 'picks', 'request', 'prep', 'cleanup', 'settings'].includes(x.on)) && (x.when === undefined || x.when === 'done')
       && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean') && (x.row === undefined || typeof x.row === 'boolean') && (x.flow === undefined || typeof x.flow === 'string') && [x.ready, x.until].every(t => t === undefined || (typeof t === 'string' && /^[\w{][\w{}./-]{0,120}$/.test(t)))).slice(0, 16) : [];
   } catch { return []; }
 }
@@ -898,16 +898,18 @@ export function deployHook(on: 'prep' | 'cleanup') {
   for (const n of names) { const a = pickAction(n, on); if (a) return { dir: actionsHome(n), action: a }; }
   return undefined;
 }
-// 훅을 그 엔진 폴더의 셸로 — 값은 환경 변수로만 넘긴다(명령 글에 붙이지 않는다). 끝 코드와 표준 출력(1MB 까지)을 돌려주고, 출력 · 오류는 log 파일에 다
-export function runHook(h: { dir: string; action: RunAction }, env: Record<string, string>, log: string, timeoutMs: number): Promise<{ code: number; out: string }> {
+// 훅을 그 엔진 폴더의 셸로 — 값은 환경 변수로만 넘긴다(명령 글에 붙이지 않는다). 끝 코드와 표준 출력(1MB 까지)을 돌려주고, 출력 · 오류는 log 파일에 다.
+// input 은 표준 입력으로(엔진 설정 저장 — 비밀 값이 프로세스 목록 · log 에 남지 않게)
+export function runHook(h: { dir: string; action: RunAction }, env: Record<string, string>, log: string, timeoutMs: number, input?: string): Promise<{ code: number; out: string }> {
   const [cmd, args] = process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', h.action.command]] : [process.env.SHELL || '/bin/sh', ['-c', h.action.command]];
   return new Promise(ok => {
     const w = createWriteStream(log, { mode: 0o600 });
     let out = '', ended = false;
     const end = (code: number) => { if (ended) return; ended = true; w.end(); ok({ code, out }); };
-    const child = spawn(cmd, args, { cwd: h.dir, env: { ...process.env, EDITH_ENGINE: h.dir, EDITH_WORKSHOP: WORKSHOP, ...env }, stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs });
-    child.stdout.on('data', (d: Buffer) => { if (out.length < 1024 * 1024) out += d; w.write(d); });
-    child.stderr.on('data', (d: Buffer) => w.write(d));
+    const child = spawn(cmd, args, { cwd: h.dir, env: { ...process.env, EDITH_ENGINE: h.dir, EDITH_WORKSHOP: WORKSHOP, ...env }, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: timeoutMs });
+    if (input !== undefined) { child.stdin?.on('error', () => { /* 읽기 전에 끝난 명령 */ }); child.stdin?.end(input); }
+    child.stdout?.on('data', (d: Buffer) => { if (out.length < 1024 * 1024) out += d; w.write(d); });
+    child.stderr?.on('data', (d: Buffer) => w.write(d));
     child.on('error', e => { w.write(`\n[EDITH] 띄우지 못했다 — ${e.message}\n`); end(1); });
     child.on('close', code => end(code ?? 1));
   });

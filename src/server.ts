@@ -34,6 +34,7 @@ import { brief, dayAi, todoOp, todoState } from './today.ts';
 import { addItem, addTask, checkTask, deployBoard, deployDiff, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteCheck, promoteMany } from './deploy.ts';
 import { cleanFix, cleanRun, cleanStart, cleanState } from './cleanup.ts';
 import { withAgenda } from './agenda.ts';
+import { readSettings, saveSettings, settingsPages } from './engineSettings.ts';
 
 const WEB = join(REPO, 'web', 'dist');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
@@ -205,6 +206,10 @@ export function serve(port: number) {
       // 동시 런 한도 — 넘으면 새 런은 줄을 선다
       if (path === '/api/runs/limit' && req.method === 'GET') return reply(res, 200, { max: runLimit() });
       if (path === '/api/runs/limit' && req.method === 'POST') { try { return reply(res, 200, setRunLimit((await body(req) as { max?: unknown }).max)); } catch (e) { return fail(e); } }
+      // 엔진 설정(src/engineSettings.ts) — 공방 엔진 on: "settings" 표 목록 · 하나 읽기 · 저장(엔진 명령이 그 자리에서 돈다)
+      if (path === '/api/settings/engine' && req.method === 'GET') return reply(res, 200, settingsPages().map(p => ({ id: p.id, label: p.label })));
+      if (path === '/api/settings/engine/table' && req.method === 'GET') return await readSettings(url.searchParams.get('id')).then(t => reply(res, 200, t), fail);
+      if (path === '/api/settings/engine/save' && req.method === 'POST') return await saveSettings((await body(req) ?? {}) as Record<string, unknown>).then(t => reply(res, 200, t), fail);
       if (path === '/api/runs' && req.method === 'POST') {
         const b = await body(req) as { engine?: unknown; cwd?: unknown; input?: unknown; branch?: unknown; unattended?: unknown; request?: unknown; pick?: unknown };
         // 요청에서 연 런이면 시작한 뒤 그 요청에 런 번호로 답한다

@@ -33,6 +33,7 @@ export function SettingsPage({ theme, setTheme }: { theme: Theme; setTheme: (t: 
         <Section title="런" note="공방 엔진 · 체인을 돌리는 런">
           <RunLimit />
         </Section>
+        <EngineSettings />
         <Section title="Claude" note={view ? `${view.remote ? '다른 기기' : '이 기기'} 「${view.host}」 의 Claude 에 적용` : undefined}>
           <PluginToggles />
         </Section>
@@ -50,6 +51,23 @@ function Section({ title, note, children }: { title: string; note?: string; chil
       </div>
       {children}
     </section>
+  );
+}
+
+// 엔진 설정 — 공방 엔진이 actions.json 에 on: "settings" 로 낸 표(src/engineSettings.ts). 없으면 칸을 안 보인다
+function EngineSettings() {
+  const { data } = useQuery({ queryKey: ['engine-settings-list'], queryFn: () => get<{ id: string; label: string }[]>('/api/settings/engine') });
+  if (!data?.length) return null;
+  return (
+    <Section title="엔진 설정" note="공방 엔진이 쓰는 설정 — 무엇을 어디에 저장하는지는 그 엔진이 정한다">
+      <div className="flex flex-col gap-2">
+        {data.map(p => (
+          <a key={p.id} href={`#/settings/engine/${encodeURIComponent(p.id)}`} className="flex items-center justify-between gap-3 rounded-lg border bg-card p-3 text-sm transition hover:bg-muted/60">
+            <span className="font-semibold">{p.label}</span><span className="text-xs text-muted-foreground">{p.id.split('.')[0]} ›</span>
+          </a>
+        ))}
+      </div>
+    </Section>
   );
 }
 
