@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, post } from './api.ts';
 import { Button } from '@/components/ui/button';
-import { Bracketed, Empty, GRID_BG, mix } from './ui.tsx';
+import { Bracketed, Empty, GRID_BG, Icon, mix } from './ui.tsx';
 import { copyText, toast } from './copy.ts';
 import { byTurn } from './deployOrder.ts';
 import { DiffView } from './Diff.tsx';
@@ -20,7 +20,7 @@ type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: 
 type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; row?: boolean; wait?: string };   // row — 레포 줄마다(그 줄 레포만), wait — 아직 누를 때가 아니면 그 까닭(서버 markWait)
 type RepoReach = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
 type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };   // 런 단추 기록 — code null 이면 도는 중, repo — 레포 줄 단추로 그 레포만
-type RunLink = { id: number; title: string; tag?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act };   // path — 이 항목에 해당하는 그 런 워크트리
+type RunLink = { id: number; title: string; tag?: string; link?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act };   // path — 이 항목에 해당하는 그 런 워크트리
 // 런 단추가 도는지 · 마지막 결과 — 카드 깊숙한 단계 칸이 읽는다(DeployPage 가 1.5초마다 /api/runs/<번호>/acted 로 채운다)
 const ActCtx = createContext<{ busy: (run: number) => Act | null; last: (run: number) => Act | null; now: number }>({ busy: () => null, last: () => null, now: 0 });
 type Task = { env: string; text: string; done: boolean; hand?: boolean };   // hand — 사람이 패널에서 적은 줄
@@ -46,6 +46,13 @@ const label = (ref: string) => ref.replace(/^origin\//, '');
 const reached = (r?: Reach) => r?.state === 'in' || r?.state === 'content';
 const TICKET = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 const tickets = (g: Group) => g.agenda ? [g.agenda] : [...new Set(g.items.flatMap(x => x.notes.join(' ').match(TICKET) ?? []))].slice(0, 4);
+// 티켓 → 원문 주소 — 그 꼬리표로 돈 런의 입력 주소(src/deploy.ts inputLink). 꼬리표가 안 맞으면(런이 돈 뒤 티켓 접두가 바뀌는 등) 안건 키이거나 티켓이 하나뿐인
+// 카드에서 이슈 줄이 아닌 런들의 주소가 하나일 때만 그것 — 노트에 다른 티켓이 섞인 카드가 엉뚱한 원문으로 가지 않게
+const linkOf = (g: Group, t: string) => {
+  const runs = g.items.flatMap(x => x.runs ?? []).filter(r => r.link), own = [...new Set(runs.filter(r => !r.issue).map(r => r.link))];
+  return runs.find(r => r.tag === t)?.link ?? ((t === g.agenda || tickets(g).length === 1) && own.length === 1 ? own[0] : undefined);
+};
+const EXTERNAL = <><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></>;   // lucide external-link
 // 안건 자기 항목(티켓이 안건 키거나 티켓 없음) — 아니면 그 안건에 든 이슈 항목(줄에 제 티켓 · 이름)
 const own = (x: Item) => !x.ticket || x.ticket === x.agenda;
 // 배포 조치 줄의 때 — 「배포 후 …」 면 후, 나머지(「배포 전 …」 · 앞머리 없는 줄)는 전. 보일 때는 앞머리를 뗀다(「배포 전 DB — …」 → 「DB — …」)
@@ -357,7 +364,9 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
   return (
     <Bracketed label={g.tag}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {tickets(g).map(t => <span key={t} className="font-mono text-xs text-primary">{t}</span>)}
+        {tickets(g).map(t => { const href = linkOf(g, t); return href
+          ? <a key={t} href={href} target="_blank" rel="noopener noreferrer" title={`원문 열기 — ${href}`} className="inline-flex items-center gap-1 font-mono text-xs text-primary underline-offset-2 hover:underline">{t}<Icon className="size-3">{EXTERNAL}</Icon></a>
+          : <span key={t} className="font-mono text-xs text-primary">{t}</span>; })}
         <span className="text-base font-bold">{g.tag}</span>
         {working && <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 px-2 text-xs leading-5 font-semibold text-sky-800 dark:text-sky-300"><span className="size-1.5 rounded-full bg-sky-500" />작업 중</span>}
         <span className="ml-auto flex flex-wrap items-center gap-2">

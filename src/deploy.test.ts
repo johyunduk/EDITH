@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addTask, checkTask, deployDiff, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, checkTask, deployDiff, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -326,4 +326,11 @@ test('deployDiff — 워크트리 체크아웃과 상관없이 운영과 갈라�
     assert.equal(b.branch, 'origin/early'); assert.match(b.text, /e\.txt/); assert.equal(b.dirty, 0);
     await assert.rejects(deployDiff('nope', r.file), /없는 항목/);
   } finally { r.done(); }
+});
+
+test('런 입력의 첫 http(s) 주소 — 카드 티켓 링크', () => {
+  assert.equal(inputLink('https://www.example.com/page-4085b1 메모'), 'https://www.example.com/page-4085b1');
+  assert.equal(inputLink('기획 (https://a.example/x?y=1).'), 'https://a.example/x?y=1');
+  assert.equal(inputLink('javascript:alert(1) 없음'), undefined);
+  assert.equal(inputLink('#16 다시'), undefined);
 });

@@ -181,7 +181,10 @@ export function deployDone(q = '', before?: string, limit = 40, file = DEPLOY_FI
 // acting — 지금 도는 런 단추(누른 때부터 끝 코드가 찰 때까지), last — 마지막으로 끝난 단추(끝 코드 · 까닭)
 export type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };
 // path — 이 항목에 해당하는 그 런의 워크트리(레포 줄 단추 row 가 그 레포만 돌게)
-export type RunLink = { id: number; title: string; tag?: string; state: Run['state']; now?: string; created: number; actions: ReachAction[]; issue?: ReachRepo; path?: string; acting?: Act; last?: Act };
+// 런 입력 글에서 첫 http(s) 주소 — 끝 문장부호 · 괄호는 뺀다. 다른 스킴(javascript: 등)은 잡지 않는다
+export const inputLink = (input: string) => input.match(/https?:\/\/[^\s<>"'`)\]]+/)?.[0].replace(/[.,;:!?]+$/, '');
+// link — 런 입력의 첫 http(s) 주소(기획 원문 등). 카드가 그 런 꼬리표(티켓)를 이 주소로 잇는다
+export type RunLink = { id: number; title: string; tag?: string; link?: string; state: Run['state']; now?: string; created: number; actions: ReachAction[]; issue?: ReachRepo; path?: string; acting?: Act; last?: Act };
 // 런이 지금 하는 노드 — 사람 확인이 먼저
 const nowOf = (r: Run) => {
   const at = (st: string[]) => r.steps.filter(s => st.includes(r.nodes[s.key]?.state)).map(s => s.title);
@@ -204,9 +207,9 @@ export async function deployBoard(file = DEPLOY_FILE) {
     }));
     // 레포 상태(git 이 무겁다)는 이슈 줄 · 목록에 없는 런 일에만
     const repos = at.some(a => a && (a.via || (!a.id && !a.old))) ? await runRepos(full) : [];
-    const tag = runTag(full), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) }));
+    const tag = runTag(full), url = inputLink(full.input), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) }));
     const acting = done.find(a => a.code === null), last = done.find(a => a.code !== null);
-    const link = (issue?: ReachRepo, path?: string): RunLink => ({ id: full.id, title: runTitle(full), ...(tag ? { tag } : {}), state: full.state, ...(path ? { path } : {}),
+    const link = (issue?: ReachRepo, path?: string): RunLink => ({ id: full.id, title: runTitle(full), ...(tag ? { tag } : {}), ...(url ? { link: url } : {}), state: full.state, ...(path ? { path } : {}),
       ...(full.state === 'done' ? {} : { now: nowOf(full) }), created: full.created, actions: full.state === 'done' ? runActions(full) : [], ...(issue ? { issue } : {}),
       ...(acting ? { acting } : {}), ...(last ? { last } : {}) });
     const loose: ReachRepo[] = [];
