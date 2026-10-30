@@ -7,6 +7,7 @@ import { Icon } from './ui.tsx';
 import { openMenu } from './Menu.tsx';
 import { toast } from './copy.ts';
 import { DOT, DRAG_PANE, DRAG_WS, Kind, REMOTE, STATUS, carrying, paneText, useMove, usePaneMenu, useTabMenu, useWorkspaceMenu } from './herdrUi.tsx';
+import { AskCard, AskLine, isAgent, useHoverCard } from './Asks.tsx';
 
 // 상태 표시 — 모든 pane 의 작업 중·승인 대기·끝남 수. 줄에 마우스를 올리면(키보드는 Tab) 그 상태의 pane 목록이 오른쪽에 뜨고, 누르면 그 pane 으로.
 // 사이드바가 overflow-hidden 이라 목록은 fixed 로 띄운다. 목록도 이 div 의 자식이라 줄에서 목록으로 옮겨 가도 닫히지 않는다.
@@ -14,7 +15,7 @@ export function Legend({ data }: { data: HerdrView }) {
   const [at, setAt] = useState<{ s: string; left: number; bottom: number } | null>(null);
   const show = (s: string) => (e: React.SyntheticEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setAt({ s, left: Math.min(r.right, innerWidth - 296), bottom: innerHeight - r.bottom });   // 좁은 화면이면 화면 안으로 당긴다
+    setAt({ s, left: Math.min(r.right, innerWidth - 328), bottom: innerHeight - r.bottom });   // 좁은 화면이면 화면 안으로 당긴다
   };
   return (
     <div className="m-1.5 mt-0 shrink-0 border-t px-2.5 pt-2 pb-1" onMouseLeave={() => setAt(null)}
@@ -42,7 +43,7 @@ function StatusList({ data, s, style, onPick }: { data: HerdrView; s: string; st
     return w ? [{ p, w, top: childOf(w) ?? w }] : [];
   });
   return (
-    <div style={style} className="fixed z-50 max-h-[70vh] w-72 overflow-y-auto pl-1">
+    <div style={style} className="fixed z-50 max-h-[70vh] w-80 overflow-y-auto pl-1">
       <div className="rounded-md border bg-popover p-1 shadow-lg">
         {wss.filter(t => rows.some(r => r.top === t)).map(t => (
           <div key={t.workspace_id}>
@@ -54,6 +55,7 @@ function StatusList({ data, s, style, onPick }: { data: HerdrView; s: string; st
                 <a key={p.id} href={`#/herdr/${p.id}`} onClick={onPick} className="block rounded px-2 py-1 hover:bg-muted focus-visible:bg-muted focus-visible:outline-none">
                   <span className="flex items-center gap-2 text-xs"><Kind agent={p.agent} /><span className="truncate">{paneText(p)}</span></span>
                   {where && <span className="block truncate pl-5.5 text-[0.6875rem] text-muted-foreground">{where}</span>}
+                  <AskLine p={p} className="pl-5.5" />
                 </a>
               );
             })}
@@ -214,15 +216,19 @@ function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrVie
   const toggle = () => setPick(v => { try { sessionStorage.setItem(key, v ? 'closed' : 'open'); } catch { /* 저장 안 됨 */ } return !v; });
   const open = depth > 0 || pick;
   const mine = panes.some(p => p.id === sel);
+  // 접힌 줄에 올리면 상태가 있는(작업 중·승인 대기·끝남) 에이전트 pane 의 시킨 말 카드 — 펼치면 pane 줄마다 따로 뜬다
+  const card = useHoverCard(), busy = panes.filter(p => isAgent(p) && p.status && STATUS[p.status] && p.status !== 'idle').slice(0, 3);
   return (
-    // 펼친 워크스페이스는 카드로 묶고, 접힌 건 같은 높이의 한 줄. 하위(링크 워크트리)는 왼쪽 안내선 아래로 들인다.
-    // 하위(링크 워크트리)는 처음부터 펼쳐 둔다. 위 워크스페이스를 펼치면 접어 둔 하위도 다시 다 펼친다(하나씩 누르지 않게).
+    <>
+    {/* 펼친 워크스페이스는 카드로 묶고, 접힌 건 같은 높이의 한 줄. 하위(링크 워크트리)는 왼쪽 안내선 아래로 들인다.
+    하위(링크 워크트리)는 처음부터 펼쳐 둔다. 위 워크스페이스를 펼치면 접어 둔 하위도 다시 다 펼친다(하나씩 누르지 않게). */}
     <details open={open} className={depth ? 'ml-4 border-l pl-1' : 'rounded-lg open:my-1.5 open:bg-card open:shadow-sm open:ring-1 open:ring-border'}
       onToggle={e => { if (e.target === e.currentTarget && e.currentTarget.open) e.currentTarget.querySelectorAll('details').forEach(d => { d.open = true; }); }}>
       <summary draggable onDragStart={e => { e.dataTransfer.setData(DRAG_WS, w.workspace_id); e.dataTransfer.effectAllowed = 'move'; }}
         onDragOver={e => { const k = carrying(e, DRAG_PANE) ? 'pane' : carrying(e, DRAG_WS) ? 'ws' : null; if (!k) return; e.preventDefault(); setOver(k); }}
         onDragLeave={() => setOver(null)}
         onContextMenu={e => openMenu(e, wsMenu(w))}
+        onMouseEnter={!open && busy.length ? card.enter : undefined} onMouseLeave={card.leave}
         onClick={e => { if (depth) return; e.preventDefault(); toggle(); }}   // 맨 위 단은 React 가 쥔다 — 탭에 기억하려고
         onDrop={e => {
           e.preventDefault(); setOver(null);
@@ -252,6 +258,8 @@ function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrVie
         {children}
       </div>
     </details>
+    {card.at && !open && <AskCard panes={busy} style={card.at} />}
+    </>
   );
 }
 
@@ -266,10 +274,13 @@ function State({ v }: { v: string }) {
 }
 
 function PaneRow({ p, on, depth, text }: { p: HPane; on: boolean; depth: number; text: string }) {
-  const menu = usePaneMenu();
+  const menu = usePaneMenu(), card = useHoverCard(), agent = isAgent(p);
   return (
-    <a href={`#/herdr/${p.id}`} title={`${p.agent ?? '셸'} · ${p.id} · ${p.cwd}`} draggable
-      onDragStart={e => { e.dataTransfer.setData(DRAG_PANE, p.id); e.dataTransfer.effectAllowed = 'move'; }}
+    <>
+    {/* 에이전트 pane 은 올리면 시킨 말 카드 — 브라우저 말풍선(title)과 겹치지 않게 그때는 title 을 뺀다 */}
+    <a href={`#/herdr/${p.id}`} title={agent ? undefined : `${p.agent ?? '셸'} · ${p.id} · ${p.cwd}`} draggable
+      onDragStart={e => { card.leave(); e.dataTransfer.setData(DRAG_PANE, p.id); e.dataTransfer.effectAllowed = 'move'; }}
+      onMouseEnter={agent ? card.enter : undefined} onMouseLeave={card.leave}
       onContextMenu={e => openMenu(e, menu(p))}
       className={`mx-1 flex h-8 items-center gap-2 rounded-lg border pr-2 text-xs ${depth ? 'ml-5 pl-2' : 'ml-4 pl-2'} ${on ? 'border-primary/70 bg-accent font-medium text-accent-foreground shadow-sm' : 'border-transparent hover:bg-muted/70'}`}>
       <span className={`size-2 shrink-0 rounded-full ${DOT[p.status ?? ''] ?? 'bg-muted-foreground/25'} ${p.status === 'working' || p.status === 'blocked' ? 'animate-pulse' : ''}`} />
@@ -277,5 +288,7 @@ function PaneRow({ p, on, depth, text }: { p: HPane; on: boolean; depth: number;
       <span className={`truncate ${p.agent || on ? '' : 'text-muted-foreground'}`}>{text}</span>
       {p.status === 'blocked' && <span className="ml-auto shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[0.625rem] font-semibold text-amber-700 dark:text-amber-400">승인 대기</span>}
     </a>
+    {card.at && <AskCard panes={[p]} style={card.at} />}
+    </>
   );
 }

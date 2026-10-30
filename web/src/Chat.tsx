@@ -6,6 +6,7 @@ import { Empty, Md } from './ui.tsx';
 import { Ansi } from './ansi.tsx';
 import { parseMenu } from './screenMenu.ts';
 import { Kind } from './herdrUi.tsx';
+import { AskBand, useAsksOpen } from './Asks.tsx';
 
 type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; result?: string; error?: boolean; at?: number };
 
@@ -48,7 +49,9 @@ export function Chat({ p }: { p: HPane }) {
   const box = useRef<HTMLDivElement>(null), stick = useRef(true), keep = useRef<number | null>(null);
   const [older, setOlder] = useState<Item[]>([]), [olderMore, setOlderMore] = useState<boolean | null>(null), [loading, setLoading] = useState(false);
   const [away, setAway] = useState(false);   // 아래에서 멀리 올라가 있으면 「맨 아래로」 버튼
+  const [asks, toggleAsks] = useAsksOpen(p.id);
   const toBottom = () => { const el = box.current; if (!el) return; stick.current = true; el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); };
+  const toAsk = (at: number) => { stick.current = false; box.current?.querySelector(`[data-at="${at}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
   useEffect(() => { setOlder([]); setOlderMore(null); }, [p.id, data?.file]);
   const more = older.length ? !!olderMore : !!data?.more;
   const loadOlder = () => {
@@ -66,6 +69,7 @@ export function Chat({ p }: { p: HPane }) {
   return (
     <div ref={box} onScroll={e => { const el = e.currentTarget, gap = el.scrollHeight - el.scrollTop - el.clientHeight; stick.current = gap < 80; setAway(gap > 400); if (el.scrollTop < 60) loadOlder(); }}
       className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-xl border bg-card px-4 py-4">
+      {asks && <AskBand items={[...older, ...(data?.items ?? [])]} jump={toAsk} close={toggleAsks} />}
       {!data ? <Empty>불러오는 중…</Empty> : !data.items.length && <Empty>아직 대화가 없다(새 세션이거나 기록을 못 찾음 — 「원래 화면」 으로 본다)</Empty>}
       {more && (
         <button onClick={loadOlder} disabled={loading} className="mx-auto block rounded-full border bg-muted/50 px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60">
@@ -125,11 +129,11 @@ const Avatar = ({ agent }: { agent: string | null }) =>
 // 새로 붙은 항목만 그린다 — 다시 받은 목록에서 바뀌지 않은 항목은 TanStack Query 가 같은 객체로 남겨 둔다.
 const ChatItem = memo(function ChatItem({ it, agent }: { it: Item; agent: string | null }) {
   if (it.kind === 'user') return (
-    <div className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md border border-primary/20 bg-accent px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap text-foreground shadow-xs">{it.text}</div>
+    <div data-at={it.at} className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md border border-primary/20 bg-accent px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap text-foreground shadow-xs">{it.text}</div>
   );
   // 다른 Claude 세션이 SendMessage 로 보낸 말 — 사람 입력(오른쪽)과 헷갈리지 않게 왼쪽에 점선 말풍선과 보낸 세션 이름으로
   if (it.kind === 'peer') return (
-    <div className="ml-9 w-fit max-w-[82%] rounded-2xl rounded-tl-md border border-dashed border-primary/40 bg-card px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap">
+    <div data-at={it.at} className="ml-9 w-fit max-w-[82%] rounded-2xl rounded-tl-md border border-dashed border-primary/40 bg-card px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap">
       <div className="mb-0.5 text-[0.6875rem] font-semibold text-primary">{it.from ?? '다른 Claude 세션'} 에게서 받은 메시지</div>{it.text}
     </div>
   );

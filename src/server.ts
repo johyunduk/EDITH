@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
 import { backgroundTasks, chat, checkAlive, claudeStarted, codexUsage, remoteControl, taskOutput } from './chat.ts';
+import { lastAsks } from '../web/src/asks.ts';
 import { commands, findFiles } from './complete.ts';
 import { firstLine } from './sh.ts';
 import { branches, diff } from './diff.ts';
@@ -364,7 +365,7 @@ export function serve(port: number) {
         setTimeout(restart, 200);   // 답이 나간 뒤
         return;
       }
-      const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote)$/);
+      const h = decodeURIComponent(path).match(/^\/api\/herdr\/panes\/(w[0-9A-Za-z]+:p[0-9A-Za-z]+)\/(stream|prompt|keys|input|chat|live|history|split|close|start|choose|commands|files|move|focus|diff|branch|usage|summary|tasks|remote|asks)$/);
       if (h?.[2] === 'stream' && req.method === 'GET')
         return await streamPane(req, res, h[1], { control: url.searchParams.get('mode') === 'control', takeover: url.searchParams.has('takeover') });
       if (h?.[2] === 'live' && req.method === 'GET') return reply(res, 200, await live(h[1]));
@@ -415,6 +416,15 @@ export function serve(port: number) {
         const before = url.searchParams.has('before') ? Math.max(0, Number(url.searchParams.get('before')) || 0) : undefined;   // 이전 대화
         const c = chat(p.id, p.agent, p.cwd, p.title, others, before);
         return reply(res, 200, { file: c.file && basename(c.file), items: c.items, more: c.more });
+      }
+      // 시킨 말 — 마지막에 내가 친 말과 답 첫 줄(web/src/asks.ts). 사이드바 카드·상태 목록·알림함이 pane 에 들어가기 전에 본다.
+      // ponytail: 대화와 같은 끝 600 항목 안에서만 찾는다 — 그보다 길게 혼자 돈 세션은 「시킨 말 없음」, 불편하면 older() 로 더 거슬러 읽는다
+      if (h?.[2] === 'asks' && req.method === 'GET') {
+        const snap = await snapshot(), p = snap.panes.find(p => p.id === h[1]);
+        if (!p) return reply(res, 404, 'pane 없음');
+        if (p.agent !== 'claude' && p.agent !== 'codex') return reply(res, 200, { asks: [] });
+        const others = snap.panes.filter(x => x.agent === p.agent && x.cwd === p.cwd && x.id !== p.id).map(x => x.title);
+        return reply(res, 200, lastAsks(chat(p.id, p.agent, p.cwd, p.title, others).items));
       }
       if (h && req.method === 'POST') {
         const b = await body(req) as { text?: unknown; key?: unknown; scroll?: unknown };
