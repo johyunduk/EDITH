@@ -8,6 +8,7 @@ import { openMenu } from './Menu.tsx';
 import { toast } from './copy.ts';
 import { DOT, DRAG_PANE, DRAG_WS, Kind, REMOTE, STATUS, carrying, paneText, useMove, usePaneMenu, useTabMenu, useWorkspaceMenu } from './herdrUi.tsx';
 import { AskCard, AskLine, isAgent, useHoverCard } from './Asks.tsx';
+import { groupInOrder, shortName, urgentOf } from './wsGroups.ts';
 
 // 상태 표시 — 모든 pane 의 작업 중·승인 대기·끝남 수. 줄에 마우스를 올리면(키보드는 Tab) 그 상태의 pane 목록이 오른쪽에 뜨고, 누르면 그 pane 으로.
 // 사이드바가 overflow-hidden 이라 목록은 fixed 로 띄운다. 목록도 이 div 의 자식이라 줄에서 목록으로 옮겨 가도 닫히지 않는다.
@@ -194,16 +195,59 @@ const parentOf = (wss: HWorkspace[]) => {
 
 // 사이드바 — herdr 와 같은 레포 트리. 레포 워크스페이스 밑에 그 레포의 링크 워크트리를 붙이고, 각 아래에 pane.
 // 레포 워크스페이스가 안 열린 워크트리는 맨 위 단에 둔다. 순서는 herdr 번호.
+// 맨 위 단은 이름의 「·」 앞으로 묶는다(wsGroups.ts — 「본부·운영」 은 묶음 「본부」 밑 「운영」). 둘 이상일 때만 묶음 줄이 생긴다.
 export function Tree({ data, sel }: { data: HerdrView; sel?: string }) {
   const wss = [...data.workspaces].sort((a, b) => a.number - b.number), childOf = parentOf(wss);
-  return wss.filter(w => !childOf(w)).map(w => (
-    <Node key={w.workspace_id} w={w} data={data} sel={sel} depth={0}>
+  const node = (w: HWorkspace, name?: string) => (
+    <Node key={w.workspace_id} w={w} name={name} data={data} sel={sel} depth={0}>
       {wss.filter(c => childOf(c) === w).map(c => <Node key={c.workspace_id} w={c} data={data} sel={sel} depth={1} />)}
     </Node>
-  ));
+  );
+  return groupInOrder(wss.filter(w => !childOf(w)), w => w.label).map(b => b.group
+    ? <Group key={`group:${b.group}`} name={b.group} items={b.items} wss={wss} sel={sel} data={data}>
+        {b.items.map(w => node(w, shortName(w.label)))}
+      </Group>
+    : node(b.items[0]));
 }
 
-function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrView; sel?: string; depth: number; children?: ReactNode[] }) {
+// 묶음 줄 — 누른 대로 접고 편다(처음엔 펼침 — 안의 워크스페이스는 각자 접혀 있다). 탭마다 기억(sessionStorage, 워크스페이스와 같게).
+// 줄에는 안의 워크스페이스 수와 가장 급한 상태. 워크스페이스를 묶음 줄에 놓으면 그 묶음 맨 앞으로.
+function Group({ name, items, wss, sel, data, children }: {
+  name: string; items: HWorkspace[]; wss: HWorkspace[]; sel?: string; data: HerdrView; children: ReactNode[];
+}) {
+  const move = useMove();
+  const [over, setOver] = useState(false);
+  const key = `edith.wsgroup.${name}`;
+  const [shut, setShut] = useState(() => { try { return sessionStorage.getItem(key) === 'closed'; } catch { return false; } });
+  const toggle = () => setShut(v => { try { sessionStorage.setItem(key, v ? 'open' : 'closed'); } catch { /* 저장 안 됨 */ } return !v; });
+  // 하위 워크트리 워크스페이스까지 — 접혀 있어도 안에서 승인 대기가 나면 묶음 줄에 보이게
+  const inside = new Set(items.map(w => w.workspace_id));
+  const all = wss.filter(w => inside.has(w.workspace_id) || (w.worktree?.is_linked_worktree && items.some(i => i.worktree?.repo_key === w.worktree?.repo_key)));
+  const state = urgentOf(all.map(w => w.agent_status));
+  const mine = data.panes.some(p => p.id === sel && all.some(w => w.workspace_id === p.workspace));
+  return (
+    <details open={!shut} className="my-0.5">
+      <summary onClick={e => { e.preventDefault(); toggle(); }}
+        onDragOver={e => { if (!carrying(e, DRAG_WS)) return; e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={e => {
+          e.preventDefault(); setOver(false);
+          const ws = e.dataTransfer.getData(DRAG_WS);
+          if (ws && ws !== items[0].workspace_id) void move(`/api/herdr/workspaces/${ws}/move`, { before: items[0].workspace_id });
+        }}
+        title={`묶음 「${name}」 — 이름이 「${name}·」 로 시작하는 워크스페이스. 워크스페이스를 여기 놓으면 묶음 맨 앞으로`}
+        className={`flex h-7 cursor-pointer list-none items-center gap-1.5 rounded-md px-1.5 text-[0.75rem] select-none hover:bg-muted/70 [&::-webkit-details-marker]:hidden ${over ? 'shadow-[inset_0_2px_0_var(--primary)]' : ''}`}>
+        <svg viewBox="0 0 16 16" className="size-3 shrink-0 text-muted-foreground/60 transition-transform [[open]>summary>&]:rotate-90" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 4 4 4-4 4" /></svg>
+        <span className={`truncate font-semibold tracking-wide ${mine ? 'text-foreground' : 'text-muted-foreground'}`}>{name}</span>
+        <span className="min-w-4 rounded-full bg-muted px-1 text-center text-[0.625rem] leading-4 text-muted-foreground tabular-nums">{items.length}</span>
+        <span className="ml-auto flex shrink-0 items-center pl-1">{state && <State v={state} />}</span>
+      </summary>
+      <div className="ml-2 border-l pl-1">{children}</div>
+    </details>
+  );
+}
+
+function Node({ w, name, data, sel, depth, children }: { w: HWorkspace; name?: string; data: HerdrView; sel?: string; depth: number; children?: ReactNode[] }) {
   const move = useMove(), wsMenu = useWorkspaceMenu(data), tabMenu = useTabMenu();
   const [over, setOver] = useState<'pane' | 'ws' | null>(null);
   const tabs = data.tabs.filter(t => t.workspace_id === w.workspace_id).sort((a, b) => a.number - b.number);
@@ -239,7 +283,7 @@ function Node({ w, data, sel, depth, children }: { w: HWorkspace; data: HerdrVie
         title="끌어서 순서 바꾸기 · pane 을 여기 놓으면 이 워크스페이스의 새 탭으로"
         className={`flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-1.5 text-[0.8125rem] select-none hover:bg-muted/70 [&::-webkit-details-marker]:hidden ${over === 'ws' ? 'shadow-[inset_0_2px_0_var(--primary)]' : ''} ${over === 'pane' ? 'bg-primary/15' : ''}`}>
         <svg viewBox="0 0 16 16" className="size-3 shrink-0 text-muted-foreground/60 transition-transform [[open]>summary>&]:rotate-90" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 4 4 4-4 4" /></svg>
-        <span className={`truncate ${mine ? 'font-semibold text-foreground' : 'font-medium text-foreground/90'}`}>{w.label}</span>
+        <span title={name && w.label} className={`truncate ${mine ? 'font-semibold text-foreground' : 'font-medium text-foreground/90'}`}>{name ?? w.label}</span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
           {w.agent_status && w.agent_status !== 'idle' && STATUS[w.agent_status] && <State v={w.agent_status} />}
           {kids > 0 && <span className="min-w-4 rounded-full bg-muted px-1 text-center text-[0.625rem] leading-4 text-muted-foreground tabular-nums">{kids}</span>}
