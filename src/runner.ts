@@ -777,11 +777,7 @@ async function ensureClaude(r: Run, track: string, want: string[]): Promise<stri
   try {
     if (!o.pane) o.pane = track && r.pane && await find(r.pane) ? await split(r.pane, 'right') : await newWorkspace(`▶ ${r.name} #${r.id}${track ? ` · ${track}` : ''}`, r.cwd);
     saveRun(r);
-    // /exit 뒤 herdr 가 Claude 가 꺼진 것을 본 뒤에도 셸이 프롬프트로 돌아오기까지 잠깐 「셸이 아니다」(agent_pane_busy) — 15초까지 다시
-    for (let i = 0; ; i++) {
-      try { await start(o.pane, 'claude', ['--add-dir', dirOf(r.id), ...want]); break; }
-      catch (e) { if (i >= 15 || !/agent_pane_busy/.test(String(e))) throw e; await sleep(1000); }
-    }
+    await start(o.pane, 'claude', ['--add-dir', dirOf(r.id), ...want]);
     o.claude = want;
     return null;
   } catch (e) {

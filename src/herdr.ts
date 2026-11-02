@@ -414,7 +414,11 @@ export function ratio(tab: string, path: unknown, value: unknown) {
 // args 는 그 에이전트 명령에 붙일 인자(실행기가 Claude 에 --add-dir 을 넘긴다).
 export async function start(id: string, kind: string, args: string[] = []) {
   if (kind !== 'claude' && kind !== 'codex') throw new Error(`띄울 수 없는 종류: ${kind}`);
-  await api('agent.start', { name: `${kind}-${Date.now().toString(36)}`, kind, pane_id: id, timeout_ms: 60000, ...(args.length ? { args } : {}) });
+  // 셸이 프롬프트에 오기 전(새 워크스페이스의 셸 설정 · /exit 직후)엔 「셸이 아니다」(agent_pane_busy) — 15초까지 다시
+  for (let i = 0; ; i++) {
+    try { await api('agent.start', { name: `${kind}-${Date.now().toString(36)}`, kind, pane_id: id, timeout_ms: 60000, ...(args.length ? { args } : {}) }); break; }
+    catch (e) { if (i >= 15 || !/agent_pane_busy/.test(String(e))) throw e; await new Promise(r => setTimeout(r, 1000)); }
+  }
   for (const t0 = Date.now(); Date.now() - t0 < 60_000; await new Promise(r => setTimeout(r, 1000)))
     if (await ready(id).catch(() => false)) return;
   throw new Error(`${kind} 가 60초 안에 준비되지 않았다`);
