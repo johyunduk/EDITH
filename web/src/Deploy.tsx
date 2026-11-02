@@ -365,10 +365,11 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
   };
   // 운영까지 다 나갔으면 「정리」, 배포 조치를 아직 안 뽑았으면 「배포 조치 뽑기」(공방 훅이 있을 때) — 뽑는 동안 · 실패는 그 자리에
   const finished = flagsClean(g, v), pulling = g.items.filter(x => x.prep?.code === null), failed = pulling.length ? [] : g.items.filter(x => x.prep?.code);
-  const blank = !tasks.length && !g.items.some(x => x.block), stale = g.items.some(x => x.state?.stale), glow = { boxShadow: `0 4px 12px ${mix(30)}` };
+  // 안 뽑은 것은 레포마다 — 한 레포만 뽑은 묶음에서 나머지가 비어 있는 걸 가리지 않게(뽑으면 할 일이 없어도 「코드 배포만」 한 줄이 생긴다)
+  const unpicked = g.items.filter(x => !x.block && !x.tasks.length), blank = unpicked.length === g.items.length, stale = g.items.some(x => x.state?.stale), glow = { boxShadow: `0 4px 12px ${mix(30)}` };
   // 아직 바뀌는 중 — 커밋이 없는 레포가 있거나 그 안건을 다루는 런이 안 끝났다. 지금 뽑으면 곧 낡으니 뽑기 단추를 숨긴다(패널의 「뽑기」 는 그대로)
   const changing = g.items.some(x => x.state?.empty || (x.runs ?? []).some(r => r.state !== 'done' && r.state !== 'dropped'));
-  const pull = () => pullPrep(ids, () => qc.invalidateQueries({ queryKey: ['deploy'] }));
+  const pull = (xs = ids) => pullPrep(xs, () => qc.invalidateQueries({ queryKey: ['deploy'] }));
   return (
     <Bracketed label={g.tag}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -380,8 +381,8 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
         <span className="ml-auto flex flex-wrap items-center gap-2">
           {failed.length > 0 && <span className="max-w-72 truncate text-xs text-rose-700 dark:text-rose-300" title={failed.map(x => `${repoName(x.repo)} — ${x.prep!.note ?? `끝 코드 ${x.prep!.code}`}`).join('\n')}>뽑기 실패 — {failed[0].prep!.note ?? `끝 코드 ${failed[0].prep!.code}`}</span>}
           {pulling.length > 0 && <Button size="sm" variant="outline" className="h-8 text-primary" disabled><span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-current" />뽑는 중 · 레포 {pulling.length}개</Button>}
-          {v.hooks.prep && !pulling.length && blank && !finished && !changing && <><span className="text-xs text-amber-800 dark:text-amber-300">아직 안 뽑음 — 레포 {g.items.length}개</span>
-            <Button size="sm" className="h-8 font-bold" style={glow} onClick={() => void pull()}>배포 조치 뽑기</Button></>}
+          {v.hooks.prep && !pulling.length && unpicked.length > 0 && !finished && !changing && <><span className="text-xs text-amber-800 dark:text-amber-300">아직 안 뽑음 — {blank ? `레포 ${g.items.length}개` : unpicked.map(x => repoName(x.repo)).join(' · ')}</span>
+            <Button size="sm" className="h-8 font-bold" style={glow} onClick={() => void pull(unpicked.map(x => x.id))}>배포 조치 뽑기</Button></>}
           {v.hooks.prep && !pulling.length && !blank && stale && !changing && <Button size="sm" variant="outline" className="h-8 text-primary" onClick={() => void pull()}>다시 뽑기</Button>}
           <DateField g={g} all={all} onPick={date => void send('edit', { ids, date })} />
           {(!blank || !v.hooks.prep || finished || changing) && <Button size="sm" variant="outline" className="h-8 text-primary" aria-haspopup="dialog" onClick={onPanel}>{tasks.length ? `배포 조치 ${tasks.filter(t => t.done).length}/${tasks.length}` : '배포 조치 없음'}</Button>}
