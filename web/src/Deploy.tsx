@@ -44,6 +44,13 @@ const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60_000); re
 const repoName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 const label = (ref: string) => ref.replace(/^origin\//, '');
 const reached = (r?: Reach) => r?.state === 'in' || r?.state === 'content';
+// 같이 올릴 수 있는 것 — 미루지 않은 다른 카드의 같은 레포가 같은 환경(i)을 기다린다. ok = 앞 환경에 다 들어가 지금 같이 고를 수 있다
+function partners(x: Item, i: number, groups: Group[]) {
+  return groups.filter(g => !g.deferred).flatMap(g => g.items.filter(y => y.id !== x.id && y.repo === x.repo && !y.done).flatMap(y => {
+    const e = y.state?.envs[i];
+    return i > 0 && e && e.state !== 'missing' && !reached(e) ? [{ y, g, ok: reached(y.state!.envs[i - 1]) }] : [];
+  }));
+}
 const TICKET = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 const tickets = (g: Group) => g.agenda ? [g.agenda] : [...new Set(g.items.flatMap(x => x.notes.join(' ').match(TICKET) ?? []))].slice(0, 4);
 // 티켓 → 원문 주소 — 그 꼬리표로 돈 런의 입력 주소(src/deploy.ts inputLink). 꼬리표가 안 맞으면(런이 돈 뒤 티켓 접두가 바뀌는 등) 안건 키이거나 티켓이 하나뿐인
@@ -81,7 +88,7 @@ function groupsOf(items: Item[]): Group[] {
 
 // ── 단계 — 처음 안 끝난 칸이 「지금 차례」(빛나는 고리). 런이 그 브랜치에서 도는 동안은 맨 앞 「작업」 칸이 하는 중이라 차례를 매기지 않는다 ──
 type SState = 'done' | 'partial' | 'check' | 'next' | 'todo' | 'work';
-type Step = { key: string; name: string; state: SState; reach?: Reach; note?: string; act?: boolean; conflicts?: number; env?: string; last?: boolean; todo?: string };   // todo — 그 환경 남은 배포 조치
+type Step = { key: string; name: string; state: SState; reach?: Reach; note?: string; act?: boolean; conflicts?: number; ready?: boolean; env?: string; last?: boolean; todo?: string };   // todo — 그 환경 남은 배포 조치
 const envState = (e: Reach): SState => reached(e) ? 'done' : e.state === 'partial' ? 'partial' : e.state === 'subject' ? 'check' : 'todo';
 function mark(all: Step[]) {
   if (all.some(s => s.state === 'work')) return all;
@@ -101,7 +108,7 @@ function itemSteps(x: Item, envs: Board['envs']): Step[] {
     ...es.map(({ e, r }) => {
       // 들어가기 전이면 배포 전, 들어간 뒤면 배포 후 할 일
       const st = envState(r), n = leftIn([x], e.name, st === 'done' ? '후' : '전').length;
-      return { key: e.ref, name: e.name, state: st, reach: r, conflicts: r.conflicts, env: e.name, last: e === envs.at(-1), ...(n ? { todo: `배포 ${st === 'done' ? '후' : '전'} ${n} 남음` } : {}) };
+      return { key: e.ref, name: e.name, state: st, reach: r, conflicts: r.conflicts, ready: r.prep?.ready, env: e.name, last: e === envs.at(-1), ...(n ? { todo: `배포 ${st === 'done' ? '후' : '전'} ${n} 남음` } : {}) };
     }),
   ]);
 }
@@ -164,7 +171,7 @@ const leads = (x: Item) => {
 
 export function DeployPage() {
   const qc = useQueryClient(), q = useQuery({ queryKey: ['deploy'], queryFn: () => get<Board>('/api/deploy'), refetchInterval: q => q.state.data?.items.some(x => x.prep?.code === null) ? 3000 : 30_000 });
-  const [filter, setFilter] = useState<Filter>('all'), [byDate, setByDate] = useState(false), [find, setFind] = useState('');
+  const [filter, setFilter] = useState<Filter>('all'), [byDate, setByDate] = useState(true), [find, setFind] = useState('');
   const [panel, setPanel] = useState<string | null>(null), [pick, setPick] = useState<Pick | null>(null), [push, setPush] = useState<{ g: Group; env: string; items: Item[] } | null>(null);
   const [files, setFiles] = useState<{ title: string; list: string[] } | null>(null), [adding, setAdding] = useState(false), [fetching, setFetching] = useState(false), [archive, setArchive] = useState(false), [old, setOld] = useState<Group | null>(null);
   const [clean, setClean] = useState<{ ids: string[]; title: string } | null>(null);
@@ -300,7 +307,7 @@ export function DeployPage() {
       {archive && <DoneSheet onOpen={setOld} onClose={() => setArchive(false)} />}
       {old && <Panel g={old} v={v} all={all} send={async (p, b, ok) => { const r = await send(p, b, ok); if (r) setOld(null); return r; }} onClose={() => setOld(null)} />}
       {pick && <ActionDialog pick={pick} onClose={() => setPick(null)} onStarted={() => setPressed(ps => [...ps.filter(x => x.run !== pick.run.id), { run: pick.run.id, label: pick.action.label, at: Date.now(), ...(pick.repo ? { repo: pick.repo } : {}) }])} />}
-      {push && <PushDialog g={push.g} env={push.env} items={push.items} prep={v.hooks.prep} prod={push.env === v.envs.at(-1)!.name} onClose={() => setPush(null)} />}
+      {push && <PushDialog g={push.g} env={push.env} items={push.items} groups={all} order={shown.flatMap(g => g.items.map(x => x.id))} prep={v.hooks.prep} prod={push.env === v.envs.at(-1)!.name} onClose={() => setPush(null)} />}
       {files && <Sheet title={files.title} onClose={() => setFiles(null)}><ul className="space-y-1 font-mono text-xs">{files.list.map(f => <li key={f}>{f}</li>)}</ul></Sheet>}
       {adding && <AddSheet v={v} onClose={() => setAdding(false)} send={send} />}
       {clean && <CleanSheet ids={clean.ids} title={clean.title} onClose={() => setClean(null)} />}
@@ -334,7 +341,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
     const i = v.envs.findIndex(e => e.name === s.env), e = x.state?.envs[i];
     if (!s.act || i <= 0 || !e) return null;
     const prod = i === v.envs.length - 1;   // 운영 — 누르면 파이프라인이 바로 돈다(확인 창이 서버 strictCheck 를 보인다)
-    const env = s.env!, ref = v.envs[i].ref, clash = e.conflicts ?? 0, p = e.prep, ready = !!p?.ready, glow = { boxShadow: `0 4px 12px ${mix(30)}` };
+    const env = s.env!, ref = v.envs[i].ref, clash = e.conflicts ?? 0, p = e.prep, ready = !!p?.ready, glow = { boxShadow: `0 4px 12px ${mix(30)}` }, pair = partners(x, i, all).filter(q => q.ok);
     return (
       <div className="flex flex-col items-center">
         {clash > 0 && p && (
@@ -352,6 +359,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
             : '올리기 직전에 origin 을 다시 받고 앞 환경 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋을 본다 — 걸리면 올리지 않는다'}>
           <Button size="sm" variant={prod ? 'destructive' : 'default'} className="mt-1 h-8 font-bold shadow-md" style={clash && !ready || prod ? undefined : glow} disabled={clash > 0 && !ready} onClick={() => onPush(env, x)}>{env} 에 올리기 ›</Button>
         </Tip>
+        {pair.length > 0 && <span className="mt-1.5 max-w-44 rounded-xl border border-primary/50 bg-primary/7 px-2 py-0.5 text-center text-[0.6875rem] leading-snug font-bold text-primary" title="같은 레포가 다른 안건에서도 이 환경을 기다린다 — 올리기 창에서 같이 골라 push 한 번에 올린다">⇄ {pair.map(p => p.y.ticket ?? p.g.tag).join(' · ')} 와 같이 올릴 수 있다</span>}
       </div>
     );
   };
@@ -513,7 +521,7 @@ function Note({ s, name, onFiles }: { s: Step; name: string; onFiles: (x: { titl
   if (e.state === 'content') return <span className={`${cls} text-muted-foreground`} title="커밋 해시는 없지만 변경이 다 들어 있다(스쿼시 · 체리픽 · 다시 만든 머지)">내용 일치 · {at(e.at)}</span>;
   if (e.state === 'partial') return <span className={`${cls} text-amber-800 dark:text-amber-300`}>{e.n}개 중 {e.k}개 · <button type="button" className="underline-offset-2 hover:underline" onClick={() => onFiles({ title: `빠진 파일 — ${name}`, list: e.missing ?? [] })}>빠진 파일</button></span>;
   if (e.state === 'subject') return <span className={`${cls} text-blue-800 dark:text-blue-300`} title={`같은 제목 커밋 「${e.subject}」 이 있는데 변경이 그대로는 맞지 않는다 — 들어간 뒤 고쳐졌을 수 있다`}>제목만 같음 · {at(e.at)}</span>;
-  if (s.conflicts) return <span className={`${cls} text-amber-800 dark:text-amber-300`}>충돌 {s.conflicts}곳</span>;
+  if (s.conflicts) return s.ready ? <span className={`${cls} text-muted-foreground`}>충돌 {s.conflicts}곳 · 풀어 둠</span> : <span className={`${cls} text-amber-800 dark:text-amber-300`}>충돌 {s.conflicts}곳</span>;
   if (s.state === 'next') return <span className={cls}>{s.key === 'via' ? '안건에 합칠 차례' : s.last ? '올리면 운영 배포' : '올릴 차례'}</span>;
   return null;
 }
@@ -843,19 +851,76 @@ function Notes({ x, many, send }: { x: Item; many: boolean; send: Send }) {
   );
 }
 
+// 같이 올리기 칸의 작은 표시
+function Pill({ tone, children }: { tone?: 'warn' | 'bad'; children: ReactNode }) {
+  return <span className={`rounded-full border px-2 py-px text-[0.6875rem] font-semibold ${tone === 'bad' ? 'border-rose-400 bg-rose-500/10 text-rose-800 dark:text-rose-300' : tone === 'warn' ? 'border-amber-400 bg-amber-500/10 text-amber-800 dark:text-amber-300' : 'border-primary/40 text-primary'}`}>{children}</span>;
+}
 // 다음 환경에 올리기 — 레포 줄 하나(서버는 여럿도 받는다 — 모두 먼저 보고 하나라도 안 되면 아무것도 안 올린다)
 // 운영 확인(서버 promoteCheck) — 레포마다 나갈 커밋 · 막는 까닭 · 충돌을 푼 파일에서 빠진 줄 · 남은 배포 전 할 일
 type Check = { env: string; repos: { id: string; name: string; bad?: string; skip?: string; before: string[]; strict?: { commits: string[]; files: number; conflicts: string[]; hard: string[]; lost: { file: string; side: string; line: string }[] } }[] };
-function PushDialog({ g, env, items, prep, prod, onClose }: { g: Group; env: string; items: Item[]; prep: boolean; prod: boolean; onClose: () => void }) {
-  const [busy, setBusy] = useState(false), qc = useQueryClient(), i = items[0]?.state?.envs.findIndex(e => e.name === env) ?? -1;
+function PushDialog({ g, env, items: picked, groups, order, prep, prod, onClose }: { g: Group; env: string; items: Item[]; groups: Group[]; order: string[]; prep: boolean; prod: boolean; onClose: () => void }) {
+  const [busy, setBusy] = useState(false), qc = useQueryClient(), i = picked[0]?.state?.envs.findIndex(e => e.name === env) ?? -1;
+  // 같이 올리기 — 같은 레포를 이 환경에 기다리는 다른 안건(partners). 배포일이 같으면 처음부터 고른다. 고른 것까지 화면 차례대로 보낸다(서버가 그 차례로 잇는다)
+  const [cands] = useState(() => partners(picked[0], i, groups)), date = picked[0]?.date, prevName = picked[0]?.state?.envs[i - 1]?.name ?? '앞 환경';
+  const [pick, setPick] = useState(() => new Set(cands.filter(c => c.ok && !!date && c.y.date === date).map(c => c.y.id)));
+  const pos = (x: Item) => { const k = order.indexOf(x.id); return k < 0 ? order.length : k; };
+  const items = [...picked, ...cands.filter(c => pick.has(c.y.id)).map(c => c.y)].sort((a, b) => pos(a) - pos(b)), key = items.map(x => x.id).join(',');
   const [chk, setChk] = useState<Check | null>(null), [cerr, setCerr] = useState(''), [ack, setAck] = useState(false);
-  useEffect(() => { if (prod) post<Check>('/api/deploy/promote-check', { ids: items.map(x => x.id), env }).then(setChk, (e: Error) => setCerr(e.message)); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!prod) return;
+    let on = true;
+    setChk(null); setCerr('');
+    post<Check>('/api/deploy/promote-check', { ids: items.map(x => x.id), env }).then(r => { if (on) setChk(r); }, (e: Error) => { if (on) setCerr(e.message); });
+    return () => { on = false; };
+  }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const hard = chk ? chk.repos.flatMap(r => [...(r.bad ? [r.bad] : []), ...(r.strict?.hard ?? []).map(h => `${r.name} — ${h}`), ...(r.before.length ? [`${r.name} — ${env} 배포 전 할 일 ${r.before.length}개 체크 안 됨: ${r.before.map(plain).join(' · ')}`] : [])]) : [];
   const lost = chk?.repos.flatMap(r => (r.strict?.lost ?? []).map(l => ({ ...l, repo: r.name }))) ?? [];
   const ready = !prod || (!!chk && !hard.length && (!lost.length || ack));
   const prepped = items.filter(x => x.state?.envs[i]?.conflicts && x.state.envs[i].prep?.ready).map(x => x.state!.envs[i].prep!.branch), before = leftIn(items, env, '전');
   // 배포 조치를 한 번도 안 뽑은 레포 — 할 일이 없는지 모르는 것(뽑으면 할 일이 없어도 「따로 할 일 없음」 한 줄이 생긴다)
   const unpicked = prep ? items.filter(x => !x.block && !x.tasks.length) : [];
+  // 같이 올리기 칸 — 다른 안건마다 한 줄(고르기 · 배포일 · 앞 환경 · 배포 전 할 일 · 안건끼리 충돌)
+  const clash = chk?.repos.some(r => r.bad?.includes('같이 올리는 앞 안건'));
+  const together = cands.length > 0 && <div className="space-y-2 rounded-lg border border-primary/50 bg-primary/6 px-3 py-2.5">
+    <p className="font-semibold text-primary">같이 올리기 — 같은 레포를 {env} 에 기다리는 다른 안건</p>
+    {cands.filter(c => c.ok).map(({ y, g: yg }) => {
+      const left = leftIn([y], env, '전').length, on = pick.has(y.id);
+      return <label key={y.id} className="flex cursor-pointer items-start gap-2.5 rounded-md border bg-card px-2.5 py-2">
+        <input type="checkbox" className="mt-1 accent-[var(--primary)]" disabled={busy} checked={on} onChange={e => setPick(p => { const n = new Set(p); if (e.target.checked) n.add(y.id); else n.delete(y.id); return n; })} />
+        <span className="min-w-0 flex-1 space-y-1">
+          <span className="block">{y.ticket && <span className="mr-1.5 font-mono text-xs text-primary">{y.ticket}</span>}<span className="font-semibold">{yg.tag}</span> <span className="font-mono text-xs text-muted-foreground">{y.branch}</span></span>
+          <span className="flex flex-wrap gap-1.5">
+            <Pill>{y.date ? `배포일 ${y.date === date ? '같음 · ' : ''}${y.date.slice(5).replace('-', '/')}` : '배포일 없음'}</Pill>
+            <Pill>{prevName} 들어감</Pill>
+            <Pill tone={left ? 'warn' : undefined}>{left ? `배포 전 할 일 ${left}개 남음` : '배포 전 할 일 없음'}</Pill>
+            {on && chk && <Pill tone={clash ? 'bad' : undefined}>{clash ? '안건끼리 충돌' : '안건끼리 충돌 없음'}</Pill>}
+          </span>
+        </span>
+      </label>;
+    })}
+    {cands.some(c => !c.ok) && <p className="text-xs text-muted-foreground">아직 {prevName} 에 다 들어가지 않아 같이 못 고르는 안건 {cands.filter(c => !c.ok).length}개 — {cands.filter(c => !c.ok).map(c => c.y.ticket ?? c.g.tag).join(' · ')}</p>}
+    <p className="text-xs text-muted-foreground">배포일이 같은 안건은 처음부터 골라 둔다. 빼면 이 안건만 올린다. 하나라도 걸리면 그 레포는 아무것도 올리지 않는다.</p>
+  </div>;
+  // 운영 확인 — 레포마다 한 칸. 같이 올리는 레포는 이어 붙이는 차례 · 나갈 커밋을 한 칸에 모은다
+  const ref = picked[0]?.state?.envs[i]?.ref ?? env, known = [...picked, ...cands.map(c => c.y)], repoOf = (id: string) => known.find(x => x.id === id)?.repo ?? id, label = (id: string) => { const x = known.find(y => y.id === id); return x?.ticket ?? x?.branch ?? id; };
+  const repoBlock = (rs: Check['repos']) => rs.length > 1 && rs.every(r => r.strict) ? (
+    <div key={rs[0].id} className="space-y-1 rounded-lg border px-3 py-2">
+      <p className="font-semibold">{repoName(repoOf(rs[0].id))} <span className="font-normal text-muted-foreground">— 안건 {rs.length}개 한 번에</span></p>
+      <p className="text-xs text-muted-foreground">바뀌는 파일 {rs.reduce((n, r) => n + r.strict!.files, 0)}개 · {rs.some(r => r.strict!.conflicts.length) ? '충돌을 머지 브랜치에서 푼 커밋 위에' : '충돌 없음'} · push 1번 · 파이프라인 1번</p>
+      <p className="rounded-md bg-muted px-2 py-1 font-mono text-xs">{ref}{rs.map((r, k) => <Fragment key={r.id}> ← <b className="text-primary">{k + 1}. {label(r.id)} 머지</b></Fragment>)} → 마지막 커밋 하나만 push</p>
+      <details open><summary className="cursor-pointer text-xs text-primary">운영으로 나갈 커밋 {rs.reduce((n, r) => n + r.strict!.commits.length, 0)}개</summary>
+        <ul className="mt-1 space-y-0.5 font-mono text-[0.6875rem]">{rs.flatMap(r => r.strict!.commits).map(c => <li key={c} className="truncate" title={c}>{c}</li>)}</ul></details>
+    </div>
+  ) : rs.map(r => (
+    <div key={r.id} className="space-y-1 rounded-lg border px-3 py-2">
+      <p className="font-semibold">{r.name}{r.skip && <span className="ml-2 font-normal text-muted-foreground">{r.skip}</span>}</p>
+      {r.strict && <>
+        <p className="text-xs text-muted-foreground">바뀌는 파일 {r.strict.files}개{r.strict.conflicts.length ? ` · 충돌 ${r.strict.conflicts.length}곳(${r.strict.conflicts.join(', ')})을 머지 브랜치에서 푼 커밋` : ' · 충돌 없음'}</p>
+        <details><summary className="cursor-pointer text-xs text-primary">운영으로 나갈 커밋 {r.strict.commits.length}개</summary>
+          <ul className="mt-1 space-y-0.5 font-mono text-[0.6875rem]">{r.strict.commits.map(c => <li key={c} className="truncate" title={c}>{c}</li>)}</ul></details>
+      </>}
+    </div>
+  ));
   const go = async () => {
     setBusy(true);
     try { const r = await post<{ text: string }>('/api/deploy/promote', { ids: items.map(x => x.id), env, ...(prod && ack ? { ack: true } : {}) }); toast(r.text, 6000); onClose(); }
@@ -863,23 +928,16 @@ function PushDialog({ g, env, items, prep, prod, onClose }: { g: Group; env: str
     await qc.invalidateQueries({ queryKey: ['deploy'] });
   };
   return (
-    <Sheet title={`${items.map(x => repoName(x.repo)).join(' · ')} 을 ${env} 에 올릴까요?`} sub={`「${g.tag}」 · ${items.map(x => x.branch).join(', ')}`} onClose={onClose}>
+    <Sheet title={`${[...new Set(items.map(x => repoName(x.repo)))].join(' · ')} 을 ${env} 에 올릴까요?`} sub={`「${g.tag}」 · ${items.map(x => x.branch).join(', ')}`} onClose={onClose}>
       <div className="space-y-4 text-sm">
         {prepped.length
           ? <p>충돌을 푼 머지 브랜치 <span className="font-mono">{prepped.join(', ')}</span> 를 <span className="font-mono">{env}</span> 로 그대로 올립니다(앞당기기, 강제 push 아님).</p>
           : <p>브랜치를 <span className="font-mono">{env}</span> 에 머지 커밋으로 합쳐 올립니다(작업 트리 없이, 강제 push 아님). 이미 들어갔으면 건너뜁니다.</p>}
+        {!prod && together}
         {prod && <div className="space-y-2">
           <p className="rounded-lg border border-rose-400 bg-rose-500/10 px-3 py-2 font-semibold text-rose-800 dark:text-rose-300">운영입니다 — 올리는 즉시 운영 배포 파이프라인이 돕니다. DDL · 환경변수 같은 배포 전 일은 먼저.</p>
-          {cerr ? <p className="text-rose-700 dark:text-rose-300">확인하지 못했다 — {cerr}</p> : !chk ? <Empty>확인하는 중… origin 을 받고 레포마다 나갈 커밋 · 바뀌는 파일 범위 · 충돌 표시 · 푼 파일에서 빠진 줄을 본다</Empty> : chk.repos.map(r => (
-            <div key={r.id} className="space-y-1 rounded-lg border px-3 py-2">
-              <p className="font-semibold">{r.name}{r.skip && <span className="ml-2 font-normal text-muted-foreground">{r.skip}</span>}</p>
-              {r.strict && <>
-                <p className="text-xs text-muted-foreground">바뀌는 파일 {r.strict.files}개{r.strict.conflicts.length ? ` · 충돌 ${r.strict.conflicts.length}곳(${r.strict.conflicts.join(', ')})을 머지 브랜치에서 푼 커밋` : ' · 충돌 없음'}</p>
-                <details><summary className="cursor-pointer text-xs text-primary">운영으로 나갈 커밋 {r.strict.commits.length}개</summary>
-                  <ul className="mt-1 space-y-0.5 font-mono text-[0.6875rem]">{r.strict.commits.map(c => <li key={c} className="truncate" title={c}>{c}</li>)}</ul></details>
-              </>}
-            </div>
-          ))}
+          {together}
+          {cerr ? <p className="text-rose-700 dark:text-rose-300">확인하지 못했다 — {cerr}</p> : !chk ? <Empty>확인하는 중… origin 을 받고 레포마다 나갈 커밋 · 바뀌는 파일 범위 · 충돌 표시 · 푼 파일에서 빠진 줄을 본다</Empty> : [...new Set(chk.repos.map(r => repoOf(r.id)))].map(repo => repoBlock(chk.repos.filter(r => repoOf(r.id) === repo)))}
           {hard.length > 0 && <div className="space-y-1 rounded-lg border border-rose-400 bg-rose-500/10 px-3 py-2.5">
             <p className="font-semibold text-rose-800 dark:text-rose-300">막힘 — 아래를 고친 뒤 다시</p>
             <ul className="list-disc space-y-0.5 pl-5">{hard.map((h, k) => <li key={k} className="break-words">{h}</li>)}</ul>
@@ -900,7 +958,7 @@ function PushDialog({ g, env, items, prep, prod, onClose }: { g: Group; env: str
           <p className="text-xs text-muted-foreground">먼저 하고 패널에서 체크하거나, 이미 했으면 그대로 올린다.</p>
         </div>}
         <p className="text-muted-foreground">올리기 직전에 origin 을 다시 받고 봅니다 — 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋. 걸리면 올리지 않습니다. 팀이 같이 쓰는 브랜치라 되돌리려면 따로 되돌림 커밋이 필요합니다.</p>
-        <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button variant={prod ? 'destructive' : 'default'} disabled={busy || !ready} onClick={() => void go()}>{busy ? '올리는 중…' : prod ? `운영(${env})에 올리기` : `${before.length || unpicked.length ? '그래도 ' : ''}${env} 에 올리기`}</Button></div>
+        <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button variant={prod ? 'destructive' : 'default'} disabled={busy || !ready} onClick={() => void go()}>{busy ? '올리는 중…' : `${prod ? `운영(${env})에 올리기` : `${before.length || unpicked.length ? '그래도 ' : ''}${env} 에 올리기`}${pick.size ? ` — 안건 ${items.length}개` : ''}`}</Button></div>
       </div>
     </Sheet>
   );

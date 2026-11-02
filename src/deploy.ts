@@ -401,8 +401,9 @@ export async function strictCheck(repo: string, into: string, tip: string, c: st
   const lost = base ? (await Promise.all(conflicts.map(f => lostLines(repo, base, into, tip, c, f)))).flat() : [];
   return { commits, files: changed.length, conflicts, hard, lost };
 }
-// 레포 하나 — 올릴 커밋(c)을 정하거나 막을 까닭(bad) · 건너뛸 까닭(skip). 운영이면 strict 도
-async function planOne(x: Item, s: Store, i: number): Promise<Plan> {
+// 레포 하나 — 올릴 커밋(c)을 정하거나 막을 까닭(bad) · 건너뛸 까닭(skip). 운영이면 strict 도.
+// after — 같은 레포를 같이 올리는 앞 항목의 커밋. 그 위에 이어 합친다(마지막 커밋만 push — 파이프라인 한 번)
+async function planOne(x: Item, s: Store, i: number, after?: { c: string; name: string }): Promise<Plan> {
   const env = s.envs[i], prev = s.envs[i - 1], to = env.ref.replace(/^origin\//, ''), last = i === s.envs.length - 1, name = named(x.repo, x.branch);
   const st = await stateOf(x, [prev, env], s.envs.at(-1)!.ref);
   if (st.error) return { x, name, bad: `${name} — ${st.error}` };
@@ -411,13 +412,18 @@ async function planOne(x: Item, s: Store, i: number): Promise<Plan> {
   if (st.envs[1]?.state === 'missing') return { x, name, skip: `${name} — ${env.ref} 가 없는 레포라 건너뜀` };
   if (reached(st.envs[1])) return { x, name, skip: `${name} — 이미 ${env.name} 에 있다` };
   if (!reached(st.envs[0])) return { x, name, bad: `${name} — 아직 ${prev.name} 에 다 들어가지 않았다` };
-  const into = (await commit(x.repo, env.ref))!, conflicts = await conflictsOf(x.repo, into, st.tip!);
+  let into = (await commit(x.repo, env.ref))!, conflicts = await conflictsOf(x.repo, into, st.tip!);
   if (conflicts === null) return { x, name, bad: `${name} — ${env.ref} 와 합쳐 보지 못했다` };
   let c: string | null | undefined;
-  if (conflicts.length) {
-    c = await prepared(x, env, st.tip!);
-    if (!c) return { x, name, bad: `${name} — ${env.name} 와 충돌 ${conflicts.length}곳: ${conflicts.slice(0, 5).join(', ')} — 「${env.name} 머지 준비」 로 먼저 푼다` };
-  } else {
+  if (conflicts.length && !(c = await prepared(x, env, st.tip!)))
+    return { x, name, bad: `${name} — ${env.name} 와 충돌 ${conflicts.length}곳: ${conflicts.slice(0, 5).join(', ')} — 「${env.name} 머지 준비」 로 먼저 푼다` };
+  if (after) {
+    // 머지 준비로 푼 커밋은 환경 끝에서 만든 것이라 앞 항목 위에 못 얹는다 — 그 충돌도 여기서 걸린다
+    const clash = await conflictsOf(x.repo, after.c, st.tip!);
+    if (clash?.length !== 0) return { x, name, bad: `${name} — 같이 올리는 앞 안건(${after.name}) 위에서 충돌 ${clash?.length ?? '?'}곳${clash ? `: ${clash.slice(0, 5).join(', ')}` : ''} — 같이 못 올린다, 빼고 따로 올린다` };
+    into = after.c; c = undefined; conflicts = [];
+  }
+  if (!c) {
     const tree = (await out(x.repo, ['merge-tree', '--write-tree', '--no-messages', into, st.tip!]))?.split('\n')[0];
     c = tree && await out(x.repo, ['commit-tree', tree, '-p', into, '-p', st.tip!, '-m', `Merge branch '${x.branch}' into ${to}`]);
     if (!c) return { x, name, bad: `${name} — 머지 커밋을 만들지 못했다` };
@@ -431,8 +437,17 @@ async function plansOf(b: { ids?: unknown; env?: unknown }, file: string) {
   if (i <= 0) throw new Error(`${String(b.env)} 은 여기서 올리지 않는다(처음 환경은 머지 브랜치로)`);
   const fetched = await each([...new Set((xs as Item[]).map(x => x.repo))], 3, async r => { const f = await git(r, ['fetch', '--quiet', 'origin'], 90_000); return f.code === 0 ? null : `${basename(r)} 받지 못했다 — ${(f.stderr || f.stdout).trim().split('\n')[0]}`; });
   if (fetched.some(Boolean)) throw new Error(fetched.filter(Boolean).join('\n'));
-  // 먼저 다 본다 — 머지 커밋은 만들어 두기만(push 전에는 아무 브랜치도 안 바뀐다)
-  return { s, i, env: s.envs[i], plans: await each(xs as Item[], 3, x => planOne(x, s, i)) };
+  // 먼저 다 본다 — 머지 커밋은 만들어 두기만(push 전에는 아무 브랜치도 안 바뀐다). 같은 레포는 받은 차례대로 앞 항목 위에 잇는다
+  const byRepo = [...Map.groupBy(xs as Item[], x => x.repo).values()];
+  const plans = (await each(byRepo, 3, async list => {
+    const out: Plan[] = [];
+    for (const x of list) {
+      const prev = out.findLast(q => q.c);
+      out.push(await planOne(x, s, i, prev && { c: prev.c!, name: prev.name }));
+    }
+    return out;
+  })).flat();
+  return { s, i, env: s.envs[i], plans };
 }
 // 운영 올리기 확인 창 — 레포마다 나갈 커밋 · 막는 까닭 · 빠진 줄 · 남은 배포 전 할 일(올리지는 않는다)
 export async function promoteCheck(b: { ids?: unknown; env?: unknown }, file = DEPLOY_FILE) {
@@ -450,13 +465,16 @@ export async function promoteMany(b: { ids?: unknown; env?: unknown; ack?: unkno
       ...(p.strict!.lost.length && b.ack !== true ? [`${p.name} — 충돌을 푼 파일에서 빠진 줄 ${p.strict!.lost.length}개 — 확인 창에서 보고 확인한 뒤`] : [])];
   }), skip = plans.flatMap(p => p.skip ? [p.skip] : []);
   if (bad.length) throw new Error([`${env.name} 에 아무 레포도 올리지 않았다`, ...bad, ...skip].join('\n'));
-  const done: string[] = [];
-  for (const p of plans) {
-    if (!p.c) continue;
-    const r = await git(p.x.repo, ['push', 'origin', `${p.c}:refs/heads/${to}`], 90_000);
-    if (r.code !== 0) throw new Error([`${p.name} — push 거절: ${(r.stderr || r.stdout).trim().split('\n').slice(-1)[0]}`, ...(done.length ? [`앞서 올린 것: ${done.join(', ')}`] : [])].join('\n'));
-    change(file, ANY, t => { const y = t.items.find(k => k.id === p.x.id); if (y) note(y, `${env.name} 에 올림(${p.c!.slice(0, 9)})${p.strict?.lost.length ? ` — 빠진 줄 ${p.strict.lost.length}개 확인하고` : ''}`); });
-    done.push(`${p.name} → ${env.ref} (${p.c.slice(0, 9)})`);
+  // 레포마다 마지막 커밋 하나만 push — 같이 올린 앞 항목은 그 커밋 안에 이어 붙어 있다
+  const done: string[] = [], label = (x: Item) => x.ticket ?? x.branch;
+  for (const list of Map.groupBy(plans.filter(p => p.c), p => p.x.repo).values()) {
+    const top = list.at(-1)!, c = top.c!.slice(0, 9), r = await git(top.x.repo, ['push', 'origin', `${top.c}:refs/heads/${to}`], 90_000);
+    if (r.code !== 0) throw new Error([`${top.name} — push 거절: ${(r.stderr || r.stdout).trim().split('\n').slice(-1)[0]}`, ...(done.length ? [`앞서 올린 것: ${done.join(', ')}`] : [])].join('\n'));
+    for (const p of list) {
+      const others = list.filter(q => q !== p).map(q => label(q.x));
+      change(file, ANY, t => { const y = t.items.find(k => k.id === p.x.id); if (y) note(y, `${env.name} 에 올림(${c}${others.length ? ` · ${others.join(', ')} 와 같이` : ''})${p.strict?.lost.length ? ` — 빠진 줄 ${p.strict.lost.length}개 확인하고` : ''}`); });
+    }
+    done.push(list.length > 1 ? `${basename(top.x.repo)} → ${env.ref} (${c}) · ${list.map(p => label(p.x)).join(' · ')} 같이 — push 1번` : `${top.name} → ${env.ref} (${c})`);
   }
   return { ok: true, text: [...done, ...skip].join('\n') || '올릴 것이 없다' };
 }

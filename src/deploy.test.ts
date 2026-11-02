@@ -297,6 +297,37 @@ test('운영 올리기 — 나갈 커밋을 보이고, 충돌 표시 · 원본 �
   } finally { r.done(); }
 });
 
+test('같이 올리기 — 같은 레포 항목은 차례대로 이어 합쳐 마지막 커밋만 push 하고, 서로 충돌하면 아무것도 안 올린다', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim(), put = (f: string, t: string) => writeFileSync(join(r.r, f), t);
+  const o = (...a: string[]) => execFileSync('git', ['-C', r.o, ...a], { encoding: 'utf8' }).trim();
+  try {
+    // b1 · b2 · b3 — 운영에서 갈라져 dev · stage 에 들어감. b3 은 b2 와 같은 파일을 다르게 고쳤다
+    for (const [b, f, t] of [['b1', 'one.txt', '1'], ['b2', 'two.txt', '2'], ['b3', 'two.txt', '3']]) { g('checkout', '-qb', b, 'master'); put(f, `${t}\n`); g('add', '.'); g('commit', '-qm', `feat: ${b}`); }
+    g('checkout', '-q', 'dev'); for (const b of ['b1', 'b2']) g('merge', '-q', '--no-ff', '-m', `${b} → dev`, b);
+    g('checkout', '-q', 'stage'); for (const b of ['b1', 'b2']) g('merge', '-q', '--no-ff', '-m', `${b} → stage`, b);
+    g('checkout', '-q', 'master'); g('push', '-q', 'origin', 'dev', 'stage');
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'b1', ticket: 'PROJ-1' }, { repo: r.r, branch: 'b2', ticket: 'PROJ-2' }, { repo: r.r, branch: 'b3', ticket: 'PROJ-3' }] }), r.file);
+    const id = (b: string) => loadStore(r.file).items.find(x => x.branch === b)!.id;
+    // 안건끼리 충돌 — b3 도 dev · stage 에 넣는다(거기선 b3 쪽으로 풀었다). 운영에 b2 와 같이 올리면 b2 위에서 충돌
+    g('checkout', '-q', 'dev'); g('merge', '-q', '--no-ff', '-m', 'b3 → dev', 'b3', '-X', 'theirs'); g('checkout', '-q', 'stage'); g('merge', '-q', '--no-ff', '-m', 'b3 → stage', 'b3', '-X', 'theirs');
+    g('checkout', '-q', 'master'); g('push', '-q', 'origin', 'dev', 'stage');
+    const was = o('rev-parse', 'master');
+    await assert.rejects(promoteMany({ ids: [id('b2'), id('b3')], env: 'prod' }, r.file), /b3 — 같이 올리는 앞 안건\(.* b2\) 위에서 충돌 1곳: two\.txt/);
+    assert.equal(o('rev-parse', 'master'), was);
+    // b1 · b2 — 운영 ← b1 머지 ← b2 머지, push 한 번
+    const k = await promoteCheck({ ids: [id('b1'), id('b2')], env: 'prod' }, r.file);
+    assert.deepEqual(k.repos.map(x => x.strict?.commits.map(l => l.split(' ').slice(1).join(' '))), [['feat: b1'], ['feat: b2']]);
+    const res = await promoteMany({ ids: [id('b1'), id('b2')], env: 'prod' }, r.file);
+    assert.match(res.text, /→ origin\/master \(\w{9}\) · PROJ-1 · PROJ-2 같이 — push 1번/);
+    assert.equal(o('log', '-1', '--format=%s', 'master'), "Merge branch 'b2' into master");
+    assert.equal(o('log', '-1', '--format=%s', 'master^1'), "Merge branch 'b1' into master");
+    assert.equal(o('rev-parse', 'master^1^1'), was);
+    const top = o('rev-parse', '--short=9', 'master'), log = (b: string) => loadStore(r.file).items.find(x => x.branch === b)!.log.at(-1)!.text;
+    assert.equal(log('b1'), `prod 에 올림(${top} · PROJ-2 와 같이)`);
+    assert.equal(log('b2'), `prod 에 올림(${top} · PROJ-1 와 같이)`);
+  } finally { r.done(); }
+});
+
 test('갓 만든 브랜치(등록 뒤 커밋 없음) — 끝이 운영의 한 지점이어도 「들어감」 이 아니라 아무 환경에도 없음(empty)', async () => {
   const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim();
   try {
