@@ -4,9 +4,24 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, runLabel, runSpace, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runSpace, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
 import { groupOf, shortName } from '../web/src/wsGroups.ts';
+
+test('actBlocked — 레포 줄 단추는 레포마다 따로, 런 전체 단추(빈 글)는 혼자만', () => {
+  assert.equal(actBlocked(undefined, '/w/be'), false);
+  assert.equal(actBlocked(new Set(['/w/be']), '/w/fe'), false);   // 다른 레포 줄은 같이 돈다
+  assert.equal(actBlocked(new Set(['/w/be']), '/w/be'), true);
+  assert.equal(actBlocked(new Set(['/w/be']), ''), true);   // 런 전체 단추는 무엇이든 돌면 막힌다
+  assert.equal(actBlocked(new Set(['']), '/w/fe'), true);
+});
+
+test('cutOff — EDITH 가 뜨기 전에 시작해 끝 코드가 빈 단추 기록은 끊긴 것으로, 뜬 뒤의 것 · 끝난 것은 그대로', () => {
+  assert.equal(cutOff({ label: 'x', at: 100, code: null }, 200).code, -1);
+  assert.match(cutOff({ label: 'x', at: 100, code: null }, 200).note ?? '', /끊겼다/);
+  assert.equal(cutOff({ label: 'x', at: 300, code: null }, 200).code, null);
+  assert.equal(cutOff({ label: 'x', at: 100, code: 0 }, 200).code, 0);
+});
 
 test('runSpace — 런 워크스페이스는 「런·이름 #번호[ · 갈래]」 라 사이드바 「런」 묶음에 모인다', () => {
   assert.equal(runSpace('공장', 15), '런·공장 #15');

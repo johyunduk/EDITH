@@ -22,7 +22,8 @@ type RepoReach = { name: string; path: string; branch?: string; error?: string; 
 type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };   // 런 단추 기록 — code null 이면 도는 중, repo — 레포 줄 단추로 그 레포만
 type RunLink = { id: number; title: string; tag?: string; link?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act };   // path — 이 항목에 해당하는 그 런 워크트리
 // 런 단추가 도는지 · 마지막 결과 — 카드 깊숙한 단계 칸이 읽는다(DeployPage 가 1.5초마다 /api/runs/<번호>/acted 로 채운다)
-const ActCtx = createContext<{ busy: (run: number) => Act | null; last: (run: number) => Act | null; now: number }>({ busy: () => null, last: () => null, now: 0 });
+// running — 그 런에서 도는 단추들(레포 줄 단추는 레포마다 따로 돈다), done — 끝난 기록(최근 것부터)
+const ActCtx = createContext<{ running: (run: number) => Act[]; done: (run: number) => Act[]; now: number }>({ running: () => [], done: () => [], now: 0 });
 type Task = { env: string; text: string; done: boolean; hand?: boolean };   // hand — 사람이 패널에서 적은 줄
 type Prep = { at: number; code: number | null; note?: string };   // 배포 조치 뽑기 — code null 이면 도는 중
 type Item = { id: string; repo: string; branch: string; tag?: string; ticket?: string; agenda?: string; notes: string[]; date?: string; deferred?: boolean; done?: string; tasks: Task[];
@@ -183,26 +184,29 @@ export function DeployPage() {
   const said = (id: number) => runs.find(r => r.id === id && r.acting)?.acting;
   const watching = [...new Set([...pressed.map(p => p.run), ...runs.filter(r => r.acting).map(r => r.id)])];
   const polls = useQueries({ queries: watching.map(id => ({ queryKey: ['acted', id], queryFn: () => get<Act[]>(`/api/runs/${id}/acted`), refetchInterval: 1500 })) });
-  const latest = (id: number) => polls[watching.indexOf(id)]?.data?.[0];
-  const busy = (id: number): Act | null => {
-    const r = latest(id), p = pressed.find(x => x.run === id);
-    if (r?.code === null) return r;
-    if (p && !(r && r.at >= p.at - 2000)) return { label: p.label, at: p.at, code: null, ...(p.repo ? { repo: p.repo } : {}) };   // 누른 직후 — 기록이 아직 안 생겼다
-    return r ? null : said(id) ?? null;
+  const list = (id: number) => polls[watching.indexOf(id)]?.data;
+  // 같은 단추 — 이름과 레포(레포 줄 단추)가 같다
+  const same = (a: { label: string; repo?: string }, b: { label: string; repo?: string }) => a.label === b.label && (a.repo ?? '') === (b.repo ?? '');
+  const running = (id: number): Act[] => {
+    const l = list(id);
+    if (!l) return said(id) ? [said(id)!] : [];
+    // 누른 직후라 기록이 아직 안 생긴 것도 도는 중으로
+    const fresh = pressed.filter(p => p.run === id && !l.some(a => same(a, p) && a.at >= p.at - 2000)).map(p => ({ label: p.label, at: p.at, code: null, ...(p.repo ? { repo: p.repo } : {}) }));
+    return [...l.filter(a => a.code === null), ...fresh];
   };
-  const lastOf = (id: number) => { const r = latest(id); return r && r.code !== null ? r : runs.find(x => x.id === id)?.last ?? null; };
+  const doneOf = (id: number) => { const l = list(id)?.filter(a => a.code !== null), last = runs.find(x => x.id === id)?.last; return l?.length ? l : last ? [last] : []; };
   const datas = polls.map(x => x.dataUpdatedAt).join();
   useEffect(() => {
-    watching.forEach(id => {
-      const r = latest(id), want = pressed.find(p => p.run === id)?.at ?? said(id)?.at;
-      if (!r || r.code === null || want === undefined || r.at < want - 2000 || seen.current.has(`${id}:${r.at}`)) return;
-      seen.current.add(`${id}:${r.at}`);
+    watching.forEach(id => (list(id) ?? []).forEach(r => {
+      const p = pressed.find(x => x.run === id && same(x, r)), s = said(id), want = p?.at ?? (s && same(s, r) ? s.at : undefined);
+      if (r.code === null || want === undefined || r.at < want - 2000 || seen.current.has(`${id}:${r.at}:${r.repo ?? ''}`)) return;
+      seen.current.add(`${id}:${r.at}:${r.repo ?? ''}`);
       toast(r.code === 0 ? `「${r.label}」 끝` : `「${r.label}」 실패 — 끝 코드 ${r.code}${r.note ? ` · ${r.note}` : ''}`, r.code === 0 ? 3000 : 9000);
-      setPressed(ps => ps.filter(p => p.run !== id));
+      setPressed(ps => ps.filter(x => !(x.run === id && same(x, r))));
       void qc.invalidateQueries({ queryKey: ['deploy'] });
-    });
+    }));
   }, [datas]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const anyBusy = watching.some(id => busy(id));
+  const anyBusy = watching.some(id => running(id).length > 0);
   useEffect(() => { if (!anyBusy) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [anyBusy]);
   const send: Send = async (path, b, ok) => {
     try { await post(`/api/deploy/${path}`, { rev: v?.rev, ...b }); if (ok) toast(ok, 2500); await Promise.all(['deploy', 'deploy-done'].map(k => qc.invalidateQueries({ queryKey: [k] }))); return true; }
@@ -241,7 +245,7 @@ export function DeployPage() {
   );
   const open = all.find(g => g.key === panel);
   return (
-    <ActCtx.Provider value={{ busy, last: lastOf, now }}>
+    <ActCtx.Provider value={{ running, done: doneOf, now }}>
     <main className="min-h-0 flex-1 overflow-y-auto" style={GRID_BG}>
       <div className="mx-auto max-w-6xl space-y-4 p-4 md:p-6">
         <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
@@ -306,7 +310,7 @@ export function DeployPage() {
       {open && <Panel g={open} v={v} all={all} send={send} onClose={() => setPanel(null)} />}
       {archive && <DoneSheet onOpen={setOld} onClose={() => setArchive(false)} />}
       {old && <Panel g={old} v={v} all={all} send={async (p, b, ok) => { const r = await send(p, b, ok); if (r) setOld(null); return r; }} onClose={() => setOld(null)} />}
-      {pick && <ActionDialog pick={pick} onClose={() => setPick(null)} onStarted={() => setPressed(ps => [...ps.filter(x => x.run !== pick.run.id), { run: pick.run.id, label: pick.action.label, at: Date.now(), ...(pick.repo ? { repo: pick.repo } : {}) }])} />}
+      {pick && <ActionDialog pick={pick} onClose={() => setPick(null)} onStarted={() => setPressed(ps => [...ps.filter(x => !(x.run === pick.run.id && x.label === pick.action.label && (x.repo ?? '') === (pick.repo ?? ''))), { run: pick.run.id, label: pick.action.label, at: Date.now(), ...(pick.repo ? { repo: pick.repo } : {}) }])} />}
       {push && <PushDialog g={push.g} env={push.env} items={push.items} groups={all} order={shown.flatMap(g => g.items.map(x => x.id))} prep={v.hooks.prep} prod={push.env === v.envs.at(-1)!.name} onClose={() => setPush(null)} />}
       {files && <Sheet title={files.title} onClose={() => setFiles(null)}><ul className="space-y-1 font-mono text-xs">{files.list.map(f => <li key={f}>{f}</li>)}</ul></Sheet>}
       {adding && <AddSheet v={v} onClose={() => setAdding(false)} send={send} />}
@@ -486,10 +490,12 @@ function Track({ steps, acts, extra, onPick, name, onFiles }: { steps: Step[]; a
   );
 }
 
-// 런 단추 — 그 런의 단추가 도는 동안 「도는 중 · N초」(같은 런 다른 단추는 막는다 — 서버도 한 런에 하나만), 끝나면 아래에 마지막 결과 한 줄
+// 런 단추 — 도는 동안 「도는 중 · N초」, 끝나면 아래에 마지막 결과 한 줄. 막는 것(서버 actBlocked 와 같다): 레포 줄 단추는 같은 레포의 단추나 런 전체 단추가 돌 때,
+// 런 전체 단추는 그 런의 단추가 하나라도 돌 때 — 다른 레포 줄 단추끼리는 같이 돈다
 function RunButton({ p, onPick, small }: { p: Pick; onPick: (p: Pick) => void; small?: boolean }) {
-  const ctx = useContext(ActCtx), b = ctx.busy(p.run.id), same = (x: Act | null) => x?.label === p.action.label && (x.repo ?? '') === (p.repo ?? '');
-  const mine = same(b) ? b : null, l = ctx.last(p.run.id), done = !b && same(l) ? l : null;
+  const ctx = useContext(ActCtx), same = (x?: Act | null) => !!x && x.label === p.action.label && (x.repo ?? '') === (p.repo ?? '');
+  const rs = ctx.running(p.run.id), mine = rs.find(same) ?? null, b = rs.find(x => !p.repo || !x.repo || x.repo === p.repo) ?? null;
+  const done = !mine ? ctx.done(p.run.id).find(same) ?? null : null;
   return (
     <div className="flex flex-col items-center gap-0.5">
       <Tip flow={flowLines(p.action)} wait={p.action.wait} hint={p.action.hint}>

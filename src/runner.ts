@@ -837,7 +837,10 @@ function parseActions(text: () => string): RunAction[] {
 }
 export const readActions = (r: Run) => allActions(r).filter(x => !x.on).slice(0, 12);
 type Acted = { label: string; at: number; text?: string; code: number | null; note?: string; repo?: string };   // repo — 레포 줄 단추로 그 레포만 돌렸으면
-const acting = new Set<number>();
+// 도는 단추 — 런마다 돌고 있는 레포 줄 단추의 레포(빈 글은 런 전체 단추). 레포 줄 단추는 레포마다 따로 돌고, 런 전체 단추는 그 런에서 혼자 돈다
+// ponytail: 같은 런의 다른 레포 줄 단추가 함께 돌면 키트가 런마다 한 벌 쓰는 기록(pushed.json · merge-request.md 등)은 나중 것이 남는다
+const acting = new Map<number, Set<string>>();
+export const actBlocked = (held: ReadonlySet<string> | undefined, repo: string) => !!held?.size && (!repo || held.has('') || held.has(repo));
 // copy 단추면 끝날 때까지 기다려 출력(64KB 까지)과 끝 코드를 돌려준다 — 화면이 그 글을 복사하게
 export async function runAction(id: number, n: unknown, text: unknown, repo?: unknown): Promise<{ output?: string; code?: number }> {
   const r = loadRun(id);
@@ -853,11 +856,13 @@ export async function runAction(id: number, n: unknown, text: unknown, repo?: un
   // 레포 줄 단추 — 그 런이 남긴 레포 칸의 워크트리만 받는다(브라우저가 보낸 경로를 그대로 명령에 넘기지 않게)
   const only = typeof repo === 'string' ? repo : '';
   if (only && (!a.row || !readRefs(join(dirOf(id), 'work')).some(x => x.path === only))) throw new Error('이 런의 레포 줄 단추가 아니다');
-  if (acting.has(id)) throw new Error('다른 단추 명령이 도는 중이다');
-  acting.add(id);
+  const held = acting.get(id) ?? new Set<string>();
+  if (actBlocked(held, only)) throw new Error(only ? '이 레포의 다른 단추나 런 전체 단추가 도는 중이다' : '다른 단추 명령이 도는 중이다');
+  held.add(only); acting.set(id, held);
+  const free = () => { held.delete(only); if (!held.size) acting.delete(id); };
   const env: Record<string, string> = only ? { EDITH_ACTION_REPO: only } : {};
-  if (!a.copy) { launch(r, a, t, env, () => acting.delete(id)); return {}; }
-  return new Promise(ok => launch(r, a, t, env, (code, log) => { acting.delete(id); ok({ output: tail(log, 64 * 1024) ?? '', code }); }));
+  if (!a.copy) { launch(r, a, t, env, free); return {}; }
+  return new Promise(ok => launch(r, a, t, env, (code, log) => { free(); ok({ output: tail(log, 64 * 1024) ?? '', code }); }));
 }
 // 새 런 칸의 고르기 목록 — 공방 엔진 폴더(사본이 아니라 공방 것) actions.json 의 on: "picks" 명령(예: 일감 목록에서 고르면 입력칸에 그 주소).
 // 사람이 「고르기」 를 열 때만 그 엔진 폴더에서 돈다(런이 없다 — 환경 변수는 EDITH_ENGINE · EDITH_WORKSHOP). 표준 출력의 JSON [{label, note?, input}] 만 받는다
@@ -981,9 +986,13 @@ export function acted(id: number) {   // 최근 단추 기록 5개(최근 것부
   let files: string[] = [];
   try { files = readdirSync(d).filter(f => /^\d+\.json$/.test(f)).sort().slice(-5).reverse(); } catch { /* 아직 없다 */ }
   return files.flatMap(f => {
-    try { const m = JSON.parse(readFileSync(join(d, f), 'utf8')) as Acted; return [{ ...m, output: tail(join(d, `${m.at}.log`), 3000) ?? '' }]; } catch { return []; }
+    try { const m = JSON.parse(readFileSync(join(d, f), 'utf8')) as Acted; return [{ ...cutOff(m), output: tail(join(d, `${m.at}.log`), 3000) ?? '' }]; } catch { return []; }
   });
 }
+// 이 EDITH 가 뜨기 전에 시작해 끝 코드가 안 찬 단추 — 앞 EDITH 가 꺼지며 끊겼다(도는 단추는 이 프로세스만 안다). 영영 「도는 중」 으로 남지 않게 끝난 것으로 보인다
+// ponytail: 명령이 EDITH 와 함께 죽었는지, 혼자 끝까지 돌았는지는 모른다 — 까닭에 그렇게 적는다
+const BOOT = Date.now();
+export const cutOff = (m: Acted, boot = BOOT): Acted => m.code === null && m.at < boot ? { ...m, code: -1, note: 'EDITH 가 다시 켜지며 끊겼다 — 끝까지 돌았는지 모른다(레포 상태를 보고 다시 누른다)' } : m;
 
 // EDITH 가 뜰 때 — 돌던 실행을 이어 간다. 다른 EDITH(다른 포트)가 살아서 잡고 있는 실행은 건드리지 않는다.
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
