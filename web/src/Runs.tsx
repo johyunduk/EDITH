@@ -800,9 +800,9 @@ function Flow({ a }: { a: Stats }) {
   );
 }
 
-// 갈래 — 갈래마다 시작 · 끝 · 일한 · 사람 시간과 합침에서 기다린 시간. 가장 늦게 끝난 갈래가 병목
+// 갈래 — 갈래마다 시작 · 끝 · 일한 · 사람 시간과 합침에서 기다린 시간. 가장 늦게 끝난 갈래가 병목(전부 건너뛴 갈래는 빼고)
 function Lanes({ a }: { a: Stats }) {
-  const late = Math.max(...a.lanes.map(l => l.last ?? 0)), cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
+  const ran = a.lanes.filter(l => !l.skipped), late = Math.max(...ran.map(l => l.last ?? 0)), cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -810,7 +810,7 @@ function Lanes({ a }: { a: Stats }) {
         <tbody>
           {a.lanes.map(l => (
             <tr key={l.track} className="border-b last:border-0">
-              <td className="px-2 py-1.5 font-mono">{l.track}{l.last === late && a.lanes.length > 1 && <span className="ml-1.5 rounded bg-amber-500/15 px-1.5 font-sans text-[0.625rem] font-bold text-amber-800 dark:text-amber-300">병목</span>}</td>
+              <td className="px-2 py-1.5 font-mono">{l.track}{l.skipped && <span className="ml-1.5 font-sans text-muted-foreground">건너뜀</span>}{!l.skipped && l.last === late && ran.length > 1 && <span className="ml-1.5 rounded bg-amber-500/15 px-1.5 font-sans text-[0.625rem] font-bold text-amber-800 dark:text-amber-300">병목</span>}</td>
               <td className={cell}>{l.first ? hhmm(l.first) : ''}</td><td className={cell}>{l.last ? hhmm(l.last) : ''}</td>
               <td className={cell}>{dur(l.work)}</td><td className={cell}>{l.human ? dur(l.human) : ''}</td>
               <td className={`${cell} ${l.waited ? 'font-semibold text-amber-700 dark:text-amber-400' : ''}`}>{l.waited ? dur(l.waited) : l.waited === 0 ? '—' : ''}</td>
@@ -822,7 +822,7 @@ function Lanes({ a }: { a: Stats }) {
   );
 }
 
-// 같은 엔진 런 비교 — 최근 6개를 나란히, 큰 단계마다 걸린 시간(처음 시작~마지막 끝) · 전체 · 사람 대기. 이 런은 굵게
+// 같은 엔진 런 비교 — 최근 6개를 나란히, 큰 단계마다 걸린 시간(그 단계 노드가 돈 벽시계 시간) · 전체(사람 대기 뺌) · 사람 대기. 이 런은 굵게
 function Compare({ a, cut }: { a: Stats; cut: (n: string) => string }) {
   const names = [...new Set(a.compare.flatMap(x => x.phases.map(p => p.name)))], cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
   return (
@@ -836,7 +836,7 @@ function Compare({ a, cut }: { a: Stats; cut: (n: string) => string }) {
               {a.compare.map(x => { const p = x.phases.find(y => y.name === n); return <td key={x.id} className={`${cell} ${x.id === a.id ? 'font-semibold' : ''}`}>{p ? dur(p.ms) : ''}</td>; })}
             </tr>
           ))}
-          <tr className="border-b"><td className="px-2 py-1.5 font-semibold">전체</td>{a.compare.map(x => <td key={x.id} className={`${cell} font-semibold`}>{dur(x.elapsed)}</td>)}</tr>
+          <tr className="border-b"><td className="px-2 py-1.5 font-semibold" title="사람 대기를 뺀 런 시간">전체</td>{a.compare.map(x => <td key={x.id} className={`${cell} font-semibold`}>{dur(x.elapsed)}</td>)}</tr>
           <tr><td className="px-2 py-1.5 text-amber-700 dark:text-amber-400">사람 대기</td>{a.compare.map(x => <td key={x.id} className={`${cell} text-amber-700 dark:text-amber-400`}>{x.human ? dur(x.human) : ''}</td>)}</tr>
         </tbody>
       </table>
@@ -940,8 +940,9 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
   const human = sum(x => x.time?.human ?? 0), codexOut = Object.values(a.codex.nodes).reduce((s, x) => s + x.out, 0);
   const claudeP = Object.values(a.codex.claude ?? {}).reduce((s, x) => s + x.cost, 0);
   const tiles: [string, string, string][] = [
-    ['걸린 시간', dur(a.elapsed), a.flow ? `일 ${dur(a.flow.work)} · 빈 시간 ${dur(a.flow.idle)}` : `노드가 일한 시간 합 ${dur(sum(x => x.time?.work ?? 0))}`],
-    ['사람 대기', dur(human), human ? `런의 ${Math.round(human / (a.elapsed || 1) * 100)}%` : '사람을 기다리지 않았다'],
+    // 걸린 시간은 사람 대기를 뺀 것(서버 elapsed) — 사람 대기 칸의 비율은 벽시계(+ 흐름의 사람 대기) 기준
+    ['걸린 시간', dur(a.elapsed), a.flow ? `사람 대기 뺌 · 일 ${dur(a.flow.work)} · 빈 시간 ${dur(a.flow.idle)}` : `노드가 일한 시간 합 ${dur(sum(x => x.time?.work ?? 0))}`],
+    ['사람 대기', dur(human), human ? `런의 ${Math.round(human / (a.elapsed + (a.flow?.human ?? 0) || 1) * 100)}%` : '사람을 기다리지 않았다'],
     ['다시 돈 시간', dur(a.redo.again + a.redo.fixing), `되돌림 ${a.rewinds.length}번 · 고치는 노드 ${dur(a.redo.fixing)}`],
     ['Claude 입력 토큰', big(sum(x => x.tokens ? inTok(x.tokens) : 0)),
       `출력 ${big(sum(x => x.tokens?.output ?? 0))}${claudeP ? ` · 명령 노드 claude -p $${claudeP.toFixed(2)}` : ''}${codexOut ? ` · Codex 출력 ${big(codexOut)}` : ''}${a.codex.weekly ? ` · Codex 주간 ${a.codex.weekly[0]}→${a.codex.weekly[1]}%` : ''}`],
@@ -980,7 +981,7 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
       </section>
 
       <section className="overflow-hidden rounded-xl border bg-card">
-        <p className="px-3 pt-2.5 pb-1.5 text-xs font-semibold text-muted-foreground">단계별 시간 — 단계는 처음 시작부터 마지막 끝까지, 노드는 일한 시간. 단계를 누르면 그 안의 노드, 노드를 누르면 자세히</p>
+        <p className="px-3 pt-2.5 pb-1.5 text-xs font-semibold text-muted-foreground">단계별 시간 — 단계는 그 단계 노드가 돈 시간(겹친 갈래는 한 번), 노드는 일한 시간. 단계를 누르면 그 안의 노드, 노드를 누르면 자세히</p>
         <ul>
           {ps.map(p => {
             const ran = p.nodes.filter(x => x.attempts > 0).length, on = open.has(p.name) || p.nodes.some(x => x.key === sel);

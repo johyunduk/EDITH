@@ -16,7 +16,8 @@ export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 export type SkillRef = { from: 'engine' | 'installed'; id: string };
 // 노드는 셋 중 하나를 가리킨다 — 스킬(Claude 가 한다), 명령(실행기가 돌린다), 다른 엔진(그 자리에서 그 엔진의 노드들이 돈다). 아무것도 없으면 빈 노드.
-export type Node = { id: string; title: string; skill: SkillRef | null; command?: string; engine?: string; x: number; y: number };
+// humanWait — 사람(기획자 답 등)을 「도는 중」 으로 기다리는 명령 노드. 실행기는 그대로 돌리고, 런 분석만 그 시간을 사람 대기로 본다
+export type Node = { id: string; title: string; skill: SkillRef | null; command?: string; humanWait?: true; engine?: string; x: number; y: number };
 // 실패 화살표 — from 이 실패하면 to(고치는 노드)를 돌리고 from 을 다시 돌린다. 최대 max 번.
 export type Edge = { from: string; to: string; fail?: true; max?: number };
 // 작업 폴더 — 실행할 때 고르기(기본) · 늘 같은 폴더 · 레포에서 새 워크트리(브랜치는 실행할 때). 실행하는 맨 바깥 엔진의 것만 쓴다.
@@ -74,7 +75,7 @@ export function check(v: unknown): Engine | string[] {
     if (n.engine != null && n.engine !== '' && (typeof n.engine !== 'string' || !NAME.test(n.engine))) return errs.push(`${at}(${n.id})의 engine 은 체인 폴더 이름`);
     const command = n.command ? (n.command as string).trim() : undefined, engine = (n.engine as string) || undefined;
     if ([skill, command, engine].filter(Boolean).length > 1) return errs.push(`${at}(${n.id})는 스킬 · 명령 · 체인 중 하나만 가리킨다`);
-    nodes.push({ id: n.id, title: n.title as string, skill, ...(command ? { command } : {}), ...(engine ? { engine } : {}), x: n.x as number, y: n.y as number });
+    nodes.push({ id: n.id, title: n.title as string, skill, ...(command ? { command } : {}), ...(command && n.humanWait === true ? { humanWait: true as const } : {}), ...(engine ? { engine } : {}), x: n.x as number, y: n.y as number });
   });
   const byId = new Map(nodes.map(n => [n.id, n])), edges: Edge[] = [];
   e.edges.forEach((raw: unknown, i) => {

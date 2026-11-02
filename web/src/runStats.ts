@@ -13,7 +13,7 @@ export type Stats = {
   id: number; state?: string; elapsed: number; timed: boolean; rewinds: unknown[]; records: Record<string, unknown>[]; nodes: StatNode[];
   flow: { work: number; human: number; stop: number; idle: number; spans: { from: number; to: number; kind: 'human' | 'idle' | 'stop'; keys: string[] }[] } | null;
   phases?: { name: string; ms: number }[];   // 옛 서버는 없다
-  lanes: { track: string; first: number | null; last: number | null; work: number; human: number; waited: number | null; join: string | null }[];
+  lanes: { track: string; first: number | null; last: number | null; work: number; human: number; waited: number | null; join: string | null; skipped?: boolean }[];   // skipped = 노드가 하나도 안 돈 갈래
   redo: { again: number; fixing: number };
   codex: { nodes: Record<string, { in: number; out: number; cacheR: number }>; weekly: [number, number] | null; claude?: Record<string, { in: number; out: number; cacheR: number; cost: number }> };   // claude = 명령 노드의 claude -p
   compare: { id: number; state: string; created: number; elapsed: number; human: number; phases: { name: string; ms: number }[] }[];
@@ -35,18 +35,16 @@ const topTool = (x: StatNode) => Object.entries(x.inside?.tools ?? {}).filter(([
 
 export type Item = { text: string; sub?: string; key?: string };
 export type Row = { label: string; items: Item[]; none?: string };
-// 먼저 볼 것 — 오래 걸린 단계 · 노드, 사람을 기다린 곳, 다시 돈 노드, 병목 갈래. 해당 없는 줄은 「none」 글(사람 대기 없음도 알 만한 것)
+// 먼저 볼 것 — 오래 걸린 단계 · 노드, 다시 돈 노드, 병목 갈래. 해당 없는 줄은 「none」 글.
+// 사람 대기는 엔진 분석 대상이 아니라 넣지 않는다 — 단계 시간 · 런 시간(elapsed)도 서버가 사람 대기를 뺀 값(사람 대기는 흐름 · 노드 칸에서 본다)
 export function highlights(a: Stats, cut = (n: string) => n): Row[] {
   const name = (k: string) => a.nodes.find(x => x.key === k)?.title ?? k;
   const slowPhases = [...phasesOf(a)].sort((x, y) => y.ms - x.ms).filter(p => p.ms >= 60_000).slice(0, 2);
   const slowNodes = a.nodes.filter(x => (x.time?.work ?? 0) >= 60_000).sort((x, y) => y.time!.work - x.time!.work).slice(0, 3);
-  const human = (a.flow?.spans ?? []).filter(s => s.kind === 'human').slice(0, 3);
   const again = a.nodes.filter(x => x.attempts > 1 || x.fails > 0 || x.rewound > 0);
   const rows: Row[] = [
     { label: '오래 걸린 단계', items: slowPhases.map(p => ({ text: cut(p.name), sub: `${dur(p.ms)} · 런의 ${pct(p.ms, a.elapsed)}` })) },
     { label: '오래 걸린 노드', items: slowNodes.map(x => { const t = topTool(x); return { text: x.title, sub: `${dur(x.time!.work)}${t ? ` · 가장 긴 도구 ${t[0]} ${dur(t[1])}` : ''}`, key: x.key }; }) },
-    { label: '사람 대기', none: '없음 — 사람을 기다린 시간 없이 돌았다',
-      items: human.map(s => ({ text: s.keys.map(name).join(' · ') || '도는 노드 없음', sub: dur(s.to - s.from), key: s.keys[0] })) },
     { label: '다시 돈 노드', none: '없음 — 모든 노드가 한 번에 끝났다',
       items: again.map(x => ({ text: x.title, sub: [x.attempts > 1 && `시도 ${x.attempts}`, x.fails && `고침 ${x.fails}`, x.rewound && `되돌려 옴 ${x.rewound}`].filter(Boolean).join(' · '), key: x.key })) },
   ];
@@ -61,13 +59,13 @@ export function highlights(a: Stats, cut = (n: string) => n): Row[] {
   const usual = a.across?.medians ?? {}, ratio = (x: StatNode) => (x.time?.work ?? 0) / (usual[x.key]?.ms || Infinity);
   const slower = a.nodes.filter(x => (x.time?.work ?? 0) >= 60_000 && (usual[x.key]?.ms ?? 0) >= 30_000 && ratio(x) >= 2).sort((x, y) => ratio(y) - ratio(x)).slice(0, 3);
   if (slower.length) rows.push({ label: '평소보다 느림', items: slower.map(x => ({ text: x.title, key: x.key, sub: `${dur(x.time!.work)} — 보통 ${dur(usual[x.key].ms)}(지난 ${usual[x.key].n}런)` })) });
-  // 갈래가 여럿이면 늦게 끝난 갈래가 병목 — 먼저 끝난 갈래가 합침 앞에서 기다린 시간
-  const late = Math.max(...a.lanes.map(l => l.last ?? 0)), slow = a.lanes.find(l => l.last === late), waited = a.lanes.filter(l => (l.waited ?? 0) >= 60_000);
-  if (a.lanes.length > 1 && slow && waited.length) rows.push({ label: '병목 갈래', items: [{ text: `${slow.track} 갈래가 늦게 끝났다`, sub: waited.map(l => `${l.track} 가 합침 앞에서 ${dur(l.waited!)} 기다림`).join(' · ') }] });
+  // 갈래가 여럿이면 늦게 끝난 갈래가 병목 — 먼저 끝난 갈래가 합침 앞에서 기다린 시간. 전부 건너뛴 갈래는 빼고
+  const ran = a.lanes.filter(l => !l.skipped), late = Math.max(...ran.map(l => l.last ?? 0)), slow = ran.find(l => l.last === late), waited = ran.filter(l => (l.waited ?? 0) >= 60_000);
+  if (ran.length > 1 && slow && waited.length) rows.push({ label: '병목 갈래', items: [{ text: `${slow.track} 갈래가 늦게 끝났다`, sub: waited.map(l => `${l.track} 가 합침 앞에서 ${dur(l.waited!)} 기다림`).join(' · ') }] });
   return rows.filter(r => r.items.length || r.none);
 }
 
-// 단계별 — 노드를 큰 단계(phase) 이름으로 묶어 런 차례대로. 걸린 시간은 서버 phases(처음 시작 ~ 마지막 끝), 안 돈 단계는 0
+// 단계별 — 노드를 큰 단계(phase) 이름으로 묶어 런 차례대로. 걸린 시간은 서버 phases(그 단계 노드가 돈 벽시계 시간), 안 돈 단계는 0
 export function byPhase(a: Stats) {
   const out = new Map<string, { name: string; ms: number; nodes: StatNode[] }>(), ms = new Map(phasesOf(a).map(p => [p.name, p.ms]));
   for (const x of a.nodes) {

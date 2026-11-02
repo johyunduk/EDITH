@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { transcriptDir } from './chat.ts';
-import { claudeOf, listRuns, loadRun, readEvents, RUNS, type NodeState, type Run } from './runner.ts';
+import { claudeOf, listRuns, loadRun, readEvents, RUNS, SKIP_CODE, type NodeState, type Run } from './runner.ts';
 import { tries } from './timeline.ts';
+import { readEngine } from './workshop.ts';
 
 export type Ev = { t: number; key: string; state: NodeState; attempt: number; fp?: string };   // fp = 시도가 시작될 때 코드 지문(runner codeFp)
 type Time = { work: number; human: number; stop: number; first?: number; last?: number };
@@ -34,6 +35,43 @@ export function timings(events: Ev[], end: number) {
   return out;
 }
 
+// keys(없으면 모든 노드)의 상태가 is 를 만족하는 벽시계 구간. 아직 그 상태면 끝이 Infinity
+const WORK: Ev['state'][] = ['running', 'sending'], HUMAN: Ev['state'][] = ['blocked', 'check'];
+const has = (v: Ev['state'][], xs: Ev['state'][]) => v.some(x => xs.includes(x));
+function spansWhere(events: Ev[], keys: Set<string> | undefined, is: (v: Ev['state'][]) => boolean) {
+  const st = new Map<string, Ev['state']>(), out: [number, number][] = [];
+  let from: number | null = null;
+  for (const e of events.filter(e => !keys || keys.has(e.key)).sort((a, b) => a.t - b.t)) {
+    st.set(e.key, e.state);
+    const on = is([...st.values()]);
+    if (on && from === null) from = e.t;
+    else if (!on && from !== null) { if (e.t > from) out.push([from, e.t]); from = null; }
+  }
+  if (from !== null) out.push([from, Infinity]);
+  return out;
+}
+// 사람 대기 구간 — 그중 하나라도 답 기다림 · 확인 필요이고 아무것도 돌지 않는 때.
+// 분석(런 시간, 비율, 비교, 헛돎, 병목)은 사람 대기가 없던 것처럼 이 구간을 뺀다 — 보여 주는 사람 대기 값(노드 · 흐름 · 타임라인)은 그대로
+export const humanSpans = (events: Ev[], keys?: Set<string>) => spansWhere(events, keys, v => !has(v, WORK) && has(v, HUMAN));
+// 구간 합치기 — 겹친 것은 하나로
+const union = (...xs: [number, number][][]) => xs.flat().map(([a, b]): [number, number] => [a, b]).sort((p, q) => p[0] - q[0])
+  .reduce<[number, number][]>((o, x) => { const l = o.at(-1); if (l && x[0] <= l[1]) l[1] = Math.max(l[1], x[1]); else o.push(x); return o; }, []);
+// [a, b] 안에 든 구간 길이 합
+export const overlap = (spans: [number, number][], a: number, b: number) => spans.reduce((n, [x, y]) => n + Math.max(0, Math.min(b, y) - Math.max(a, x)), 0);
+
+// 사람을 기다리는 명령 노드(humanWait) — 분석에서는 그 노드가 도는(running · sending) 때를 답 기다림(blocked)과 같이 본다. 실행기 상태 · 타임라인은 그대로
+export const asHuman = (events: Ev[], keys: Set<string>) => keys.size ? events.map(e => keys.has(e.key) && (e.state === 'running' || e.state === 'sending') ? { ...e, state: 'blocked' as const } : e) : events;
+// 그 키들 — 런 단계의 표시, 표시가 생기기 전에 시작한 런은 지금 공방의 그 엔진 노드 표시로.
+// shortcut: 옛 런은 지금 엔진 정의를 본다(서버를 다시 켤 때까지 기억) — 그 뒤 노드 id 를 바꾸거나 표시를 떼면 옛 런 분석도 따라 바뀐다
+const defs = new Map<string, Set<string>>();
+export function humanKeys(steps: { key: string; engine?: string; kind?: string; humanWait?: true }[]) {
+  const marked = (id: string) => {
+    if (!defs.has(id)) { let s = new Set<string>(); try { s = new Set(readEngine(id).engine?.nodes.filter(n => n.humanWait).map(n => n.id)); } catch { /* 공방에 없는 엔진 */ } defs.set(id, s); }
+    return defs.get(id)!;
+  };
+  return new Set(steps.filter(s => s.humanWait || (s.kind === 'command' && s.engine && marked(s.engine).has(s.key.split('.').at(-1)!))).map(s => s.key));
+}
+
 // 흐름 — 벽시계로 런을 나눈다: 어느 노드든 돌면 「일」, 아니고 답 · 확인을 기다리면 「사람」, 멈춤이면 「멈춤」, 아무것도 아니면 「빈」(노드 사이 · 합침 대기 등).
 // 갈래가 겹쳐 도는 시간을 두 번 세지 않는다. 사람 · 빈 구간은 긴 것부터(무엇을 기다렸는지 노드 키와 함께).
 export type Span = { from: number; to: number; kind: 'human' | 'idle' | 'stop'; keys: string[] };
@@ -55,20 +93,25 @@ export function flow(events: Ev[], start: number, end: number) {
   }
   return { ...sum, spans: spans.filter(x => x.to - x.from >= 60_000).sort((a, b) => (b.to - b.from) - (a.to - a.from)).slice(0, 8) };
 }
-// 갈래 — 갈래마다 처음 시작 · 마지막 끝 · 일한 · 사람 시간, 합치는 노드가 시작할 때까지 기다린 시간(먼저 끝난 갈래가 기다림 — 늦게 끝난 갈래가 병목)
-export function lanes(steps: { key: string; track?: string; deps: string[] }[], events: Ev[], time: Record<string, { work: number; human: number; first?: number; last?: number }>) {
+// 갈래 — 갈래마다 처음 시작 · 마지막 끝 · 일한 · 사람 시간, 합치는 노드가 시작할 때까지 기다린 시간(먼저 끝난 갈래가 기다림 — 늦게 끝난 갈래가 병목).
+// 기다린 시간에서 다른 갈래가 사람을 기다린 구간 · 런 전체가 사람을 기다린 구간은 뺀다 — 사람 답이 늦어 생긴 기다림은 갈래 병목이 아니다.
+// 전부 건너뛴 갈래는 skipped — 병목 계산에서 뺀다(기다림 없음). 노드가 다 건너뜀 · 안 돎이고, 돈 것은 갈래를 건너뛰게 한 노드(끝 코드 SKIP_CODE — 갈래 머리의 「없으면 건너뜀」 명령 같은 것)뿐인 갈래
+export function lanes(steps: { key: string; track?: string; deps: string[] }[], events: Ev[], time: Record<string, { work: number; human: number; first?: number; last?: number }>, nodes: Record<string, { state: NodeState; summary?: string }> = {}) {
   const tracks = [...new Set(steps.flatMap(s => s.track ? [s.track] : []))];
   if (!tracks.length) return [];
   const trackOf = new Map(steps.map(s => [s.key, s.track]));
   const join = steps.find(s => !s.track && s.deps.some(d => trackOf.get(d)));
-  const joinAt = join ? time[join.key]?.first : undefined;
+  const joinAt = join ? time[join.key]?.first : undefined, all = humanSpans(events);
   return tracks.map(track => {
     const ks = steps.filter(s => s.track === track).map(s => s.key), ts = ks.map(k => time[k]).filter(Boolean);
     const first = Math.min(...ts.flatMap(x => x.first ?? [])), last = Math.max(...ts.flatMap(x => x.last ?? []));
+    const others = union(all, humanSpans(events, new Set(steps.filter(s => s.track && s.track !== track).map(s => s.key))));
+    const stOf = (k: string) => nodes[k]?.state ?? events.findLast(e => e.key === k)?.state ?? 'wait', gate = (k: string) => !!nodes[k]?.summary?.startsWith(`끝 코드 ${SKIP_CODE}`);
+    const skipped = ks.some(k => stOf(k) === 'skipped' || gate(k)) && ks.every(k => stOf(k) === 'wait' || stOf(k) === 'skipped' || gate(k));
     return {
       track, first: Number.isFinite(first) ? first : null, last: Number.isFinite(last) ? last : null,
       work: ts.reduce((a, x) => a + x.work, 0), human: ts.reduce((a, x) => a + x.human, 0),
-      waited: joinAt && Number.isFinite(last) ? Math.max(0, joinAt - last) : null, join: join?.key ?? null,
+      waited: !skipped && joinAt && Number.isFinite(last) ? Math.max(0, joinAt - last - overlap(others, last, joinAt)) : null, join: join?.key ?? null, ...(skipped ? { skipped } : {}),
     };
   });
 }
@@ -102,8 +145,9 @@ export function codexUsage(records: Record<string, unknown>[]) {
   return { nodes, claude, weekly: weekly.length ? [weekly[0], weekly.at(-1)!] as [number, number] : null };
 }
 // 헛도는 검사 — 같은 노드의 다음 시도가 앞 시도와 같은 코드 지문(fp)으로 시작했다: 실패 · 고치기 · 사람 판단 뒤에도 코드가 그대로인 채 다시 돌았다.
-// lost = 그런 시도마다 앞 시도 시작부터 이 시도 시작까지(앞 시도 · 고치기 · 사람 대기), passed = 마지막 시도가 끝남(코드 그대로 통과면 거짓 경보 의심)
-export function sameCode(events: Ev[]) {
+// lost = 그런 시도마다 앞 시도 시작부터 이 시도 시작까지(앞 시도 · 고치기) — 그 노드와 고치는 노드(failTo)가 사람을 기다린 구간 · 런 전체가 사람을 기다린 구간은 뺀다.
+// passed = 마지막 시도가 끝남(코드 그대로 통과면 거짓 경보 의심)
+export function sameCode(events: Ev[], steps: { key: string; failTo?: string }[] = []) {
   const starts = new Map<string, { attempt: number; fp: string; t: number }[]>();
   for (const e of [...events].sort((a, b) => a.t - b.t)) {
     if (e.state !== 'running' || !e.fp) continue;
@@ -112,9 +156,10 @@ export function sameCode(events: Ev[]) {
     xs.push({ attempt: e.attempt, fp: e.fp, t: e.t });
     starts.set(e.key, xs);
   }
-  const ts = tries(events);
+  const ts = tries(events), all = humanSpans(events);
   return [...starts].flatMap(([key, xs]) => {
-    const same = xs.flatMap((x, i) => i > 0 && x.fp === xs[i - 1].fp ? [x.t - xs[i - 1].t] : []);
+    const fix = steps.find(s => s.key === key)?.failTo, wait = union(all, humanSpans(events, new Set(fix ? [key, fix] : [key])));
+    const same = xs.flatMap((x, i) => i > 0 && x.fp === xs[i - 1].fp ? [x.t - xs[i - 1].t - overlap(wait, xs[i - 1].t, x.t)] : []);
     if (!same.length) return [];
     return [{ key, attempts: xs.length, same: same.length, lost: same.reduce((a, b) => a + b, 0), passed: ts.filter(x => x.key === key).at(-1)?.how === 'done' }];
   });
@@ -136,24 +181,22 @@ export function repoPick(id: number, records: Record<string, unknown>[]) {
   }));
   return { must: list(p.must), check: list(p.check), human: p.human === true, picked };
 }
-// 큰 단계(맨 위 엔진의 체인 · 엔진)마다 처음 시작부터 마지막 끝까지 — 런 비교 표가 쓴다
-export function phaseTimes(steps: { key: string; title: string; boxes?: { name: string }[] }[], events: Ev[]) {
-  const name = new Map(steps.map(s => [s.key, s.boxes?.[0]?.name ?? s.title])), out = new Map<string, [number, number]>();
-  for (const x of tries(events)) {
-    const n = name.get(x.key);
-    if (!n || !x.end) continue;
-    const p = out.get(n);
-    out.set(n, p ? [Math.min(p[0], x.start), Math.max(p[1], x.end)] : [x.start, x.end]);
-  }
-  return [...out].map(([n, [a, b]]) => ({ name: n, ms: b - a }));
+// 큰 단계(맨 위 엔진의 체인 · 엔진)마다 그 단계 노드 중 하나라도 돈(running · sending) 벽시계 시간 — 겹친 갈래는 한 번, 도는 중이면 end 까지.
+// 처음 시작~마지막 끝으로 재면 그 사이 사람 대기 · 다른 단계 대기 · 빈 시간 · 런 끝에 찍힌 건너뜀까지 들어간다. 처음 돈 차례대로 — 런 비교 표 · 단계별 · 먼저 볼 것이 쓴다
+export function phaseTimes(steps: { key: string; title: string; boxes?: { name: string }[] }[], events: Ev[], end = Math.max(0, ...events.map(e => e.t))) {
+  const name = new Map(steps.map(s => [s.key, s.boxes?.[0]?.name ?? s.title]));
+  return [...new Set(name.values())].flatMap(n => {
+    const sp = spansWhere(events, new Set(steps.filter(s => name.get(s.key) === n).map(s => s.key)), v => has(v, WORK));
+    return sp.length ? [{ name: n, at: sp[0][0], ms: overlap(sp, -Infinity, end) }] : [];
+  }).sort((a, b) => a.at - b.at).map(({ name, ms }) => ({ name, ms }));
 }
-// 같은 엔진으로 돈 다른 런(최근 6개)과 나란히 — 큰 단계마다 걸린 시간 · 전체 · 사람 대기
+// 같은 엔진으로 돈 다른 런(최근 6개)과 나란히 — 큰 단계마다 걸린 시간 · 전체(사람 대기 뺌) · 사람 대기(보여 주기만)
 function compare(r: Run) {
   return listRuns().filter(x => x.engine === r.engine).slice(0, 6).flatMap(x => {
-    const o = loadRun(x.id), ev = o ? readEvents(x.id) : [];
+    const o = loadRun(x.id), ev = o ? asHuman(readEvents(x.id), humanKeys(o.steps)) : [];
     if (!o || !ev.length) return [];
     const end = Math.max(...ev.map(e => e.t)), t = timings(ev, end);
-    return [{ id: x.id, state: o.state, created: o.created, elapsed: end - o.created, human: Object.values(t).reduce((a, v) => a + v.human, 0), phases: phaseTimes(o.steps, ev) }];
+    return [{ id: x.id, state: o.state, created: o.created, elapsed: end - o.created - overlap(humanSpans(ev), o.created, end), human: Object.values(t).reduce((a, v) => a + v.human, 0), phases: phaseTimes(o.steps, ev) }];
   });
 }
 
@@ -375,8 +418,8 @@ function runSum(id: number): RunSum | null {
   try { const e = statSync(join(RUNS, String(id), 'events.jsonl')); key = `${r.state}:${e.size}:${e.mtimeMs}`; } catch { return null; }
   const c = sums.get(id);
   if (c?.key === key && ['done', 'dropped'].includes(r.state)) return c.sum;
-  const ev = readEvents(id), t = timings(ev, Date.now());
-  const sum: RunSum = { id, work: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.work])), same: sameCode(ev).map(x => x.key), pick: repoPick(id, records(id)) };
+  const ev = asHuman(readEvents(id), humanKeys(r.steps)), t = timings(ev, Date.now());
+  const sum: RunSum = { id, work: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.work])), same: sameCode(ev, r.steps).map(x => x.key), pick: repoPick(id, records(id)) };
   sums.set(id, { key, sum });
   return sum;
 }
@@ -386,7 +429,7 @@ export function runAnalysis(id: number) {
   const r = loadRun(id);
   if (!r) return null;
   const inside: Record<string, Inside> = {};
-  const events = readEvents(id), finished = ['done', 'dropped'].includes(r.state);
+  const events = asHuman(readEvents(id), humanKeys(r.steps)), finished = ['done', 'dropped'].includes(r.state);
   const time = timings(events, Date.now()), tok = tokens(r, inside, finished ? Math.max(r.created, ...events.map(e => e.t)) : Infinity, windows(events)), use = codexUsage(records(id));   // 옛 런은 기록이 없어 시간 없음
   const outside = tok[OUTSIDE] || inside[OUTSIDE] ? { tokens: tok[OUTSIDE] ?? null, inside: inside[OUTSIDE] ?? null } : null;
   delete tok[OUTSIDE]; delete inside[OUTSIDE];
@@ -407,7 +450,8 @@ export function runAnalysis(id: number) {
   });
   const last = Math.max(r.created, ...events.map(e => e.t));
   const end = r.state === 'done' || r.state === 'dropped' ? last : Date.now(), recs = records(id);
-  return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created, timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
-    flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events), lanes: lanes(r.steps, events, time), redo: redo(r.steps, events), codex: use, compare: compare(r),
-    sameCode: sameCode(events), repoPick: repoPick(id, recs), across: across(r), outside };
+  // elapsed — 사람 대기(아무 노드도 안 돌고 답 · 확인을 기다린 구간)를 뺀 런 시간. 벽시계 시간은 elapsed + flow.human
+  return { id, name: r.name, state: r.state, created: r.created, elapsed: end - r.created - overlap(humanSpans(events), r.created, end), timed: events.length > 0, nodes, rewinds: r.rewinds ?? [], records: recs,
+    flow: events.length ? flow(events, r.created, end) : null, phases: phaseTimes(r.steps, events, end), lanes: lanes(r.steps, events, time, r.nodes), redo: redo(r.steps, events), codex: use, compare: compare(r),
+    sameCode: sameCode(events, r.steps), repoPick: repoPick(id, recs), across: across(r), outside };
 }

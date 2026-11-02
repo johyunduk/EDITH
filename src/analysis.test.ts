@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acrossOf, codexUsage, flow, lanes, mergePart, OUTSIDE, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, windows, type Ev, type Inside, type RunSum } from './analysis.ts';
+import { acrossOf, asHuman, codexUsage, flow, humanKeys, humanSpans, lanes, mergePart, OUTSIDE, overlap, phaseTimes, readPaths, redo, repoPick, sameCode, subagentIn, timings, toolLabel, tokensIn, windows, type Ev, type Inside, type RunSum } from './analysis.ts';
 import { codeFp } from './runner.ts';
 
 test('런 분석 시간 — 도는 중은 일한 시간, 답 기다림 · 확인 필요는 사람 대기, 끝나면 멈춘다', () => {
@@ -38,7 +38,9 @@ test('런 분석 흐름 — 벽시계로 일 · 사람 · 빈 시간을 나누�
 test('런 분석 갈래 — 갈래마다 끝 시각, 합치는 노드가 시작할 때까지 먼저 끝난 갈래가 기다린 시간', () => {
   const steps = [{ key: 'p', deps: [] }, { key: 'b1', track: 'be', deps: ['p'] }, { key: 'f1', track: 'fe', deps: ['p'] }, { key: 'j', deps: ['b1', 'f1'] }];
   const time = { p: { work: 1, human: 0, first: 0, last: 1 }, b1: { work: 4, human: 0, first: 1, last: 5 }, f1: { work: 9, human: 0, first: 1, last: 10 }, j: { work: 1, human: 0, first: 10, last: 11 } };
-  assert.deepEqual(lanes(steps, [], time).map(l => [l.track, l.last, l.waited]), [['be', 5, 5], ['fe', 10, 0]]);
+  const ev = (t: number, key: string, state: Ev['state']): Ev => ({ t, key, state, attempt: 1 });
+  const evs = [ev(0, 'p', 'running'), ev(1, 'p', 'done'), ev(1, 'b1', 'running'), ev(5, 'b1', 'done'), ev(1, 'f1', 'running'), ev(10, 'f1', 'done'), ev(10, 'j', 'running')];
+  assert.deepEqual(lanes(steps, evs, time).map(l => [l.track, l.last, l.waited]), [['be', 5, 5], ['fe', 10, 0]]);
 });
 
 test('런 분석 도구 이름 — 스크립트 이름, 없으면 변수 · cd 를 건너뛴 첫 명령, 질문 창은 사람', () => {
@@ -157,4 +159,62 @@ test('런 분석 노드 밖 — 노드 도는 시간 창 밖의 대화는 노드
   assert.equal(into.n.output, 10);
   assert.equal(into[OUTSIDE].output, 99);
   assert.deepEqual(inside[OUTSIDE].asks, [{ t: at(40), text: '그 파일 되돌렸으니 다시 해' }]);
+});
+
+test('런 분석 사람 대기 빼기 — 단계 시간 · 런 시간 · 헛돎 · 병목 갈래가 답 기다림 · 확인 필요 구간만큼 준다', () => {
+  const e = (t: number, key: string, state: Ev['state'], attempt = 1, fp?: string): Ev => ({ t: t * 60_000, key, state, attempt, ...(fp ? { fp } : {}) });
+  const min = (x: number) => x / 60_000;
+  // 단계 A: a 가 0~2 돌고 2~7 답 기다림(사람 5분) · 7~9 돌고, 9~12 확인 필요(사람 3분) 뒤 이어서 12~13
+  const evs = [e(0, 'a', 'running'), e(2, 'a', 'blocked'), e(7, 'a', 'running'), e(9, 'a', 'check'), e(12, 'a', 'running'), e(13, 'a', 'done'), e(13, 'b', 'running'), e(14, 'b', 'done')];
+  const steps = [{ key: 'a', title: 'A', boxes: [{ name: '단계 A' }] }, { key: 'b', title: 'B' }];
+  assert.deepEqual(phaseTimes(steps, evs).map(p => [p.name, min(p.ms)]), [['단계 A', 13 - 8], ['B', 1]]);
+  // 단계 구간 안에 다른 단계의 긴 확인 필요가 끼고, 런 끝에 단계 노드가 건너뜀으로 찍혀도 단계 시간은 그 단계 노드가 돈 때만. 겹친 갈래는 한 번
+  const ps = [{ key: 'p1', title: 'P1', boxes: [{ name: '계획' }] }, { key: 'p2', title: 'P2', boxes: [{ name: '계획' }] }, { key: 'p3', title: 'P3', boxes: [{ name: '계획' }] }, { key: 'd', title: 'D', boxes: [{ name: '문서' }] }];
+  const pev = [e(0, 'p1', 'running'), e(0, 'p2', 'running'), e(2, 'p1', 'done'), e(3, 'p2', 'done'), e(3, 'd', 'running'), e(4, 'd', 'check'), e(2000, 'd', 'running'), e(2001, 'd', 'done'),
+    e(2001, 'p1', 'running', 2), e(2003, 'p1', 'done', 2), e(2010, 'p3', 'skipped')];
+  assert.deepEqual(phaseTimes(ps, pev).map(p => [p.name, min(p.ms)]), [['계획', 3 + 2], ['문서', 2]]);
+  assert.deepEqual(phaseTimes(ps, [e(0, 'p1', 'running')], 7 * 60_000).map(p => min(p.ms)), [7]);   // 도는 중이면 end 까지
+  // 런 시간(runAnalysis elapsed) = 벽시계 14분 - 사람 대기 8분. 아직 기다리는 중이면 지금까지 뺀다
+  assert.equal(min(14 * 60_000 - overlap(humanSpans(evs), 0, 14 * 60_000)), 6);
+  assert.equal(min(overlap(humanSpans([e(0, 'a', 'running'), e(1, 'a', 'check')]), 0, 10 * 60_000)), 9);
+  // 다른 노드가 도는 동안의 답 기다림은 사람 대기 구간이 아니다(런은 그동안 일했다)
+  assert.deepEqual(humanSpans([e(0, 'a', 'blocked'), e(0, 'b', 'running'), e(5, 'b', 'done'), e(8, 'a', 'running')]).map(([x, y]) => [min(x), min(y)]), [[5, 8]]);
+  // 헛돎: v 가 실패 → 고치는 노드 fix 가 사람 판단을 4분 기다림 → 코드 그대로 다시. lost 10분에서 4분을 뺀다
+  const loop = [e(0, 'v', 'running', 1, 'F'), e(2, 'v', 'wait', 1), e(2, 'fix', 'running'), e(3, 'fix', 'blocked'), e(7, 'fix', 'running'), e(10, 'fix', 'done'), e(10, 'v', 'running', 2, 'F'), e(11, 'v', 'done', 2)];
+  assert.deepEqual(sameCode(loop, [{ key: 'v', failTo: 'fix' }]).map(x => min(x.lost)), [6]);
+  assert.deepEqual(sameCode(loop).map(x => min(x.lost)), [6]);   // 고치는 노드를 몰라도 그동안 도는 노드가 없으면 런 전체 대기라 빠진다
+  // 다른 갈래(o)가 도는 동안 고치는 노드가 사람을 기다린 것은 failTo 를 알아야 뺀다
+  const busy = [...loop, e(0, 'o', 'running'), e(11, 'o', 'done')];
+  assert.deepEqual([sameCode(busy, [{ key: 'v', failTo: 'fix' }]), sameCode(busy)].map(r => r.map(x => min(x.lost))), [[6], [10]]);
+  // 시도 사이에 다른 노드(d)가 확인 필요로 오래 멈춰 런 전체가 사람을 기다렸으면 그것도 뺀다
+  const rew = [e(0, 'w', 'running', 1, 'G'), e(2, 'w', 'done', 1), e(2, 'd', 'running'), e(3, 'd', 'check'), e(2000, 'd', 'running'), e(2001, 'd', 'done'), e(2001, 'w', 'running', 2, 'G'), e(2002, 'w', 'done', 2)];
+  assert.deepEqual(sameCode(rew).map(x => min(x.lost)), [2001 - 1997]);
+  // 병목 갈래: be 가 5 에 끝나고 합침은 20 — fe 가 8~16 사람을 기다렸으면 be 가 기다린 것은 15 - 8 = 7분
+  const ls = [{ key: 'b1', track: 'be', deps: [] }, { key: 'f1', track: 'fe', deps: [] }, { key: 'j', deps: ['b1', 'f1'] }];
+  const lev = [e(0, 'b1', 'running'), e(5, 'b1', 'done'), e(0, 'f1', 'running'), e(8, 'f1', 'blocked'), e(16, 'f1', 'running'), e(20, 'f1', 'done'), e(20, 'j', 'running')];
+  assert.deepEqual(lanes(ls, lev, timings(lev, 21 * 60_000)).map(l => [l.track, l.waited === null ? null : min(l.waited)]), [['be', 7], ['fe', 0]]);
+});
+
+test('런 분석 사람 대기 명령 노드 · 건너뛴 갈래 — humanWait 노드가 도는 때는 답 기다림처럼, 전부 건너뛴 갈래는 병목에서 뺀다', () => {
+  const e = (t: number, key: string, state: Ev['state'], attempt = 1): Ev => ({ t: t * 60_000, key, state, attempt });
+  const min = (x: number) => x / 60_000;
+  // 답 맞추기 단계: 카드 2분 → 사람 답 기다림(명령, 도는 중) 120분 → 반영 3분
+  const steps = [{ key: 'late.cards', title: '카드', kind: 'skill', boxes: [{ name: '답 맞추기' }] }, { key: 'late.planner', title: '답 기다림', kind: 'command', humanWait: true as const, boxes: [{ name: '답 맞추기' }] },
+    { key: 'late.apply', title: '반영', kind: 'skill', boxes: [{ name: '답 맞추기' }] }];
+  const raw = [e(0, 'late.cards', 'running'), e(2, 'late.cards', 'done'), e(2, 'late.planner', 'running'), e(122, 'late.planner', 'done'), e(122, 'late.apply', 'running'), e(125, 'late.apply', 'done')];
+  const keys = humanKeys(steps), evs = asHuman(raw, keys);
+  assert.deepEqual([...keys], ['late.planner']);
+  assert.deepEqual(phaseTimes(steps, evs).map(p => min(p.ms)), [5]);
+  assert.equal(min(125 * 60_000 - overlap(humanSpans(evs), 0, 125 * 60_000)), 5);   // 런 시간도
+  assert.deepEqual(timings(evs, 125 * 60_000)['late.planner'], { work: 0, human: 120 * 60_000, stop: 0, first: 2 * 60_000, last: 122 * 60_000 });
+  assert.equal(asHuman(raw, new Set()), raw);   // 표시가 없으면 그대로
+  // app 갈래는 전부 건너뜀 — 기다림 없음(skipped), be 는 fe 를 기다림
+  const ls = [{ key: 'b', track: 'be', deps: [] }, { key: 'f', track: 'fe', deps: [] }, { key: 'a', track: 'app', deps: [] }, { key: 'j', deps: ['b', 'f', 'a'] }];
+  const lev = [e(0, 'b', 'running'), e(5, 'b', 'done'), e(0, 'f', 'running'), e(10, 'f', 'done'), e(0, 'a', 'skipped'), e(10, 'j', 'running')];
+  assert.deepEqual(lanes(ls, lev, timings(lev, 11 * 60_000)).map(l => [l.track, l.waited === null ? null : min(l.waited), !!l.skipped]), [['be', 5, false], ['fe', 0, false], ['app', null, true]]);
+  // 갈래 머리의 명령이 끝 코드 77 로 나머지를 건너뛰게 했어도(그 노드는 「끝」) 전부 건너뛴 갈래 — 아직 안 돈 갈래는 아니다
+  const gs = [...ls, { key: 'g', track: 'app2', deps: [] }, { key: 'g2', track: 'app2', deps: ['g'] }, { key: 'w', track: 'idle', deps: [] }];
+  const gev = [...lev, e(0, 'g', 'running'), e(0.1, 'g', 'done'), e(0.1, 'g2', 'skipped')];
+  const nodes = { g: { state: 'done' as const, summary: '끝 코드 77 — 「앱」 의 남은 노드 1개를 건너뜀' }, g2: { state: 'skipped' as const }, w: { state: 'wait' as const } };
+  assert.deepEqual(lanes(gs, gev, timings(gev, 11 * 60_000), nodes).filter(l => l.skipped).map(l => l.track), ['app', 'app2']);
 });

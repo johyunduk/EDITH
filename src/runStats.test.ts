@@ -21,19 +21,21 @@ test('먼저 볼 것 — 오래 걸린 단계 · 노드, 없으면 「없음」 
   assert.equal(h['오래 걸린 단계'].items[0].sub, '50분 0초 · 런의 50%');
   assert.deepEqual(h['오래 걸린 노드'].items.map(x => x.key), ['b', 'a', 'fix']);
   assert.match(h['오래 걸린 노드'].items[1].sub!, /가장 긴 도구 Bash x\.ts 5분 0초$/);   // 질문 창은 도구로 안 센다
-  assert.deepEqual([h['사람 대기'].items, h['사람 대기'].none], [[], '없음 — 사람을 기다린 시간 없이 돌았다']);
   assert.deepEqual(h['다시 돈 노드'].items.map(x => [x.key, x.sub]), [['fix', '시도 2 · 고침 1']]);
   assert.equal(h['병목 갈래'], undefined);
 });
 
-test('먼저 볼 것 — 사람 대기 구간 · 병목 갈래', () => {
+test('먼저 볼 것 — 사람 대기 줄은 없고(분석 대상 아님) · 병목 갈래', () => {
   const a = stats([node('a', '기획', 2 * M), node('b', '구현', 2 * M)], {
     flow: { work: 4 * M, human: 7 * M, stop: 0, idle: 0, spans: [{ from: 0, to: 7 * M, kind: 'human', keys: ['b'] }, { from: 0, to: 3 * M, kind: 'idle', keys: [] }] },
     lanes: [{ track: 'be', first: 0, last: 10, work: 1, human: 0, waited: 5 * M, join: 'j' }, { track: 'fe', first: 0, last: 20, work: 1, human: 0, waited: 0, join: 'j' }],
   });
   const h = Object.fromEntries(highlights(a).map(r => [r.label, r]));
-  assert.deepEqual(h['사람 대기'].items, [{ text: 'b', sub: '7분 0초', key: 'b' }]);
+  assert.equal(h['사람 대기'], undefined);
   assert.deepEqual(h['병목 갈래'].items, [{ text: 'fe 갈래가 늦게 끝났다', sub: 'be 가 합침 앞에서 5분 0초 기다림' }]);
+  // 전부 건너뛴 갈래는 늦게 끝났어도 병목이 아니다
+  const sk = stats([], { lanes: [...a.lanes, { track: 'app', first: 30, last: 30, work: 0, human: 0, waited: null, join: 'j', skipped: true }] });
+  assert.equal(Object.fromEntries(highlights(sk).map(r => [r.label, r]))['병목 갈래'].items[0].text, 'fe 갈래가 늦게 끝났다');
   assert.equal(highlights(a, n => n.slice(1))[0].items[0].text, '현');   // 단계 이름은 화면이 뗀 이름으로
 });
 

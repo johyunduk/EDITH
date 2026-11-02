@@ -20,7 +20,7 @@ const resolve = (engine: string) => `/s/${engine}/SKILL.md`;
 // 흐름 flow: [a] → [be(엔진)] → [z],  be: [b1] → [b2 = 명령, 실패하면 fix 로 최대 2번]
 const ENGINES: Record<string, Engine> = {
   flow: { name: '흐름', nodes: [node('a'), { ...node('be', { engine: 'be' }), skill: null }, node('z')], edges: [{ from: 'a', to: 'be' }, { from: 'be', to: 'z' }] },
-  be: { name: '백엔드', common: { from: 'engine', id: 'rules' }, nodes: [node('b1'), { ...node('b2', { command: 'pytest' }), skill: null }, node('fix')],
+  be: { name: '백엔드', common: { from: 'engine', id: 'rules' }, nodes: [node('b1'), { ...node('b2', { command: 'pytest' }), skill: null, humanWait: true }, node('fix')],
     edges: [{ from: 'b1', to: 'b2' }, { from: 'b2', to: 'fix', fail: true, max: 2 }] },
 };
 const load = (id: string) => ENGINES[id] ?? '공방에 없다';
@@ -35,6 +35,7 @@ test('펼치기 — 엔진 노드를 그 엔진의 노드로, 바깥 화살표�
   assert.deepEqual(by.z.deps, ['be.b2']);
   assert.equal(by['be.b2'].kind, 'command');
   assert.equal(by['be.b2'].failTo, 'be.fix');
+  assert.deepEqual([by['be.b2'].humanWait, by['be.b1'].humanWait], [true, undefined]);   // 사람 대기 표시가 런 단계로
   assert.ok(by['be.fix'].fixOnly);
   assert.equal(by['be.b1'].common, '/s/be/SKILL.md');   // 안쪽 엔진의 공통 규칙
   assert.equal(by.a.common, undefined);

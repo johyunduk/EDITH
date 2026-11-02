@@ -63,6 +63,10 @@ test('노드 종류 · 실패 화살표 · 공통 규칙 · 고리', () => {
     edges: [{ from: 'n1', to: 'n2' }, { from: 'n2', to: 'n3', fail: true, max: 2 }, { from: 'n2', to: 'n4' }] });
   assert.ok(!Array.isArray(ok));
   assert.equal(ok.nodes[1].command, 'pytest -q');
+  // 사람 대기 표시는 명령 노드에만 남는다
+  const hw = check({ name: 'a', nodes: [{ ...node('n1'), skill: null, command: 'wait', humanWait: true }, { ...node('n2'), humanWait: true }], edges: [] });
+  assert.ok(!Array.isArray(hw));
+  assert.deepEqual(hw.nodes.map(n => n.humanWait), [true, undefined]);
   assert.deepEqual(ok.edges[1], { from: 'n2', to: 'n3', fail: true, max: 2 });
   assert.deepEqual(ok.common, { from: 'installed', id: 'claude:rules' });
   const bad = (e: unknown, why: RegExp) => { const r = check(e); assert.ok(Array.isArray(r) && r.some(x => why.test(x)), `${JSON.stringify(r)}`); };

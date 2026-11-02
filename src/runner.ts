@@ -28,6 +28,7 @@ export type Step = {
   key: string; title: string; lane: string; group: string;   // lane = 든 엔진 이름(화면 묶음), group = 그 엔진 자리(같은 엔진을 두 번 써도 따로)
   kind: 'skill' | 'command'; skill?: string; command?: string; engine: string;   // skill = SKILL.md 실제 경로, engine = 든 엔진 id($EDITH_ENGINE)
   common?: string; deps: string[]; failTo?: string; max?: number; fixOnly?: boolean;
+  humanWait?: true;   // 사람을 「도는 중」 으로 기다리는 명령 노드(엔진 노드의 humanWait) — 런 분석만 그 시간을 사람 대기로 본다
   track?: string;   // 갈래 — 화살표가 갈려 따로(동시에) 도는 줄의 이름. 없으면 본 줄
   boxes?: { name: string; kind: 'chain' | 'engine' }[];   // 맨 위 엔진 밑에서 이 노드까지 든 체인 · 엔진(바깥부터, group 의 마디마다) — 펼친 캔버스의 상자. 옛 런엔 없다
 };
@@ -65,7 +66,7 @@ export function flatten(top: string, load: Load, resolve: Resolve): Step[] | str
       if (n.engine) { ends.set(n.id, walk(n.engine, `${prefix}${n.id}.`, common, [...path, id], boxes)); continue; }
       const base = { key: `${prefix}${n.id}`, title: n.title, lane: e.name, group: prefix || '.', engine: id, deps: [] as string[], ...(common ? { common } : {}), ...(boxes.length ? { boxes } : {}) };
       let s: Step;
-      if (n.command) s = { ...base, kind: 'command', command: n.command };
+      if (n.command) s = { ...base, kind: 'command', command: n.command, ...(n.humanWait ? { humanWait: true as const } : {}) };
       else if (n.skill) {
         const p = resolve(id, n.skill);
         if (!p) errs.push(`「${e.name}」의 「${n.title}」: 스킬 ${n.skill.id} 이 없다`);
