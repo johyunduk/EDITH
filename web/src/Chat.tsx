@@ -2,10 +2,10 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, type HPane } from './api.ts';
-import { Empty, Md } from './ui.tsx';
+import { Empty, Icon, Md } from './ui.tsx';
 import { Ansi } from './ansi.tsx';
-import { parseMenu } from './screenMenu.ts';
-import { Kind } from './herdrUi.tsx';
+import { mainPush, parseMenu, type Menu } from './screenMenu.ts';
+import { Kind, WARN } from './herdrUi.tsx';
 import { AskBand, useAsksOpen } from './Asks.tsx';
 
 type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; result?: string; error?: boolean; at?: number };
@@ -79,12 +79,7 @@ export function Chat({ p }: { p: HPane }) {
       {!more && older.length > 0 && <p className="text-center text-xs text-muted-foreground/70">대화 처음</p>}
       {older.map((it, i) => <ChatItem key={`o${older.length - i}`} it={it} agent={p.agent} />)}
       {data?.items.map((it, i) => <ChatItem key={i} it={it} agent={p.agent} />)}
-      {screen.menu ? (
-        <div className="ml-9 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-sm">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400"><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다 — 아래 입력칸에서 고른다</div>
-          {screen.menu.question && <div className="mt-1 whitespace-pre-wrap">{screen.menu.question.split('\n')[0]}</div>}{/* 자세한 것은 아래 입력칸 카드에 */}
-        </div>
-      ) : (p.status === 'working' || !screen.input) && screen.raw.length > 0 && <LiveText raw={screen.raw} lines={screen.lines} working={p.status === 'working'} />}
+      {screen.menu ? <WaitNote menu={screen.menu} /> : (p.status === 'working' || !screen.input) && screen.raw.length > 0 && <LiveText raw={screen.raw} lines={screen.lines} working={p.status === 'working'} />}
       {away && (
         <div className="pointer-events-none sticky bottom-0 flex justify-center">
           <button onClick={toBottom} className="pointer-events-auto flex items-center gap-1.5 rounded-full border bg-card/95 px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur hover:bg-muted">
@@ -151,3 +146,16 @@ const ChatItem = memo(function ChatItem({ it, agent }: { it: Item; agent: string
     </details>
   );
 });
+
+// 대화 끝 「답을 기다린다」 말풍선 — 자세한 것은 아래 입력칸 카드에. main · master 푸시 질문(커밋 지킴이)은 빨강
+function WaitNote({ menu }: { menu: Menu }) {
+  const mp = mainPush(menu), q = mp?.question ?? menu.question;
+  return (
+    <div className={`ml-9 rounded-xl border px-3.5 py-2.5 text-sm ${mp ? 'border-rose-500/40 bg-rose-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
+      <div className={`flex items-center gap-1.5 text-xs font-semibold ${mp ? 'text-rose-700 dark:text-rose-400' : 'text-amber-700 dark:text-amber-400'}`}>
+        {mp ? <><Icon className="size-3.5">{WARN}</Icon>{mp.branch} 푸시를 기다린다 — 아래 입력칸에서 고른다</> : <><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다 — 아래 입력칸에서 고른다</>}
+      </div>
+      {q && <div className="mt-1 whitespace-pre-wrap">{q.split('\n')[0]}</div>}
+    </div>
+  );
+}

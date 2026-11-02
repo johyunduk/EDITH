@@ -12,7 +12,7 @@ import { PIN, isAgent, useAsksOpen } from './Asks.tsx';
 import { ShellLog } from './ShellLog.tsx';
 import { QuickKeys, Term } from './Term.tsx';
 import { PromptBox } from './Prompt.tsx';
-import { DOT, DRAG_PANE, Kind, REMOTE, STATUS, carrying, paneText, useMove, usePaneMenu, useTabMenu } from './herdrUi.tsx';
+import { DOT, DRAG_PANE, Kind, PushTag, REMOTE, STATUS, carrying, paneText, useMove, usePaneMenu, useTabMenu } from './herdrUi.tsx';
 
 const GIT_COMPARE = <><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><path d="M11 18H8a2 2 0 0 1-2-2V9" /></>;   // lucide git-compare
 
@@ -162,7 +162,7 @@ export function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
           <h1 className="text-xl font-bold tracking-tight" onContextMenu={e => ws && tab && openMenu(e, tabMenu(ws, tab))}>{ws?.label}</h1>
           <Branches p={p} />
           {tab && (ws?.tab_count ?? 1) > 1 && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground" onContextMenu={e => ws && openMenu(e, tabMenu(ws, tab))}>탭 {tab.label}</span>}
-          {p.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
+          {p.push ? <PushTag branch={p.push} /> : p.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
           <span className="ml-auto flex items-center gap-1">
             <BgTasks p={p} /><Remote p={p} />
             <button onClick={() => setDiffOn(v => !v)} title="이 pane 폴더(git)의 코드 변경"
@@ -349,7 +349,7 @@ function TabLayout({ lay, data, sel }: { lay: HerdrView['layouts'][number]; data
                 className={`@container flex shrink-0 cursor-grab items-center gap-1.5 border-b px-2.5 py-1.5 text-xs font-medium ${c.id === sel ? 'bg-accent text-accent-foreground' : 'bg-muted/50 hover:bg-muted'}`}>
                 <span className={`size-2 shrink-0 rounded-full ${DOT[p.status ?? ''] ?? 'bg-muted-foreground/30'}`} />
                 <Kind agent={p.agent} /><span className="truncate">{paneText(p)}</span>
-                {p.status === 'blocked' && <span className="shrink-0 text-amber-600 dark:text-amber-400">승인 대기</span>}
+                {p.status === 'blocked' && (p.push ? <span className="shrink-0 font-semibold text-rose-600 dark:text-rose-400">⚠ {p.push} 푸시</span> : <span className="shrink-0 text-amber-600 dark:text-amber-400">승인 대기</span>)}
                 <span className="ml-1.5"><Usage p={p} short /></span>
                 <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap" onClick={e => e.preventDefault()}><AsksToggle p={p} small /><RawToggle p={p} small /><PaneActions p={p} /></span>
               </a>

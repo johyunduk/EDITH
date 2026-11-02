@@ -9,6 +9,11 @@ import codexIcon from './icons/codex.svg';
 // unknown 은 에이전트가 없거나 herdr 가 상태를 못 가린 것 — 표시하지 않는다.
 export const STATUS: Record<string, string> = { working: '작업 중', blocked: '승인 대기', done: '끝남', idle: '대기' };
 export const DOT: Record<string, string> = { working: 'bg-sky-500', blocked: 'bg-amber-500', done: 'bg-emerald-500' };
+// main · master 푸시를 묻는 승인 대기(HPane.push — 커밋 지킴이) — 주황 대신 빨강 · 경고 아이콘으로 다른 승인 대기와 가른다
+export const WARN = <><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></>;   // lucide triangle-alert
+export const PUSH_TONE = 'bg-rose-500/15 text-rose-700 dark:text-rose-400';
+export const PushTag = ({ branch }: { branch: string }) =>
+  <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${PUSH_TONE}`}><Icon className="size-3.5">{WARN}</Icon>{branch} 푸시 대기</span>;
 const ICON: Record<string, string> = { claude: claudeIcon, codex: codexIcon };
 
 // 에이전트 종류 — Claude·Codex 는 아이콘, 그 밖의 에이전트는 첫 글자, 셸은 터미널 아이콘.

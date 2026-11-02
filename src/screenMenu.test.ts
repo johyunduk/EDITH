@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMenu } from '../web/src/screenMenu.ts';
+import { mainPush, parseMenu } from '../web/src/screenMenu.ts';
 
 test('번호 메뉴 — 번호·설명 줄·질문, 커서는 없다', () => {
   const m = parseMenu([
@@ -110,6 +110,16 @@ test('긴 질문(커밋 지킴이) — 가로줄 아래 전부가 질문(머리 
   assert.equal(m?.tabs, 'git commit');
   assert.equal(m?.question, 'git commit 1건 — 실행할까?\n\ngtest (main)\n  제목: Add a and b\n  파일 2개: a.txt, b.txt\n\n명령 원문(앞 400자):\ncd /tmp/gtest && git commit -F msg.txt && git log\n--oneline -1');
   assert.deepEqual(m?.options.map(o => o.label), ['실행', '막기', 'Type something.', 'Chat about this']);
+});
+
+test('main 푸시 질문(커밋 지킴이) — 머리표 「⚠ main 푸시」 면 브랜치 · 원격 ref, 질문은 ⚠ 첫 줄을 뗀 것. 다른 질문 · 대화 속 같은 글은 아니다', () => {
+  const lines = ['⏺ origin 원격의 main 브랜치로 푸시', '──────────────────────────────', ' ☐ ⚠ main 푸시', '',
+    '│ ⚠ main 에 바로 올라간다 — origin/main', '│ 왜: origin 원격의 main 브랜치로 푸시', '│', '│ git push 1건 — 실행할까?', '│', '│ demo-app (main)', '│   git push origin main',
+    '❯ 1. 실행 — main 에 푸시', '  2. 막기', '  3. Type something.', '──────────────────────────────', '  4. Chat about this', 'Enter to select · ↑/↓ to navigate · Esc to cancel'];
+  assert.deepEqual(mainPush(parseMenu(lines)), { branch: 'main', ref: 'origin/main', question: '왜: origin 원격의 main 브랜치로 푸시\n\ngit push 1건 — 실행할까?\n\ndemo-app (main)\n  git push origin main' });
+  assert.equal(mainPush(parseMenu(lines.map(l => l.replace(' ☐ ⚠ main 푸시', ' ☐ git push')))), null);
+  assert.equal(mainPush(parseMenu(['⏺ 「☐ ⚠ main 푸시」 머리표를 단다', '────────', ' ☐ git commit', '│ git commit 1건 — 실행할까?', '❯ 1. 실행', '  2. 막기'])), null);
+  assert.equal(mainPush(null), null);
 });
 
 test('Claude 승인 화면 — 첫 줄은 종류(tabs), 점선 사이는 block(줄 번호), Tip 줄은 빠진다', () => {

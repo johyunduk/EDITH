@@ -10,7 +10,7 @@ import { basename, extname, join, resolve, sep } from 'node:path';
 import { hostname, userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
-import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, workspaceAction, type Usage } from './herdr.ts';
+import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, withPush, workspaceAction, type Usage } from './herdr.ts';
 import { backgroundTasks, chat, checkAlive, claudeStarted, codexUsage, remoteControl, taskOutput } from './chat.ts';
 import { lastAsks } from '../web/src/asks.ts';
 import { commands, findFiles } from './complete.ts';
@@ -361,7 +361,7 @@ export function serve(port: number) {
         return await setSetting(b.key, b.on).then(v => reply(res, 200, v), fail);
       }
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
-      if (path === '/api/herdr') return reply(res, 200, await snapshot());
+      if (path === '/api/herdr') return reply(res, 200, await withPush(await snapshot()));   // 승인 대기 pane 은 main 푸시인지(push)도
       // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
       if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot, stale: stale(), web: webBuilt(), restart: canRestart });
       if (req.method === 'POST' && path === '/api/restart') {

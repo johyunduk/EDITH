@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { sh } from './sh.ts';
 import { toCodex } from './complete.ts';
-import { parseMenu, stillPicked } from '../web/src/screenMenu.ts';
+import { mainPush, parseMenu, stillPicked } from '../web/src/screenMenu.ts';
 
 // herdr 소켓 — macOS·Linux 는 도메인 소켓, Windows 는 named pipe. herdr pane 안에서 띄우면 HERDR_SOCKET_PATH 가 있고,
 // 없으면 `herdr status server` 가 알려 주는 경로(socket: …). 둘 다 못 얻으면 Unix 기본 경로 — 그때는 기억하지 않고 다음에 다시 묻는다.
@@ -212,6 +212,19 @@ export async function live(id: string) {
   const codex = plain.findLastIndex((l, i) => /^\s*›(\s|$)/.test(l) && plain.slice(i + 1, i + 4).some(x => /% used|for shortcuts/.test(x)));
   const box = claude >= 0 ? claude - 1 : codex;
   return { lines: lines.slice(...liveWindow(plain, box)), input: box >= 0 };
+}
+// 승인 대기 pane 이 main · master 푸시를 묻는 중이면 push 에 그 브랜치(커밋 지킴이 머리표 — screenMenu.ts mainPush). 사이드바 · 머리 배지 · 알림이 빨강으로 본다.
+// 화면은 승인 대기인 에이전트 pane 만 읽고, 3초 안에 읽은 것은 다시 쓴다(화면 목록은 2초마다 온다)
+const pushes = new Map<string, { at: number; push: string | null }>();
+export async function withPush<T extends { panes: { id: string; agent: string | null; status: string | null }[] }>(s: T) {
+  const blocked = s.panes.filter(p => p.agent && p.status === 'blocked'), now = Date.now();
+  for (const id of pushes.keys()) if (!blocked.some(p => p.id === id)) pushes.delete(id);
+  await Promise.all(blocked.map(async p => {
+    if ((pushes.get(p.id)?.at ?? 0) > now - 3000) return;
+    const lines = (await live(p.id).catch(() => ({ lines: [] as string[] }))).lines.map(l => l.replace(ANSI, ''));
+    pushes.set(p.id, { at: now, push: mainPush(parseMenu(lines))?.branch ?? null });
+  }));
+  return { ...s, panes: s.panes.map(p => { const push = pushes.get(p.id)?.push; return push ? { ...p, push } : p; }) };
 }
 export function liveWindow(plain: string[], box: number): [number, number] {
   let b = box >= 0 ? box : plain.length;

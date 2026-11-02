@@ -10,6 +10,7 @@ export type HTab = { tab_id: string; workspace_id: string; number: number; label
 export type HPane = {
   id: string; tab: string; workspace: string; agent: string | null; name: string | null; status: string | null;
   title: string; cwd: string; focused: boolean; cols: number; rows: number;
+  push?: string;   // 승인 대기 중 main · master 푸시를 묻고 있으면 그 브랜치(서버 withPush — 커밋 지킴이 머리표)
 };
 type Box = { x: number; y: number; w: number; h: number };
 export type HSplit = Box & { path: boolean[]; dir: string; ratio: number };

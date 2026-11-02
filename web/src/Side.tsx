@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Icon } from './ui.tsx';
 import { openMenu } from './Menu.tsx';
 import { toast } from './copy.ts';
-import { DOT, DRAG_PANE, DRAG_WS, Kind, REMOTE, STATUS, carrying, paneText, useMove, usePaneMenu, useTabMenu, useWorkspaceMenu } from './herdrUi.tsx';
+import { DOT, DRAG_PANE, DRAG_WS, Kind, PUSH_TONE, REMOTE, STATUS, WARN, carrying, paneText, useMove, usePaneMenu, useTabMenu, useWorkspaceMenu } from './herdrUi.tsx';
 import { AskCard, AskLine, isAgent, useHoverCard } from './Asks.tsx';
 import { groupInOrder, shortName, urgentOf } from './wsGroups.ts';
 
@@ -31,7 +31,19 @@ export function Legend({ data }: { data: HerdrView }) {
           </div>
         );
       })}
+      <PushCount panes={data.panes} />
       {at && <StatusList data={data} s={at.s} style={{ left: at.left, bottom: at.bottom }} onPick={() => setAt(null)} />}
+    </div>
+  );
+}
+
+// 승인 대기 중 main · master 푸시를 묻는 pane 수(HPane.push) — 있을 때만 빨간 한 줄
+function PushCount({ panes }: { panes: HPane[] }) {
+  const push = panes.flatMap(p => p.push ? [p.push] : []);
+  if (!push.length) return null;
+  return (
+    <div className="-mx-1 flex h-6 items-center gap-2 px-1 text-[0.8125rem] font-semibold text-rose-600 dark:text-rose-400">
+      <Icon className="size-3.5">{WARN}</Icon>그중 {[...new Set(push)].join(' · ')} 푸시<span className="ml-auto tabular-nums">{push.length}</span>
     </div>
   );
 }
@@ -225,6 +237,7 @@ function Group({ name, items, wss, sel, data, children }: {
   const all = wss.filter(w => inside.has(w.workspace_id) || (w.worktree?.is_linked_worktree && items.some(i => i.worktree?.repo_key === w.worktree?.repo_key)));
   const state = urgentOf(all.map(w => w.agent_status));
   const mine = data.panes.some(p => p.id === sel && all.some(w => w.workspace_id === p.workspace));
+  const push = data.panes.find(p => p.push && all.some(w => w.workspace_id === p.workspace))?.push;
   return (
     <details open={!shut} className="my-0.5">
       <summary onClick={e => { e.preventDefault(); toggle(); }}
@@ -240,7 +253,7 @@ function Group({ name, items, wss, sel, data, children }: {
         <svg viewBox="0 0 16 16" className="size-3 shrink-0 text-muted-foreground/60 transition-transform [[open]>summary>&]:rotate-90" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 4 4 4-4 4" /></svg>
         <span className={`truncate font-semibold tracking-wide ${mine ? 'text-foreground' : 'text-muted-foreground'}`}>{name}</span>
         <span className="min-w-4 rounded-full bg-muted px-1 text-center text-[0.625rem] leading-4 text-muted-foreground tabular-nums">{items.length}</span>
-        <span className="ml-auto flex shrink-0 items-center pl-1">{state && <State v={state} />}</span>
+        <span className="ml-auto flex shrink-0 items-center pl-1">{state && <State v={state} push={push} />}</span>
       </summary>
       <div className="ml-2 border-l pl-1">{children}</div>
     </details>
@@ -285,7 +298,7 @@ function Node({ w, name, data, sel, depth, children }: { w: HWorkspace; name?: s
         <svg viewBox="0 0 16 16" className="size-3 shrink-0 text-muted-foreground/60 transition-transform [[open]>summary>&]:rotate-90" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 4 4 4-4 4" /></svg>
         <span title={name && w.label} className={`truncate ${mine ? 'font-semibold text-foreground' : 'font-medium text-foreground/90'}`}>{name ?? w.label}</span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
-          {w.agent_status && w.agent_status !== 'idle' && STATUS[w.agent_status] && <State v={w.agent_status} />}
+          {w.agent_status && w.agent_status !== 'idle' && STATUS[w.agent_status] && <State v={w.agent_status} push={panes.find(p => p.push)?.push} />}
           {kids > 0 && <span className="min-w-4 rounded-full bg-muted px-1 text-center text-[0.625rem] leading-4 text-muted-foreground tabular-nums">{kids}</span>}
         </span>
       </summary>
@@ -309,7 +322,8 @@ function Node({ w, name, data, sel, depth, children }: { w: HWorkspace; name?: s
 
 // 워크스페이스 줄 상태 — 알약 대신 점 + 글자(줄 높이를 안 늘린다).
 const STATE_TONE: Record<string, string> = { working: 'text-sky-600 dark:text-sky-400', blocked: 'text-amber-600 dark:text-amber-400', done: 'text-emerald-600 dark:text-emerald-400' };
-function State({ v }: { v: string }) {
+function State({ v, push }: { v: string; push?: string }) {
+  if (push) return <span className="flex items-center gap-1 text-[0.6875rem] font-semibold text-rose-600 dark:text-rose-400"><Icon className="size-3">{WARN}</Icon>{push} 푸시</span>;
   return (
     <span className={`flex items-center gap-1 text-[0.6875rem] font-medium ${STATE_TONE[v] ?? 'text-muted-foreground'}`}>
       <span className={`size-1.5 rounded-full ${DOT[v] ?? 'bg-muted-foreground/40'} ${v === 'working' || v === 'blocked' ? 'animate-pulse' : ''}`} />{STATUS[v]}
@@ -327,10 +341,12 @@ function PaneRow({ p, on, depth, text }: { p: HPane; on: boolean; depth: number;
       onMouseEnter={agent ? card.enter : undefined} onMouseLeave={card.leave}
       onContextMenu={e => openMenu(e, menu(p))}
       className={`mx-1 flex h-8 items-center gap-2 rounded-lg border pr-2 text-xs ${depth ? 'ml-5 pl-2' : 'ml-4 pl-2'} ${on ? 'border-primary/70 bg-accent font-medium text-accent-foreground shadow-sm' : 'border-transparent hover:bg-muted/70'}`}>
-      <span className={`size-2 shrink-0 rounded-full ${DOT[p.status ?? ''] ?? 'bg-muted-foreground/25'} ${p.status === 'working' || p.status === 'blocked' ? 'animate-pulse' : ''}`} />
+      <span className={`size-2 shrink-0 rounded-full ${p.push ? 'bg-rose-500' : DOT[p.status ?? ''] ?? 'bg-muted-foreground/25'} ${p.status === 'working' || p.status === 'blocked' ? 'animate-pulse' : ''}`} />
       <Kind agent={p.agent} />
       <span className={`truncate ${p.agent || on ? '' : 'text-muted-foreground'}`}>{text}</span>
-      {p.status === 'blocked' && <span className="ml-auto shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[0.625rem] font-semibold text-amber-700 dark:text-amber-400">승인 대기</span>}
+      {p.status === 'blocked' && (p.push
+        ? <span className={`ml-auto shrink-0 rounded-full px-1.5 text-[0.625rem] font-semibold ${PUSH_TONE}`}>⚠ {p.push} 푸시</span>
+        : <span className="ml-auto shrink-0 rounded-full bg-amber-500/15 px-1.5 text-[0.625rem] font-semibold text-amber-700 dark:text-amber-400">승인 대기</span>)}
     </a>
     {card.at && <AskCard panes={[p]} style={card.at} />}
     </>

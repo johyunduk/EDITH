@@ -16,7 +16,7 @@ import { AgentPane } from './AgentPane.tsx';
 import { putDraft } from './Prompt.tsx';
 import { FolderInput } from './Side.tsx';
 import { Bracketed, Empty, Icon, Tag } from './ui.tsx';
-import { Kind, STATUS } from './herdrUi.tsx';
+import { Kind, PushTag, STATUS } from './herdrUi.tsx';
 import { toast } from './copy.ts';
 import { StageMap } from './StageMap.tsx';
 import { EngineMap, ROLE } from './EngineMap.tsx';
@@ -996,7 +996,7 @@ function ClaudePanel({ id, fold, setFold }: { id: string | null; fold: boolean; 
         onKeyDown={e => { const d = e.key === 'ArrowLeft' ? 32 : e.key === 'ArrowRight' ? -32 : 0; if (d) { e.preventDefault(); keep(wideOf(wide + d)); } }} />
       <div className="flex items-center gap-2 px-1">
         <Kind agent="claude" /><span className="text-sm font-semibold">공방 Claude</span>
-        {p?.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
+        {p?.push ? <PushTag branch={p.push} /> : p?.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
         {p && <a href={`#/herdr/${p.id}`} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">herdr 에서 보기</a>}
         <button onClick={() => setFold(true)} title="공방 Claude 접기" className="ml-auto rounded-md border bg-card p-1 hover:bg-muted"><Icon className="size-4">{CHEVRON_R}</Icon></button>
       </div>

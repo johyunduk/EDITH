@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { gitWrite, parse, pathIn } from './register.ts'
+import { gitWrite, parse, pathIn, pushTo } from './register.ts'
 
 test('git commit·push 를 찾는다 — 옵션·경로·이어 붙인 명령·셸 안 따옴표까지, 다른 git 명령과 이름만 비슷한 것은 아니다', async () => {
   for (const c of ['git commit -m x', 'git push', 'cd a && git add -A && git commit -q -F - <<EOF', 'git -C "my dir" push origin main',
@@ -109,4 +109,31 @@ test('워크트리에 gada.ticket 이 있는데 제목에 키가 없으면 묻�
   ticket = 'already.ts'   // 키 꼴이 아닌 값은 무시
   await $.tool.call({ tool: 'Bash', command: 'git commit -m "아무 제목"' })
   expect([ran, asked]).toEqual([5, 5])
+})
+
+test('main · master 로 가는 push 를 안다 — refspec 의 dst, 없거나 HEAD 면 지금 브랜치, 다른 브랜치는 아니다', async () => {
+  expect(pushTo(['origin', 'main'])).toEqual({ branch: 'main', remote: 'origin' })
+  expect(pushTo(['-u', 'up', 'HEAD:refs/heads/master'])).toEqual({ branch: 'master', remote: 'up' })
+  expect(pushTo([], 'main')).toEqual({ branch: 'main', remote: 'origin' })
+  expect(pushTo(['origin', 'HEAD'], 'master')).toEqual({ branch: 'master', remote: 'origin' })
+  expect(pushTo(['origin', '+feature/x:main'])).toEqual({ branch: 'main', remote: 'origin' })
+  for (const [a, cur] of [[['origin', 'feature/x'], 'main'], [[], 'feature/x'], [['origin', 'main-v2']], [['origin', 'feature/main']]] as [string[], string?][])
+    expect(pushTo(a, cur)).toBe(null)
+})
+
+test('main 푸시면 머리 「⚠ main 푸시」 · 첫 줄 ⚠ · 실행 단추 「실행 — main 에 푸시」, 다른 브랜치 push 는 그대로', async ($: any, on: any) => {
+  let q: any, ran = 0
+  on('tool.call', { tool: 'Bash' }, () => { ran++; return { result: 'ok' } })
+  on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => { q = e.questions[0]; return answer(q.options[0].label)($, e) })
+  on('env.get', () => ({ value: '/home/me' }))
+  on('process.run', ($: any, e: any) => ({ value: { exitCode: 0, stdout: e.argv.includes('--show-current') ? 'feature/x\n' : '/r/app\n', stderr: '' } }))
+  await $.tool.call({ tool: 'Bash', command: 'git -C /r/app push origin main', description: 'main 에 올린다' })
+  expect(q.header).toBe('⚠ main 푸시')
+  expect(q.question.startsWith('⚠ main 에 바로 올라간다 — origin/main\n왜: main 에 올린다\n')).toBe(true)
+  expect(q.options.map((o: any) => o.label)).toEqual(['실행 — main 에 푸시', '막기'])
+  expect(ran).toBe(1)
+  await $.tool.call({ tool: 'Bash', command: 'git -C /r/app push' })   // 지금 브랜치 feature/x
+  expect(q.header).toBe('git push')
+  expect(q.options.map((o: any) => o.label)).toEqual(['실행', '막기'])
+  expect(ran).toBe(2)
 })

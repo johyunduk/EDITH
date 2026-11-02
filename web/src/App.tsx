@@ -166,7 +166,8 @@ function useBlockedAlert(brand: string, data?: HerdrView, remote?: string | null
     for (const id of fresh) {
       const p = data.panes.find(x => x.id === id)!, ws = data.workspaces.find(w => w.workspace_id === p.workspace);
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        const n = new Notification(remote ? `승인 대기 · ${remote}` : '승인 대기', { body: `${ws?.label ?? ''} · ${p.title}`, tag: id });
+        const what = p.push ? `⚠ ${p.push} 푸시 승인 대기` : '승인 대기';   // main · master 푸시(커밋 지킴이)는 제목에서 가른다
+        const n = new Notification(remote ? `${what} · ${remote}` : what, { body: `${ws?.label ?? ''} · ${p.title}`, tag: id });
         n.onclick = () => { window.focus(); location.hash = `#/herdr/${id}`; };
       }
     }

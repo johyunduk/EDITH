@@ -71,7 +71,7 @@ export function split(s: string): Cmd[] {
   return out
 }
 
-export type Item = { op: 'commit' | 'push', dirs: string[], title?: string, msgFile?: string, files: string[], notes: string[] }   // dirs: 차례로 -C 할 폴더(cd·-C), msgFile: -F 로 준 메시지 파일
+export type Item = { op: 'commit' | 'push', dirs: string[], title?: string, msgFile?: string, files: string[], notes: string[], args?: string[] }   // dirs: 차례로 -C 할 폴더(cd·-C), msgFile: -F 로 준 메시지 파일, args: push 뒤 인자
 const SKIP = ['{', '!', 'then', 'do', 'else', 'command', 'env', 'exec', 'time', 'nohup']   // 명령 앞에 붙는 말
 const OPT = ['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env']   // 값을 다음 단어로 받는 git 앞 옵션
 const VAL = ['--author', '--date', '--trailer', '--fixup', '--squash', '--reuse-message', '--reedit-message', '--cleanup', '--template', '--pathspec-from-file']   // 값을 다음 단어로 받는 commit 옵션
@@ -98,7 +98,7 @@ export function parse(command: string): Item[] {
       if (paths.length) at.files.push(...paths)
       else at.notes.push(`git add ${rest.join(' ')} — 바뀐 파일 전부`)
       added.set(key, at)
-    } else if (op === 'push') out.push({ op, dirs, files: [], notes: [`git push ${rest.join(' ')}`.trim()] })
+    } else if (op === 'push') out.push({ op, dirs, files: [], notes: [`git push ${rest.join(' ')}`.trim()], args: rest })
     else if (op === 'commit') {
       const it: Item = { op, dirs, files: [], notes: [] }, pre = added.get(key)
       if (pre) { it.files.push(...pre.files); it.notes.push(...pre.notes); added.delete(key) }
@@ -173,6 +173,17 @@ export async function missingKeys($: any, command: string) {
   return [...new Set(keys.filter((k): k is string => !!k && TICKET.test(k)))]
 }
 
+// main · master 로 가는 push — 질문 머리를 「⚠ main 푸시」 로 바꿔 EDITH 가 빨강으로 보인다(web/src/screenMenu.ts mainPush).
+// 대상은 refspec(<원격> <src>[:<dst>])의 dst, refspec 이 없거나 HEAD 면 지금 브랜치. 원격을 안 적으면 origin 으로 적는다.
+// ponytail: 값을 받는 옵션(-o x · --repo x)의 값을 원격으로 읽을 수 있고, --all · --mirror · push.default · 다른 upstream 설정은 보지 않는다
+const MAIN = /^(main|master)$/
+export function pushTo(args: string[], current?: string): { branch: string, remote: string } | null {
+  const [remote = 'origin', ...refs] = args.filter(a => !a.startsWith('-'))
+  const dst = (r: string) => { const d = r.replace(/^\+/, '').split(':').pop()!.replace(/^refs\/heads\//, ''); return d === 'HEAD' || !d ? current : d }
+  const branch = (refs.length ? refs.map(dst) : [current]).find(b => b && MAIN.test(b))
+  return branch ? { branch, remote } : null
+}
+
 export async function describe($: any, command: string) {
   const items = parse(command)
   if (!items.length) return undefined
@@ -197,7 +208,8 @@ export async function describe($: any, command: string) {
   // 글로 찾은 commit·push 가 푼 것보다 많으면(bash -c, $(…), 메시지 속 글 등) 알린다
   const more = (command.match(new RegExp(GIT.source, 'g'))?.length ?? 0) - items.length
   if (more > 0) lines.push('', `명령 글에 git commit·push 가 ${more}번 더 보인다 — 원문에서 확인`)
-  return lines.join('\n')
+  const main = seen.map(({ it, branch }) => it.op === 'push' ? pushTo(it.args ?? [], branch || undefined) : null).find(Boolean) ?? undefined
+  return { text: lines.join('\n'), main }
 }
 
 const YES = '실행', NO = '막기'
@@ -232,11 +244,13 @@ export function register(on: any, options: { enabled?: boolean } = {}) {
     const keys = await missingKeys($, e.command).catch(() => [])   // 못 풀면 그냥 묻는다
     if (keys.length) return { deny: `커밋 제목에 티켓키가 없다(워크트리 gada.ticket = ${keys.join(', ')}) — 제목을 '<타입>[${keys[0]}]. [태그] 내용' 꼴로 고쳐 다시 커밋한다` }
     const cmd = e.command.length > 400 ? `${e.command.slice(0, 400)}…` : e.command
-    const told = await describe($, e.command).catch(() => undefined)
+    const told = await describe($, e.command).catch(() => undefined), hit = told?.main
     // 맨 위에 왜 하는지 — 도구 호출의 설명(description). 커밋으로 못 푼 명령(commit-tree 등)은 이것만이 까닭이다
     const why = `왜: ${typeof e.description === 'string' && e.description.trim() ? e.description.trim() : '(Claude 가 설명을 붙이지 않았다)'}\n\n`
-    const a = await $.ui.ask(why + (told ? `${told}\n\n명령 원문(앞 400자):\n${cmd}` : `git ${what} 실행할까?\n\n${cmd}`), { header: `git ${what}`, options: [YES, NO] })
-    if (a !== YES) return { deny: `사용자가 git ${what} 실행을 막았다 — 다시 시도하지 말고 사용자에게 어떻게 할지 묻는다` }
+    // main · master 푸시는 머리 · 첫 줄 · 실행 단추 글을 바꾼다 — 터미널 · 폰에서도 보이고, EDITH 는 이 글을 보고 빨강으로
+    const warn = hit ? `⚠ ${hit.branch} 에 바로 올라간다 — ${hit.remote}/${hit.branch}\n` : '', yes = hit ? `${YES} — ${hit.branch} 에 푸시` : YES
+    const a = await $.ui.ask(warn + why + (told ? `${told.text}\n\n명령 원문(앞 400자):\n${cmd}` : `git ${what} 실행할까?\n\n${cmd}`), { header: hit ? `⚠ ${hit.branch} 푸시` : `git ${what}`, options: [yes, NO] })
+    if (a !== yes) return { deny: `사용자가 git ${what} 실행을 막았다 — 다시 시도하지 말고 사용자에게 어떻게 할지 묻는다` }
     if (e.tool_use_id) approved.add(e.tool_use_id)
     try { return await next(e) } finally { if (e.tool_use_id) approved.delete(e.tool_use_id) }
   }).catch(($: any, e: any, next: any) => next.called ? next(e) : { deny: '커밋 지킴이가 사용자에게 묻지 못했다(물을 사람이 없거나 창이 닫힘) — 실행하지 않았다' })

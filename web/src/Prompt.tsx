@@ -4,7 +4,8 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { get, post, type HPane } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Icon } from './ui.tsx';
-import { isFree, wide, type Menu } from './screenMenu.ts';
+import { isFree, mainPush, wide, type Menu } from './screenMenu.ts';
+import { WARN } from './herdrUi.tsx';
 import { toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
 import { useScreen } from './Chat.tsx';
@@ -55,6 +56,8 @@ export function putDraft(id: string, add: string) {
 }
 export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   const agent = !!p.agent, { menu, raw } = useScreen(p), qc = useQueryClient();
+  // main · master 푸시 질문(커밋 지킴이)은 카드를 빨강으로 — 머리에 브랜치 · 원격, 질문은 ⚠ 첫 줄을 뗀 나머지
+  const mp = mainPush(menu), question = mp?.question ?? menu?.question ?? '';
   const [text, setText] = useState(() => loadDraft(p.id)), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
   const ac = useComplete(p, text, caret);
@@ -116,20 +119,27 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   return (
     <div className="space-y-1">
       {menu && (
-        <div className="space-y-2.5 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-amber-500/5 p-3.5 shadow-sm">
-          <div className="flex items-center gap-2 text-[0.75rem] font-semibold text-amber-700 dark:text-amber-400">
-            <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[0.75rem] font-bold text-white">!</span>답을 기다린다
-          </div>
+        <div className={`space-y-2.5 rounded-2xl border p-3.5 shadow-sm ${mp ? 'border-rose-500/60 bg-gradient-to-b from-rose-500/12 to-rose-500/5' : 'border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-amber-500/5'}`}>
+          {mp ? (
+            <div className="flex flex-wrap items-center gap-2 text-[0.8125rem] font-bold text-rose-700 dark:text-rose-400">
+              <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-rose-600 text-white"><Icon className="size-3.5">{WARN}</Icon></span>{mp.branch} 에 바로 푸시
+              <span className="rounded-md border border-rose-500/40 bg-card px-1.5 font-mono text-[0.6875rem] font-semibold">{mp.ref}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-[0.75rem] font-semibold text-amber-700 dark:text-amber-400">
+              <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[0.75rem] font-bold text-white">!</span>답을 기다린다
+            </div>
+          )}
           {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
           {/* 질문 첫 줄(무엇을 묻는지)은 굵게, 나머지(레포·제목·파일·명령 원문 등)는 보통 글씨로 — 긴 경로는 아무 데서나 줄을 바꾼다.
               승인 화면의 명령·파일 내용·diff(block)는 첫 줄 아래에 터미널 색 그대로, 「$ 명령」 줄(Codex 승인)은 고정폭으로 */}
-          {(menu.question || menu.block) && (
+          {(question || menu.block) && (
             <div className="space-y-1.5 text-[0.8125rem] whitespace-pre-wrap [overflow-wrap:anywhere]">
-              {menu.question && <div className="text-[0.84375rem] font-semibold">{menu.question.split('\n')[0]}</div>}
+              {question && <div className="text-[0.84375rem] font-semibold">{question.split('\n')[0]}</div>}
               {menu.block && <Ansi text={raw.slice(...menu.block).map(l => l.replace(BAR, '$1$2')).join('\n')} className="max-h-64 overflow-auto text-xs" />}
-              {menu.question.includes('\n') && (
+              {question.includes('\n') && (
                 <div className="max-h-72 overflow-y-auto text-foreground/85">
-                  {menu.question.slice(menu.question.indexOf('\n') + 1).replace(/^\n+/, '').split('\n').map((l, i) =>
+                  {question.slice(question.indexOf('\n') + 1).replace(/^\n+/, '').split('\n').map((l, i) =>
                     <div key={i} className={l.startsWith('$ ') ? 'my-1 rounded-md bg-code px-2.5 py-1.5 font-mono text-xs text-code-foreground' : ''}>{l || '\u00a0'}</div>)}
                 </div>
               )}
@@ -140,9 +150,9 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
           <div className="flex flex-col gap-2">
             {menu.options.map(o => (
               <button key={o.n} disabled={busy} onClick={() => answer(menu, o)}
-                className={`flex min-w-0 items-baseline gap-2.5 rounded-lg border bg-card px-3 py-2 text-left text-sm shadow-xs transition hover:border-primary/50 hover:bg-accent ${typed === o.n || o.checked ? 'border-primary ring-2 ring-primary/30' : ''}`}>
+                className={`flex min-w-0 items-baseline gap-2.5 rounded-lg border bg-card px-3 py-2 text-left text-sm shadow-xs transition hover:border-primary/50 hover:bg-accent ${typed === o.n || o.checked ? 'border-primary ring-2 ring-primary/30' : ''} ${mp && o.label.startsWith('실행') ? 'border-rose-500/50 font-bold text-rose-700 hover:border-rose-500 hover:bg-rose-500/10 dark:text-rose-400' : ''}`}>
                 {o.checked === undefined
-                  ? <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[0.6875rem] font-bold text-primary tabular-nums">{o.n}</span>
+                  ? <span className={`flex size-5 shrink-0 items-center justify-center rounded-md text-[0.6875rem] font-bold tabular-nums ${mp && o.label.startsWith('실행') ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400' : 'bg-primary/10 text-primary'}`}>{o.n}</span>
                   : <span className={`flex size-5 shrink-0 items-center justify-center rounded-md border text-[0.75rem] font-bold ${o.checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>{o.checked ? '✓' : ''}</span>}
                 <span className="font-medium">{o.label}</span>
                 {/* 설명은 남은 폭에서 줄을 바꾼다 — 긴 설명이 선택지 이름을 한 글자 폭으로 짓누르지 않게 */}

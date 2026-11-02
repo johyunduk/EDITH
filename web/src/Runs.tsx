@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { AgentPane } from './AgentPane.tsx';
 import { Empty, Icon, Md, Tag } from './ui.tsx';
 import { DiffView } from './Diff.tsx';
-import { Kind, STATUS } from './herdrUi.tsx';
+import { Kind, PushTag, STATUS } from './herdrUi.tsx';
 import { FolderInput } from './Side.tsx';
 import { copyText, toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
@@ -1149,7 +1149,7 @@ function RunPane({ panes, fold, setFold }: { panes: { track: string; id: string 
     <aside className="flex min-h-[28rem] w-full shrink-0 flex-col gap-2 border-t bg-sidebar p-2 md:min-h-0 md:w-[26rem] md:border-t-0 md:border-l">
       <div className="flex items-center gap-2 px-1">
         <Kind agent={p?.agent ?? 'claude'} /><span className="text-sm font-semibold">런 pane</span>
-        {p?.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
+        {p?.push ? <PushTag branch={p.push} /> : p?.status && STATUS[p.status] && <Tag v={p.status}>{STATUS[p.status]}</Tag>}
         {p && <a href={`#/herdr/${p.id}`} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">herdr 에서 보기</a>}
         {panes.length > 1 && (
           <span className="flex gap-1" role="group" aria-label="갈래 pane">

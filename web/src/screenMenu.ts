@@ -34,6 +34,15 @@ export const stillPicked = (lines: string[], n: number) =>
 // shortcut: 자주 쓰는 동아시아 글자와 이모지 범위만 두 칸, 모호한 폭(▾·← 등)은 Claude 화면처럼 한 칸 — 어긋나는 글자가 보이면 범위를 더한다
 export const wide = (c: string) => /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1f64f}\u{1f900}-\u{1f9ff}\u{20000}-\u{3fffd}]/u.test(c);
 
+// 커밋 지킴이의 main · master 푸시 질문 — 머리표 「⚠ main 푸시」 와 질문 첫 줄 「⚠ main 에 바로 올라간다 — origin/main」(plugins/commit-guard).
+// 카드 · 배지 · 사이드바 · 알림을 빨강으로 보인다. question 은 그 첫 줄을 뗀 나머지(카드는 그 줄을 머리로 올린다)
+export function mainPush(m: Menu | null): { branch: string; ref: string; question: string } | null {
+  const branch = m?.tabs?.match(/^⚠ (\S+) 푸시$/)?.[1];
+  if (!m || !branch) return null;
+  const head = m.question.match(/^⚠ \S+ 에 바로 올라간다 — (\S+)\n*/);
+  return { branch, ref: head?.[1] ?? branch, question: head ? m.question.slice(head[0].length) : m.question };
+}
+
 // 직접 써서 답하는 선택지(「Type something」 등) — 고르면 글을 받아야 한다
 export const isFree = (l: string) => /type something|직접|other/i.test(l);
 
