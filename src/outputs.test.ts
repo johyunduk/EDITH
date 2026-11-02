@@ -7,10 +7,10 @@ import { listOutputs, parseOutputs, readOutput } from './outputs.ts';
 
 test('산출물 목록 읽기 — 이름 + 절대 경로나 http(s) 주소만, 틀린 줄은 뺀다', () => {
   assert.deepEqual(parseOutputs(JSON.stringify([
-    { label: '계획', path: '/w/plan.md', node: 'fe.plan', note: '구현 계획' }, { label: '노션', url: 'https://notion.so/x' },
+    { label: '계획', path: '/w/plan.md', node: 'fe.plan', note: '구현 계획' }, { label: '링크', url: 'https://example.com/x', group: '기획', fold: ' ' },
     { label: '상대', path: 'plan.md' }, { label: '스크립트', url: 'javascript:alert(1)' }, { path: '/w/a.md' }, { label: '둘 다', path: '/w/b.md', url: 'https://x' },
   ])), [
-    { label: '계획', path: '/w/plan.md', node: 'fe.plan', note: '구현 계획' }, { label: '노션', url: 'https://notion.so/x' }, { label: '둘 다', path: '/w/b.md' },
+    { label: '계획', path: '/w/plan.md', node: 'fe.plan', note: '구현 계획' }, { label: '링크', url: 'https://example.com/x', group: '기획' }, { label: '둘 다', path: '/w/b.md' },
   ]);
   assert.deepEqual(parseOutputs('깨짐'), []);
 });

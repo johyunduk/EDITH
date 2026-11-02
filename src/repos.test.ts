@@ -4,7 +4,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseRepos, repoDiff, repoStatus } from './repos.ts';
+import { parseRepos, repoDiff, repoName, repoStatus } from './repos.ts';
+
+test('레포 이름 — 원격 주소의 레포 이름, 원격이 없으면 폴더 이름', () => {
+  assert.equal(repoName('git@github.com:acme/shop-api.git\n', '/w/1-memo'), 'shop-api');
+  assert.equal(repoName('https://github.com/acme/shop-web/', '/w/1-memo'), 'shop-web');
+  assert.equal(repoName('', '/w/1-memo'), '1-memo');
+});
 
 test('레포 목록 읽기 — 절대 경로만, 틀린 브랜치 · 기준 이름은 빼고 기준 기본은 origin/master', () => {
   assert.deepEqual(parseRepos(JSON.stringify([{ path: '/a/be', branch: 'feature/x', base: 'origin/dev' }, { path: 'rel' }, { path: '/b', branch: '-x', base: '--all' }])),

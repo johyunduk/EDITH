@@ -103,9 +103,7 @@ export async function runRepos(full: Run): Promise<ReachRepo[]> {
   return Promise.all(status.map(async (s, i): Promise<ReachRepo> => {
     if (s.error && s.ahead === undefined && s.dirty === undefined) return { name: s.name, path: s.path, error: s.error, envs: [] };
     const x = refs[i], envRefs = [...(x.also ?? []), x.base];
-    // 이름은 원격 주소의 레포 이름(워크트리 폴더 이름은 레포마다 같을 수 있다 — FE · BE 를 같은 이름으로 따면)
-    const url = await out(x.path, ['config', '--get', 'remote.origin.url']), name = url?.replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).pop() || s.name;
-    const base = { name, path: s.path, ...(s.head ? { branch: s.head } : {}), dirty: s.dirty, pushed: s.pushed };
+    const base = { name: s.name, path: s.path, ...(s.head ? { branch: s.head } : {}), dirty: s.dirty, pushed: s.pushed };
     const start = x.start ?? await out(x.path, ['merge-base', x.base, 'HEAD']), [head, from] = await Promise.all([out(x.path, ['rev-parse', 'HEAD']), start ? out(x.path, ['rev-parse', `${start}^{commit}`]) : null]);
     // 딴 뒤 커밋이 없으면 딴 커밋이 어디에나 들어 있어 「들어감」 으로 보인다 — 커밋 없음으로
     if (!from || from === head) return { ...base, fresh: true, ...(x.via ? { via: { ref: x.via, state: 'none' as const } } : {}), envs: envRefs.map(ref => ({ ref, state: from ? 'none' : 'missing' })) };

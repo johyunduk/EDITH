@@ -28,6 +28,8 @@ export function parseRepos(t: string): RepoRef[] {
 
 export const inside = (p: string, root: string) => { try { const a = realpathSync(p), b = realpathSync(root); return a === b || a.startsWith(b + sep); } catch { return false; } };
 const git = (cwd: string, ...args: string[]) => sh('git', ['-C', cwd, ...args], { ok: true, timeoutMs: 15_000 });
+// 레포 이름 — 원격 주소의 레포 이름(워크트리 폴더 이름은 FE · BE 를 같은 이름으로 따면 같아진다). 원격이 없으면 폴더 이름
+export const repoName = (url: string, path: string) => url.trim().replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).pop() || basename(path);
 
 // 작업 문서 안의 파일만(링크로 밖을 가리키면 없는 것으로)
 export function readRefs(work: string): RepoRef[] {
@@ -35,9 +37,10 @@ export function readRefs(work: string): RepoRef[] {
 }
 export async function repoStatus(work: string, cwd: string): Promise<Repo[]> {
   return Promise.all(readRefs(work).map(async (x): Promise<Repo> => {
-    const name = basename(x.path);
+    let name = basename(x.path);
     if (!inside(x.path, cwd)) return { ...x, name, error: '런 작업 폴더 밖이라 보지 않는다' };
     if ((await git(x.path, 'rev-parse', '--is-inside-work-tree')).stdout.trim() !== 'true') return { ...x, name, error: 'git 작업 트리가 아니다' };
+    name = repoName((await git(x.path, 'config', '--get', 'remote.origin.url')).stdout, x.path);
     const count = (ref: string) => git(x.path, 'rev-list', '--count', `${ref}..HEAD`).then(r => r.code === 0 ? Number(r.stdout.trim()) : null);
     const [head, status, ahead, up, since, more] = await Promise.all([
       git(x.path, 'rev-parse', '--abbrev-ref', 'HEAD'), git(x.path, 'status', '--porcelain'),

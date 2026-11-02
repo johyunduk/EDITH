@@ -18,6 +18,7 @@ import { RunTimeline, type Entry } from './RunTimeline.tsx';
 import { claudeChip, dropShared, dur, notionUrl, pastDays, phases, type ClaudeUsed } from './runFlow.ts';
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
+import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
 
 type Step = FlowStep & { skill?: string; command?: string; max?: number };
 type RunState = 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped';   // dropped = 버림(엔진 「버리기」) — 기록만, 아무것도 못 한다
@@ -466,8 +467,8 @@ function RunDetail({ r }: { r: Run }) {
       )}
       <Waiting r={r} />
       {view !== 'summary' && <>
+        <RepoOutputs id={r.id} />
         {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
-        <div className="grid gap-3 md:grid-cols-[repeat(auto-fit,minmax(20rem,1fr))]"><Repos id={r.id} /><Outputs id={r.id} /></div>
       </>}
       {r.live && watch && <Live id={r.id} />}
       {view === 'summary' && r.summary ? <SummaryView r={r} s={r.summary} toTimeline={() => setView('timeline')} />
@@ -590,20 +591,23 @@ function Live({ id }: { id: number }) {
 
 // 레포 — 엔진이 작업 문서에 남긴 edith-repos.json 의 레포마다 커밋 상태(서버가 git 으로 읽는다 — src/repos.ts). 커밋 · 정리는 엔진의 런 단추로
 type Repo = { name: string; path: string; branch?: string; base: string; error?: string; head?: string; dirty?: number; ahead?: number; pushed?: boolean | null; fresh?: boolean; more?: { base: string; ahead: number | null }[] };
-function Repos({ id }: { id: number }) {
-  const q = useQuery({ queryKey: ['run-repos', id], queryFn: () => get<Repo[]>(`/api/runs/${id}/repos`), refetchInterval: 15_000 });
+const useRepos = (id: number) => useQuery({ queryKey: ['run-repos', id], queryFn: () => get<Repo[]>(`/api/runs/${id}/repos`), refetchInterval: 15_000 });
+// bare — 「레포 · 산출물」 줄 안에(테두리 없이)
+function Repos({ id, bare }: { id: number; bare?: boolean }) {
+  const q = useRepos(id);
   const [diff, setDiff] = useState<number | null>(null);
   const d = useQuery({ queryKey: ['run-repo-diff', id, diff], queryFn: () => get<{ name: string; from: string; text: string }>(`/api/runs/${id}/repos/${diff}/diff`), enabled: diff !== null });
   if (!q.data?.length) return null;
   const chip = 'rounded-full px-2 py-px text-[0.6875rem] font-semibold';
   return (
-    <section className="rounded-lg border bg-card px-3 py-2 text-sm">
+    <section className={bare ? 'min-w-0' : 'rounded-lg border bg-card px-3 py-2 text-sm'}>
       <p className="mb-1 text-xs font-semibold text-muted-foreground">레포 — 커밋 상태(15초마다 git 에서 읽는다)</p>
       <ul className="space-y-1">
         {q.data.map((x, i) => (
-          <li key={x.path} title={x.path} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          // 브랜치는 엔진이 정한 것과 다를 때만 글로(같으면 마우스를 올리면)
+          <li key={x.path} title={x.head ? `${x.path}\n${x.head}` : x.path} className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-semibold">{x.name}</span>
-            {x.head && <span className={`font-mono text-xs ${x.branch && x.branch !== x.head ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>{x.head}{x.branch && x.branch !== x.head ? ` (엔진은 ${x.branch})` : ''}</span>}
+            {x.head && x.branch && x.branch !== x.head && <span className="font-mono text-xs text-amber-700 dark:text-amber-400">{x.head} (엔진은 {x.branch})</span>}
             {x.error ? <span className={`${chip} bg-rose-500/15 text-rose-700 dark:text-rose-300`}>{x.error}</span> : <>
               <span className={`${chip} ${x.dirty ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300' : 'bg-muted text-muted-foreground'}`}>{x.dirty ? `커밋 안 한 파일 ${x.dirty}` : '커밋할 것 없음'}</span>
               {x.fresh ? <span className={`${chip} bg-muted text-muted-foreground`} title="워크트리를 딴 뒤 커밋이 없다">커밋 없음</span> : x.ahead !== undefined && (x.ahead > 0
@@ -647,16 +651,41 @@ function Sheet({ title, sub, onClose, children }: { title: string; sub?: string;
 }
 
 // 산출물 — 엔진이 작업 문서에 남긴 edith-outputs.json(서버 src/outputs.ts). 파일은 누르면 보기 창(.md 는 글로, .html · .svg 는 그림으로), 주소는 새 탭
-type OutputItem = { label: string; path?: string; url?: string; node?: string; note?: string; error?: string };
+type OutputItem = { label: string; path?: string; url?: string; node?: string; note?: string; group?: string; fold?: string; error?: string };
 const useOutputs = (id: number) => useQuery({ queryKey: ['run-outputs', id], queryFn: () => get<OutputItem[]>(`/api/runs/${id}/outputs`), refetchInterval: 15_000 });
+// 엔진이 적은 묶음(group)마다 — 묶음이 없으면 한 덩이로
 function Outputs({ id }: { id: number }) {
   const q = useOutputs(id);
   if (!q.data?.length) return null;
+  const gs = groupOutputs(q.data.map((o, i): [OutputItem, number] => [o, i]));
   return (
-    <section className="rounded-lg border bg-card px-3 py-2 text-sm">
-      <p className="mb-1 text-xs font-semibold text-muted-foreground">산출물 {q.data.length} — 엔진이 남긴 문서 · 주소(누르면 본다)</p>
-      <OutputChips id={id} items={q.data.map((o, i) => [o, i])} />
+    <section className="min-w-0">
+      <p className="mb-1 text-xs font-semibold text-muted-foreground">산출물 {q.data.length} — 엔진이 남긴 문서 · 주소(누르면 본다, 파일 이름은 마우스를 올리면)</p>
+      <div className={gs.length > 1 ? 'grid gap-x-4 gap-y-2.5 sm:grid-cols-2' : ''}>
+        {gs.map(g => (
+          <div key={g.name} className="min-w-0 space-y-1">
+            {g.name && <p className="text-[0.6875rem] font-semibold text-muted-foreground">{g.name} {groupSize(g)}</p>}
+            <OutputChips id={id} items={g.items} folds={g.folds} />
+          </div>
+        ))}
+      </div>
     </section>
+  );
+}
+// 레포 · 산출물 — 자주 보지 않아 「입력」 줄처럼 한 줄로 접어 둔다(펼치면 왼쪽 레포 · 오른쪽 산출물). 접혀도 레포 문제 · 커밋 안 한 파일은 색으로
+function RepoOutputs({ id }: { id: number }) {
+  const repos = useRepos(id).data ?? [], outs = useOutputs(id).data ?? [];
+  if (!repos.length && !outs.length) return null;
+  const dirty = repos.reduce((n, x) => n + (x.dirty ?? 0), 0), bad = repos.filter(x => x.error).length;
+  const count = [repos.length ? `레포 ${repos.length}` : '', outs.length ? `산출물 ${outs.length}` : ''].filter(Boolean).join(' · ');
+  return (
+    <details className="rounded-lg border bg-card px-3 py-2 text-sm">
+      <summary className="cursor-pointer"><span className="mr-2 text-xs font-semibold text-muted-foreground">레포 · 산출물</span>
+        {bad > 0 && <span className="font-semibold text-rose-700 dark:text-rose-300">레포 확인 필요 {bad} · </span>}
+        {dirty > 0 && <span className="font-semibold text-amber-700 dark:text-amber-400">커밋 안 한 파일 {dirty} · </span>}
+        <span className="text-muted-foreground">{count}</span></summary>
+      <div className={`mt-2 grid gap-4 ${repos.length && outs.length ? 'md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)]' : ''}`}><Repos id={id} bare /><Outputs id={id} /></div>
+    </details>
   );
 }
 // 답 기다리는 노드 — 그 노드와 바로 앞 노드가 남긴 산출물(승인 카드가 가리키는 ERD 같은 것)을 답하기 전에 바로 연다. 답은 오른쪽 런 pane
@@ -671,19 +700,34 @@ function Waiting({ r }: { r: Run }) {
     </div>
   ));
 }
-function OutputChips({ id, items }: { id: number; items: [OutputItem, number][] }) {
-  const [view, setView] = useState<number | null>(null);
+// 칩은 이름만 — 설명(파일 이름 같은 것) · 경로는 마우스를 올리면. folds 는 「▸ 이름 수」 로 접어 두고 누르면 그 자리에 편다
+function OutputChips({ id, items, folds = [] }: { id: number; items: [OutputItem, number][]; folds?: OutputGroup<OutputItem>['folds'] }) {
+  const [view, setView] = useState<number | null>(null), [open, setOpen] = useState<string[]>([]);
   const one = useQuery({ queryKey: ['run-output', id, view], queryFn: () => get<{ label: string; path: string; text: string }>(`/api/runs/${id}/outputs/${view}`), enabled: view !== null });
   const cls = 'rounded-md border bg-background px-2 py-0.5 text-xs hover:border-primary/60 disabled:opacity-50';
+  const chip = ([o, i]: [OutputItem, number]) => {
+    const tip = [o.note, o.error ?? o.path ?? o.url].filter(Boolean).join('\n');
+    return o.url
+      ? <a key={i} href={o.url} target="_blank" rel="noreferrer" title={tip} className={cls}>{o.label} ↗</a>
+      : <button key={i} type="button" disabled={!!o.error} title={tip} onClick={() => setView(i)} className={cls}>{o.label}</button>;
+  };
   return (
     <>
       <span className="flex flex-wrap gap-1.5">
-        {items.map(([o, i]) => o.url
-          ? <a key={i} href={o.url} target="_blank" rel="noreferrer" className={cls}>{o.label} ↗{o.note && <span className="text-muted-foreground"> · {o.note}</span>}</a>
-          : <button key={i} type="button" disabled={!!o.error} title={o.error ?? o.path} onClick={() => setView(i)} className={cls}>{o.label}{o.note && <span className="text-muted-foreground"> · {o.note}</span>}</button>)}
+        {items.map(chip)}
+        {folds.map(f => {
+          const on = open.includes(f.name);
+          return (
+            <Fragment key={f.name}>
+              <button type="button" aria-expanded={on} onClick={() => setOpen(on ? open.filter(x => x !== f.name) : [...open, f.name])}
+                className="rounded-md border border-dashed border-input px-2 py-0.5 text-xs text-muted-foreground hover:border-primary/60">{on ? '▾' : '▸'} {f.name} {f.items.length}</button>
+              {on && f.items.map(chip)}
+            </Fragment>
+          );
+        })}
       </span>
       {view !== null && (
-        <Sheet title={items.find(([, i]) => i === view)?.[0].label ?? ''} sub={one.data?.path} onClose={() => setView(null)}>
+        <Sheet title={[...items, ...folds.flatMap(f => f.items)].find(([, i]) => i === view)?.[0].label ?? ''} sub={one.data?.path} onClose={() => setView(null)}>
           {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
             : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
               // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
