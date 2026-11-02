@@ -4,7 +4,7 @@
 // React 없이 — src/stepFlow.test.ts 가 확인한다.
 export type FlowStep = {
   key: string; title: string; lane: string; group: string; kind: 'skill' | 'command'; engine?: string;
-  deps: string[]; failTo?: string; fixOnly?: boolean; boxes?: { name: string; kind: 'chain' | 'engine' }[]; track?: string;
+  deps: string[]; failTo?: string; fixOnly?: boolean; boxes?: { name: string; kind: 'chain' | 'engine' }[]; track?: string; humanWait?: boolean;
 };
 export type Box = { key: string; name: string; kind: 'chain' | 'engine'; parent: string | null; steps: string[] };
 export type Placed = Box & { x: number; y: number; w: number; h: number; fold: boolean };

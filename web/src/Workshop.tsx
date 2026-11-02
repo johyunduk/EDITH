@@ -18,7 +18,7 @@ import { FolderInput } from './Side.tsx';
 import { Bracketed, Empty, Icon, Tag } from './ui.tsx';
 import { Kind, STATUS } from './herdrUi.tsx';
 import { toast } from './copy.ts';
-import { StepFlow } from './StepFlow.tsx';
+import { StageMap } from './StageMap.tsx';
 import { EngineMap, ROLE } from './EngineMap.tsx';
 import type { FlowStep } from './stepFlow.ts';
 import { skillBrief, skillDetail } from './skillDesc.ts';
@@ -40,7 +40,7 @@ type Installed = { id: string; name: string; call: string; agents: string[]; des
 const PLUS = <path d="M12 5v14M5 12h14" />;
 const KIND = { chain: '체인', engine: '엔진', run: '런' } as const;
 const VIEWS = [['map', '흐름 지도', '단계 칸과 줄로 본다 — 줄을 누르면 하는 일 · Claude 가 받는 지시 · 앞뒤 흐름'], ['canvas', '캔버스', '노드 · 화살표를 놓고 고친다'],
-  ['flat', '펼쳐 보기', '안에 든 체인 · 엔진을 노드까지 펼친 캔버스 — 런 화면과 같은 모양']] as const;
+  ['flat', '펼쳐 보기', '엔진 전체를 역 지도로 — 역을 누르면 그 안의 체인 · 노드까지']] as const;
 const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />;
 const PENCIL = <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>, ALERT = <><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></>;
 // 목록의 종류 표시 — 엔진은 겹친 판, 체인은 사슬
@@ -496,7 +496,7 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
   }, [shownEng, look, sel, hover]);
   // 처음 그릴 때 노드가 다 들어온 뒤에 띄워야 화면 맞추기(fitView)가 노드에 맞는다
   const [shown, setShown] = useState(false);
-  // 보기 — 엔진은 흐름 지도(단계 칸 · 줄, EngineMap.tsx)가 처음, 캔버스(고치는 곳), 펼쳐 보기(런처럼 노드 한 줄로). 체인은 캔버스만
+  // 보기 — 엔진은 흐름 지도(단계 칸 · 줄, EngineMap.tsx)가 처음, 캔버스(고치는 곳), 펼쳐 보기(역 지도 · 고른 역의 노드, StageMap.tsx). 체인은 캔버스만
   const [view, setView] = useState<'map' | 'canvas' | 'flat'>('map');
   useEffect(() => { if (eng && nodes.length === eng.nodes.length) setShown(true); }, [eng, nodes.length]);
   // 스킬이 붙으면 「쓰는 중」 표시를 뗀다
@@ -679,7 +679,7 @@ function RefWarnings({ id }: { id: string }) {
   );
 }
 
-// 펼쳐 보기 — 안에 든 체인 · 엔진을 노드까지 펼친 캔버스(런 화면과 같은 것). 서버가 런과 같은 펼치기로 만든다. 노드를 누르면 그 체인으로 간다.
+// 펼쳐 보기 — 안에 든 체인 · 엔진을 노드까지 펼친 역 지도(StageMap.tsx). 서버가 런과 같은 펼치기로 만든다. 노드를 누르면 그 체인으로 간다.
 function Expanded({ id }: { id: string }) {
   const q = useSteps(id);
   if (!q.data) return <div className="p-6"><Empty>{q.error ? `읽지 못했다 — ${String(q.error)}` : '불러오는 중…'}</Empty></div>;
@@ -689,13 +689,9 @@ function Expanded({ id }: { id: string }) {
       <ul className="list-disc pl-5 text-sm text-muted-foreground">{q.data.errors.map(x => <li key={x}>{x}</li>)}</ul>
     </div>
   );
-  const fix = q.data.steps.filter(s => s.fixOnly).length;
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-      <p className="text-xs text-muted-foreground">
-        노드 {q.data.steps.length - fix}개가 화살표 차례로 돈다{fix ? ` · 고치는 노드 ${fix}개(점선 — 「실패하면」 으로만 불린다)` : ''}{q.data.draft ? ' · 초안 기준(적용하면 이대로)' : ''} · 상자 머리를 누르면 펼친다 · 노드를 누르면 그 체인으로 간다
-      </p>
-      <StepFlow steps={q.data.steps} onPick={s => { if (s.engine) location.hash = `#/workshop/${s.engine}`; }} className="min-h-[24rem] flex-1" />
+    <div className="flex min-h-0 flex-1 flex-col p-3">
+      <StageMap key={id} steps={q.data.steps} draft={q.data.draft} onPick={s => { if (s.engine) location.hash = `#/workshop/${s.engine}`; }} />
     </div>
   );
 }
