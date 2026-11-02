@@ -228,7 +228,7 @@ export function DeployPage() {
   const needle = find.trim().toLowerCase();
   const hit = (xs: string[]) => !needle || xs.some(s => s.toLowerCase().includes(needle));
   const pass = (f: ReturnType<typeof flags>) => filter === 'all' || f[filter];
-  const shown = byTurn(live.filter(g => pass(flags(g)) && hit([g.tag, ...tickets(g), ...g.items.flatMap(x => [x.branch, repoName(x.repo), x.tag ?? '', x.ticket ?? '', ...x.notes, ...(x.runs ?? []).flatMap(r => [`#${r.id}`, r.title])])])), stepsOf, v.envs);
+  const shown = byTurn(live.filter(g => pass(flags(g)) && hit([g.tag, ...tickets(g), ...g.items.flatMap(x => [x.branch, repoName(x.repo), x.tag ?? '', x.ticket ?? '', ...x.notes, ...(x.runs ?? []).flatMap(r => [`#${r.id}`, r.title])])])), stepsOf, v.envs, g => g.date);
   const extra = v.extra.filter(e => pass(looseFlags(e)) && hit([`#${e.run.id}`, e.run.title, e.run.tag ?? '', ...e.repos.flatMap(x => [x.name, x.branch ?? ''])]));
   const count = (f: Filter) => f === 'all' ? live.length + v.extra.length : live.filter(g => flags(g)[f]).length + v.extra.filter(e => looseFlags(e)[f]).length;
   const heads = byDate ? [...new Set(shown.map(g => g.date ?? ''))].sort((a, b) => !a ? 1 : !b ? -1 : a.localeCompare(b)) : [null];

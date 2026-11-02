@@ -18,3 +18,11 @@ test('안건 순서 — 차례 칸이 운영 · stage · dev · 로컬 순, 차�
   assert.deepEqual(byTurn(names, n => [...cards[n]], ENVS), ['운영', 'stage', '둘', 'dev', '로컬', '로컬2', '없음']);
   assert.equal(turnRank([], ENVS), 4);
 });
+
+test('같은 차례에서는 배포일을 정한 안건이 먼저 — 이른 날부터, 나머지는 목록 순', () => {
+  const cards = { 날짜없음: undefined, 늦은날: '2026-11-05', 이른날: '2026-11-02', 날짜없음2: undefined } as const;
+  const names = Object.keys(cards) as (keyof typeof cards)[];
+  assert.deepEqual(byTurn(names, () => [{ act: true, env: 'stage' }], ENVS, n => cards[n]), ['이른날', '늦은날', '날짜없음', '날짜없음2']);
+  // 차례가 앞서면 배포일이 없어도 먼저
+  assert.deepEqual(byTurn(['dev날짜', '운영'], n => [{ act: true, env: n === '운영' ? 'prod' : 'dev' }], ENVS, n => n === 'dev날짜' ? '2026-11-01' : undefined), ['운영', 'dev날짜']);
+});
