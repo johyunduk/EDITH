@@ -211,8 +211,17 @@ async function enabled($: any) {
   return (row ? row.value : loaded) !== false
 }
 
+const RULE = `
+
+git commit·push(commit-tree 처럼 이름에 든 것도)가 든 명령은 description 을 한국어 한 문장으로, 왜 하는지(목적)와 무엇이 바뀌는지(브랜치 · 원격 · 임시만)를 쓴다 — 커밋 지킴이가 사람에게 묻는 창 맨 위에 그대로 보인다.`
+
 export function register(on: any, options: { enabled?: boolean } = {}) {
   loaded = options.enabled
+  // Bash 설명에 규칙을 붙여 묻는 창의 「왜:」 줄이 비지 않게 한다
+  on('tool.describe', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    return await enabled($) ? { ...r, description: r.description + RULE } : r
+  })
   // Bash·PowerShell·Monitor 처럼 command 를 받는 도구 모두
   on('tool.call', async ($: any, e: any, next: any) => {
     const what = typeof e.command === 'string' ? gitWrite(e.command) : null
@@ -224,7 +233,9 @@ export function register(on: any, options: { enabled?: boolean } = {}) {
     if (keys.length) return { deny: `커밋 제목에 티켓키가 없다(워크트리 gada.ticket = ${keys.join(', ')}) — 제목을 '<타입>[${keys[0]}]. [태그] 내용' 꼴로 고쳐 다시 커밋한다` }
     const cmd = e.command.length > 400 ? `${e.command.slice(0, 400)}…` : e.command
     const told = await describe($, e.command).catch(() => undefined)
-    const a = await $.ui.ask(told ? `${told}\n\n명령 원문(앞 400자):\n${cmd}` : `git ${what} 실행할까?\n\n${cmd}`, { header: `git ${what}`, options: [YES, NO] })
+    // 맨 위에 왜 하는지 — 도구 호출의 설명(description). 커밋으로 못 푼 명령(commit-tree 등)은 이것만이 까닭이다
+    const why = `왜: ${typeof e.description === 'string' && e.description.trim() ? e.description.trim() : '(Claude 가 설명을 붙이지 않았다)'}\n\n`
+    const a = await $.ui.ask(why + (told ? `${told}\n\n명령 원문(앞 400자):\n${cmd}` : `git ${what} 실행할까?\n\n${cmd}`), { header: `git ${what}`, options: [YES, NO] })
     if (a !== YES) return { deny: `사용자가 git ${what} 실행을 막았다 — 다시 시도하지 말고 사용자에게 어떻게 할지 묻는다` }
     if (e.tool_use_id) approved.add(e.tool_use_id)
     try { return await next(e) } finally { if (e.tool_use_id) approved.delete(e.tool_use_id) }

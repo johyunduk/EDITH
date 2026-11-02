@@ -80,7 +80,8 @@ test('질문 창에 커밋을 풀어 보이고 원문은 아래에 남긴다', a
     const out = sub === 'rev-parse --show-toplevel' ? '/r/my-repo' : sub === 'branch --show-current' ? 'main' : 'already.ts'
     return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } }
   })
-  await $.tool.call({ tool: 'Bash', command: 'git -C /r/my-repo add new.ts && git -C /r/my-repo commit -m "새 기능"' })
+  await $.tool.call({ tool: 'Bash', command: 'git -C /r/my-repo add new.ts && git -C /r/my-repo commit -m "새 기능"', description: '새 기능을 main 에 커밋한다' })
+  expect(asked.startsWith('왜: 새 기능을 main 에 커밋한다\n')).toBe(true)
   expect(asked).toContain('git commit 1건 — 실행할까?')
   expect(asked).toContain('my-repo (main)')
   expect(asked).toContain('제목: 새 기능')
@@ -88,6 +89,7 @@ test('질문 창에 커밋을 풀어 보이고 원문은 아래에 남긴다', a
   expect(asked).toContain('명령 원문(앞 400자):\ngit -C /r/my-repo add')
   // -F 파일이면 그 파일의 첫 글 줄이 제목 — 경로는 -C 폴더 기준
   await $.tool.call({ tool: 'Bash', command: 'git -C /r/my-repo commit -F msg.txt' })
+  expect(asked).toContain('왜: (Claude 가 설명을 붙이지 않았다)')
   expect(read).toBe('/r/my-repo/msg.txt')
   expect(asked).toContain('제목: 파일에 쓴 제목')
 })
