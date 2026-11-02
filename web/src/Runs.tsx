@@ -275,7 +275,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
     const seen = new Set<string>();
     return d.workspaces.flatMap(w => {
       const dir = w.worktree?.checkout_path ?? d.panes.find(p => p.workspace === w.workspace_id)?.cwd;
-      if (!dir || seen.has(dir) || w.label.startsWith('▶')) return [];
+      if (!dir || seen.has(dir) || w.label.startsWith('▶') || w.label.startsWith('런·')) return [];   // 런 워크스페이스(옛 「▶」 · 새 「런·」)
       seen.add(dir);
       return [{ label: w.label, dir }];
     });
@@ -333,7 +333,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
           </label>
           {err && <p className="text-xs break-words text-destructive">{err}</p>}
           <Button type="submit" size="sm" className="h-7 w-full text-xs" disabled={busy || !engine || (wd.kind === 'ask' && !cwd.trim()) || (wd.kind === 'worktree' && !branch.trim())}>{busy ? '시작하는 중…' : '런 시작'}</Button>
-          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{wd.kind === 'worktree' ? '레포에서 그 브랜치로 워크트리와 워크스페이스를 만들고' : 'herdr 에 「▶ 이름 #번호」 워크스페이스를 만들고 작업 폴더에서'} Claude 를 띄워 노드를 하나씩 보낸다. 시작할 때의 사본으로 돈다(공방에서 고쳐도 이 런은 그대로).</p>
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{wd.kind === 'worktree' ? '레포에서 그 브랜치로 워크트리와 워크스페이스를 만들고' : 'herdr 에 「런·이름 #번호」 워크스페이스를 만들고 작업 폴더에서'} Claude 를 띄워 노드를 하나씩 보낸다. 시작할 때의 사본으로 돈다(공방에서 고쳐도 이 런은 그대로).</p>
     </>
   );
   return (

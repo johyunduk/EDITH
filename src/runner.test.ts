@@ -4,8 +4,15 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, runLabel, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, runLabel, runSpace, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
+import { groupOf, shortName } from '../web/src/wsGroups.ts';
+
+test('runSpace — 런 워크스페이스는 「런·이름 #번호[ · 갈래]」 라 사이드바 「런」 묶음에 모인다', () => {
+  assert.equal(runSpace('공장', 15), '런·공장 #15');
+  assert.equal(runSpace('공장', 15, 'fe'), '런·공장 #15 · fe');
+  assert.deepEqual([groupOf(runSpace('공장', 15, 'feature/x')), shortName(runSpace('공장', 15, 'feature/x'))], ['런', '공장 #15 · feature/x']);
+});
 
 test('runLabel — 티켓은 요청 tag, 제목은 요약 → 요청 제목(앞 이모지 뗌) → 입력 첫 줄(주소뿐이면 없음)', () => {
   const req = { tag: 'ISSUE-5', title: '🐞 [포인트] 문구 고치기' };

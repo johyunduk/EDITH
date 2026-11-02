@@ -496,7 +496,7 @@ export async function startRun(what: unknown, cwd: unknown, input: unknown, bran
   let pane: string | undefined, br: string | undefined;
   if (wd.kind === 'worktree') {
     br = (branch as string).trim();
-    try { ({ path: folder, pane } = await newWorktree(repo, br, wd.base, `▶ ${run?.name ?? top.name} #${id} · ${br}`)); }
+    try { ({ path: folder, pane } = await newWorktree(repo, br, wd.base, runSpace(run?.name ?? top.name, id, br))); }
     catch (e) { rmSync(dir, { recursive: true, force: true }); throw new Error(`워크트리를 만들지 못했다 — ${firstLine(e)}`); }
   }
   const r: Run = {
@@ -755,7 +755,10 @@ function notify(title: string, body = '') {
     .on('error', () => undefined);
 }
 
-// 런 pane — 본 줄은 「▶ 이름 #번호」 워크스페이스를 작업 폴더에서 만들고, 갈래는 본 줄 pane 옆을 나눠(없으면 「▶ 이름 #번호 · 갈래」 워크스페이스)
+// 런 워크스페이스 이름 — 「런·이름 #번호[ · 갈래·브랜치]」. 첫 「·」 앞이 사이드바 묶음(web/src/wsGroups.ts)이라 런이 「런」 한 묶음에 모인다(옛 런은 「▶ 이름 #번호」)
+export const runSpace = (name: string, id: number, more?: string) => `런·${name} #${id}${more ? ` · ${more}` : ''}`;
+
+// 런 pane — 본 줄은 「런·이름 #번호」 워크스페이스를 작업 폴더에서 만들고, 갈래는 본 줄 pane 옆을 나눠(없으면 「런·이름 #번호 · 갈래」 워크스페이스)
 // Claude 를 띄운다(실행 폴더는 --add-dir 로 쓸 수 있게). 띄운 인자(want — 모델 · 강도 · MCP)가 이번 노드 것과 다르면 /exit 로 끄고
 // 그 인자로 다시 띄운다(노드마다 새 대화라 잃는 것이 없다). 못 하면 그 까닭(노드를 확인 필요로), 되면 null.
 async function ensureClaude(r: Run, track: string, want: string[]): Promise<string | null> {
@@ -776,7 +779,7 @@ async function ensureClaude(r: Run, track: string, want: string[]): Promise<stri
     }
   }
   try {
-    if (!o.pane) o.pane = track && r.pane && await find(r.pane) ? await split(r.pane, 'right') : await newWorkspace(`▶ ${r.name} #${r.id}${track ? ` · ${track}` : ''}`, r.cwd);
+    if (!o.pane) o.pane = track && r.pane && await find(r.pane) ? await split(r.pane, 'right') : await newWorkspace(runSpace(r.name, r.id, track), r.cwd);
     saveRun(r);
     await start(o.pane, 'claude', ['--add-dir', dirOf(r.id), ...want]);
     o.claude = want;
