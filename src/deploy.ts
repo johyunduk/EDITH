@@ -366,7 +366,7 @@ export async function importItems(t: string, file = DEPLOY_FILE) {
   return { items: items.length, skipped: raw.length - items.length, active: items.filter(x => !x.done).length };
 }
 
-// 다음 환경에 올리기 — 화면은 레포 줄마다 하나씩 보낸다(사용자 결정 2026-10-26 오전 — 안건 단위 한 번에서 바꿈). 여럿을 받으면 레포마다 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋을 먼저 다 보고,
+// 다음 환경에 올리기 — 화면은 레포 줄마다 하나씩 보낸다(사용자 결정 2026-10-26 오전 — 안건 단위 한 번에서 바꿈). 여럿을 받으면 레포마다 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋 · 합친 판의 같은 함수 두 번(php)을 먼저 다 보고,
 // 하나라도 걸리면 아무 레포도 올리지 않는다. 다 되면 레포마다 브랜치를 --no-ff 머지 커밋으로(작업 트리 없이 merge-tree) 만들어 push(강제 아님).
 // 충돌이 있어도 「<환경> 머지 준비」 로 머지 브랜치에서 푼 것(prepared — 원본 끝 · 환경을 다 품었다)이 있으면 그 커밋을 올린다.
 // 처음 환경(dev — 머지 브랜치로 검증하고 올린다)은 여기서 올리지 않는다. 마지막 환경(운영)도 올린다(사용자 결정 2026-10-26 오후 — 그전엔 사람이 직접) —
@@ -401,6 +401,24 @@ export async function strictCheck(repo: string, into: string, tip: string, c: st
   const lost = base ? (await Promise.all(conflicts.map(f => lostLines(repo, base, into, tip, c, f)))).flat() : [];
   return { commits, files: changed.length, conflicts, hard, lost };
 }
+// 같은 클래스 안에 같은 이름 함수가 두 번 — 같은 커밋이 해시만 다른 사본으로 양쪽 다른 자리에 있으면 git 이 충돌 없이 둘 다 남긴다(PHP 는 그 파일을 읽을 때 Cannot redeclare 로 멈춘다).
+// php 버전과 상관없이 글자로만 본다. shortcut: 줄 머리의 이름 있는 function 만 센다 — 한 줄에 둘 · 문자열 안 선언은 놓치고, 클래스 안 new class 의 같은 이름은 잘못 막는다. 잦으면 php -l 로
+export function dupFunctions(src: string): string[] {
+  const dup = new Set<string>();
+  let seen = new Set<string>();
+  for (const line of src.split('\n')) {
+    if (/^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|trait|interface|enum)\s+\w+/.test(line)) seen = new Set();
+    const m = /^\s*(?:(?:public|protected|private|static|abstract|final)\s+)*function\s+&?(\w+)\s*\(/.exec(line);
+    if (!m) continue;
+    if (seen.has(m[1])) dup.add(m[1]); else seen.add(m[1]);
+  }
+  return [...dup];
+}
+// 올릴 커밋 c 에서 into 와 달라진 php 파일 중 같은 함수가 두 번인 것 — 「파일 — 함수()」
+async function dupsOf(repo: string, into: string, c: string) {
+  const files = lines(await out(repo, ['diff', '--name-only', '--diff-filter=AM', into, c, '--', '*.php']));
+  return (await each(files, 8, async f => dupFunctions(await out(repo, ['show', `${c}:${f}`]) ?? '').map(n => `${f} — ${n}()`))).flat();
+}
 // 레포 하나 — 올릴 커밋(c)을 정하거나 막을 까닭(bad) · 건너뛸 까닭(skip). 운영이면 strict 도.
 // after — 같은 레포를 같이 올리는 앞 항목의 커밋. 그 위에 이어 합친다(마지막 커밋만 push — 파이프라인 한 번)
 async function planOne(x: Item, s: Store, i: number, after?: { c: string; name: string }): Promise<Plan> {
@@ -428,6 +446,8 @@ async function planOne(x: Item, s: Store, i: number, after?: { c: string; name: 
     c = tree && await out(x.repo, ['commit-tree', tree, '-p', into, '-p', st.tip!, '-m', `Merge branch '${x.branch}' into ${to}`]);
     if (!c) return { x, name, bad: `${name} — 머지 커밋을 만들지 못했다` };
   }
+  const dups = await dupsOf(x.repo, into, c);
+  if (dups.length) return { x, name, bad: `${name} — 합친 판에 같은 함수가 두 번 선언된다(git 이 충돌 없이 양쪽 추가를 다 남긴 듯): ${dups.slice(0, 5).join(', ')} — ${conflicts.length ? `머지 브랜치 ${mergeBranch(x, env)} 에서 하나를 지우고 커밋한 뒤 다시` : `${env.ref} 위에 손으로 합쳐 하나를 지우고 올린다`}` };
   return { x, name, c, ...(last ? { strict: await strictCheck(x.repo, into, st.tip!, c, conflicts) } : {}) };
 }
 async function plansOf(b: { ids?: unknown; env?: unknown }, file: string) {

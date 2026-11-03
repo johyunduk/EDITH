@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addTask, checkTask, deployDiff, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, checkTask, deployDiff, dupFunctions, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -294,6 +294,30 @@ test('운영 올리기 — 나갈 커밋을 보이고, 충돌 표시 · 원본 �
     assert.match((await promoteMany({ ids: [id('pp')], env: 'prod', ack: true }, r.file)).text, /pp → origin\/master/);
     assert.equal(o('show', 'master:p.txt'), 'x\na');
     assert.match(loadStore(r.file).items.find(x => x.branch === 'pp')!.log.at(-1)!.text, /^prod 에 올림\(.*\) — 빠진 줄 1개 확인하고/);
+  } finally { r.done(); }
+});
+
+test('dupFunctions — 같은 클래스 안 같은 이름 함수만, 클래스가 다르거나 이름 없는 함수 · 주석은 넘긴다', () => {
+  const php = (...fns: string[]) => ['<?php', 'enum S: string', '{', ...fns.map(f => `    public static function ${f}(): self { return self::X; }`), '}', ''].join('\n');
+  assert.deepEqual(dupFunctions(php('a', 'b', 'a')), ['a']);
+  assert.deepEqual(dupFunctions(php('a', 'b')), []);
+  assert.deepEqual(dupFunctions('<?php\nclass A {\n  function run() {}\n}\nfinal class B {\n  private function run() {}\n  // function run() 옛 꼴\n  $f = function () {};\n}\n'), []);
+});
+
+test('같은 함수 두 번 — 같은 커밋 사본이 stage 와 원본에 다른 자리로 들어가 충돌 없이 둘 다 남으면 올리지 않는다', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim(), put = (f: string, t: string) => writeFileSync(join(r.r, f), t);
+  const php = (...fns: string[]) => ['<?php', 'enum S: string', '{', ...fns.flatMap(f => [`    public static function ${f}(): self`, '    {', `        return self::${f.toUpperCase()};`, '    }', '']), '}', ''].join('\n');
+  try {
+    g('checkout', '-q', 'master'); put('s.php', php('b', 'c')); g('add', '.'); g('commit', '-qm', 'feat: s');
+    g('checkout', '-q', 'stage'); g('merge', '-q', '--no-edit', 'master'); put('s.php', php('b', 'c', 'a')); g('commit', '-qam', 'feat: a (사본 — c 뒤)');
+    g('checkout', '-qb', 'dupe', 'master'); put('s.php', php('a', 'b', 'c')); g('commit', '-qam', 'feat: a (b 앞)');
+    g('checkout', '-q', 'dev'); g('merge', '-q', '--no-ff', '-m', 'dupe → dev', 'dupe');
+    g('push', '-q', 'origin', 'master', 'dev', 'stage'); g('checkout', '-q', 'master');
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'dupe' }] }), r.file);
+    const id = loadStore(r.file).items[0].id, was = execFileSync('git', ['-C', r.o, 'rev-parse', 'stage'], { encoding: 'utf8' }).trim();
+    assert.equal((await deployView(r.file)).items[0].state!.envs[1].conflicts, 0, 'git 은 충돌로 보지 않는다');
+    await assert.rejects(promote({ id, env: 'stage' }, r.file), /dupe — 합친 판에 같은 함수가 두 번 선언된다.*s\.php — a\(\) — origin\/stage 위에 손으로/);
+    assert.equal(execFileSync('git', ['-C', r.o, 'rev-parse', 'stage'], { encoding: 'utf8' }).trim(), was);
   } finally { r.done(); }
 });
 

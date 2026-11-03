@@ -360,7 +360,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
         <Tip flow={[clash ? `${p?.branch ?? '머지 브랜치'} → ${ref} (푼 머지 커밋)` : `${x.branch} → ${ref} (머지 커밋)`]}
           wait={clash && !ready ? `${env} 와 충돌 ${clash}곳 — 앞 단추(${env} 머지 준비) 먼저` : undefined}
           hint={prod ? '누르면 확인 창에서 나갈 커밋 · 바뀌는 파일 범위 · 충돌 표시 · 푼 파일에서 빠진 줄 · 배포 전 할 일을 먼저 본다 — 올리는 즉시 운영 파이프라인이 돈다'
-            : '올리기 직전에 origin 을 다시 받고 앞 환경 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋을 본다 — 걸리면 올리지 않는다'}>
+            : '올리기 직전에 origin 을 다시 받고 앞 환경 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋 · 합친 판의 같은 함수 두 번(php)을 본다 — 걸리면 올리지 않는다'}>
           <Button size="sm" variant={prod ? 'destructive' : 'default'} className="mt-1 h-8 font-bold shadow-md" style={clash && !ready || prod ? undefined : glow} disabled={clash > 0 && !ready} onClick={() => onPush(env, x)}>{env} 에 올리기 ›</Button>
         </Tip>
         {pair.length > 0 && <span className="mt-1.5 max-w-44 rounded-xl border border-primary/50 bg-primary/7 px-2 py-0.5 text-center text-[0.6875rem] leading-snug font-bold text-primary" title="같은 레포가 다른 안건에서도 이 환경을 기다린다 — 올리기 창에서 같이 골라 push 한 번에 올린다">⇄ {pair.map(p => p.y.ticket ?? p.g.tag).join(' · ')} 와 같이 올릴 수 있다</span>}
@@ -964,7 +964,7 @@ function PushDialog({ g, env, items: picked, groups, order, prep, prod, onClose 
           <ul className="list-disc space-y-0.5 pl-5">{before.map((t, k) => <li key={k} className="break-words">{plain(t.text)}</li>)}</ul>
           <p className="text-xs text-muted-foreground">먼저 하고 패널에서 체크하거나, 이미 했으면 그대로 올린다.</p>
         </div>}
-        <p className="text-muted-foreground">올리기 직전에 origin 을 다시 받고 봅니다 — 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋. 걸리면 올리지 않습니다. 팀이 같이 쓰는 브랜치라 되돌리려면 따로 되돌림 커밋이 필요합니다.</p>
+        <p className="text-muted-foreground">올리기 직전에 origin 을 다시 받고 봅니다 — 앞 환경에 다 들어갔나 · 충돌 · 커밋 안 한 변경 · origin 에만 있는 커밋 · 합친 판의 같은 함수 두 번(php). 걸리면 올리지 않습니다. 팀이 같이 쓰는 브랜치라 되돌리려면 따로 되돌림 커밋이 필요합니다.</p>
         <div className="flex justify-end gap-2 pt-1"><Button variant="outline" onClick={onClose}>취소</Button><Button variant={prod ? 'destructive' : 'default'} disabled={busy || !ready} onClick={() => void go()}>{busy ? '올리는 중…' : `${prod ? `운영(${env})에 올리기` : `${before.length || unpicked.length ? '그래도 ' : ''}${env} 에 올리기`}${pick.size ? ` — 안건 ${items.length}개` : ''}`}</Button></div>
       </div>
     </Sheet>
