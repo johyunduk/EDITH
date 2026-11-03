@@ -174,7 +174,7 @@ Claude Code 의 Remote Control(`/rc`)을 켜 두면 다른 기기의 claude.ai/c
 - 1분마다 그 세션의 `~/.claude/sessions/<pid>.json` 의 `bridgeSessionId` 를 보고, 켜져 있던 세션이 두 번 연달아 꺼져 있고 일하는 중이 아니면 `/remote-control` 을 보냅니다.
 - 처음부터 안 켠 세션, `/rc` 패널에서 직접 끊은 세션, 같은 대화를 다른 터미널이 원격으로 쥔 세션은 두고, 30분에 세 번 다시 켜도 또 끊기면 멈추고 아래 줄에 알립니다.
 - Remote Control 이 들어간 알림은 `~/.claude/rc-keepalive.log` 에 남습니다.
-- 끄기: `claude plugin disable rc-keepalive@edith`. 레포에서 그대로 읽으니 고치면 다음 세션부터(또는 `/reload-plugins`) 반영됩니다. 확인은 `cd plugins/rc-keepalive && claude plugin test`.
+- 끄기: `claude plugin disable rc-keepalive@edith`. 설치한 복사본(`~/.claude/plugins/cache/edith/…`)에서 읽으니, 고치면 `plugin.json` 버전을 올리고 `claude plugin update rc-keepalive@edith` 뒤 다음 세션부터(또는 `/reload-plugins`) 반영됩니다. 확인은 `cd plugins/rc-keepalive && claude plugin test`.
 
 ## 커밋 지킴이
 
@@ -182,6 +182,7 @@ Claude Code 의 Remote Control(`/rc`)을 켜 두면 다른 기기의 claude.ai/c
 auto 모드에서는 분류기가 대신 답하고 허용 규칙에 넣어 둔 명령은 묻지 않아서, 커밋·push 가 묻지 않고 나갈 수 있습니다 — 이 mod 는 그보다 앞에서 사람에게 직접 묻습니다.
 설치기가 함께 깔고 처음엔 켜져 있습니다. EDITH 「설정」 화면의 **커밋·push 전에 묻기** 로 끄고 켭니다(Claude `/config`, `claude plugin configure commit-guard@edith` 로도).
 떠 있는 Claude 세션도 다음 커밋·push 부터 바로 따릅니다. 설치기를 거치지 않은 기기는 직접 깝니다.
+Claude Code 는 설치할 때 mod 를 `~/.claude/plugins/cache/edith/commit-guard/<버전>` 에 복사해 두고 거기서 읽습니다 — 레포를 고친 뒤(`plugin.json` 버전을 올리고) `claude plugin update commit-guard@edith` 를 해야 새 버전이 깔리고, 새 세션(또는 `/reload-plugins`)부터 씁니다.
 
 ```sh
 claude plugin marketplace add <EDITH 체크아웃>   # 체크아웃이 없으면 johyunduk/EDITH
@@ -189,7 +190,7 @@ claude plugin install commit-guard@edith
 ```
 
 - 셸 명령(Bash·PowerShell 등)에 `git commit`·`git push` 가 들어 있으면(`git -C <폴더> push`, `cd x && git commit`, `bash -c "git push"` 도) 질문 창에 「실행」·「막기」 를 묻습니다. EDITH 화면에서는 질문 카드로 답합니다.
-- 질문 창은 커밋마다 레포·브랜치·제목·파일(이미 staged 된 것과 같은 명령의 `git add` 인자)을, push 는 레포·브랜치·인자를 풀어 보이고 아래에 명령 원문(앞 400자)을 붙입니다. 브랜치·staged 파일은 허락 전에 그 레포에서 git 으로 읽기만 합니다(fsmonitor 끔, 2초). 변수·`bash -c` 처럼 못 푸는 명령은 원문만 보입니다.
+- 질문 창은 커밋마다 레포·커밋할 브랜치·제목·파일(이미 staged 된 것과 같은 명령의 `git add` 인자)을, 충돌을 풀고 마무리하는 머지면 「머지 마무리: origin/dev → merge/…」 를, push 는 「push: merge/… → origin/dev」 처럼 무엇을 어디로 보내는지와 인자를 풀어 보이고 아래에 명령 원문(앞 400자)을 붙입니다. 브랜치·staged 파일은 허락 전에 그 레포에서 git 으로 읽기만 합니다(fsmonitor 끔, 2초). 같은 명령에서 정한 변수(`W=…; cd $W`)는 풀고, 그 밖의 변수·`bash -c` 처럼 못 푸는 명령은 원문만, 폴더를 못 읽으면(아직 없는 폴더 등) 그 까닭을 보입니다.
 - 「실행」 이면 그 호출은 권한 확인을 다시 묻지 않고 실행하고(설정의 deny 규칙은 그대로), 「막기」·창 닫기·물을 사람이 없는 `claude -p` 는 막습니다.
 - 글자로 찾아서 `echo "git push"` 처럼 실행하지 않는 글에도 묻고, git 별칭(`git ci`)·스크립트 안의 커밋은 못 봅니다. Codex 는 해당 없음.
 - 끄면 Claude Code 의 보통 권한 확인대로 커밋·push 합니다. 플러그인을 통째로 빼려면 `claude plugin disable commit-guard@edith`. 확인은 `cd plugins/commit-guard && claude plugin test`.

@@ -12,7 +12,8 @@ export function gitWrite(command: string): 'commit' | 'push' | null {
 }
 
 // 질문 창에 커밋마다 레포·브랜치·제목·파일을 풀어 보인다 — 명령 글을 셸처럼 잘라(따옴표·\·heredoc) cd·git add·commit·push 를 읽는다.
-// ponytail: 변수·$(…) 안·별칭·서브셸의 cd 는 풀지 않는다 — 못 풀면 원문만 보이고, 원문은 늘 아래에 남는다
+// 같은 명령 안에서 정한 변수(W=… · export W=…)는 git · cd 인자의 $W · ${W} 로 푼다 — Claude 가 워크트리 경로를 변수에 담아 쓰는 일이 많아서.
+// ponytail: 명령 밖에서 온 변수 · $(…) 안 · 별칭 · 서브셸의 cd 는 풀지 않고, 작은따옴표 안의 $ 도 푼다 — 못 풀면 원문만 보이고, 원문은 늘 아래에 남는다
 type Cmd = { argv: string[], body?: string }   // body: 이 명령에 붙은 heredoc 본문
 
 export function split(s: string): Cmd[] {
@@ -78,11 +79,14 @@ const VAL = ['--author', '--date', '--trailer', '--fixup', '--squash', '--reuse-
 
 export function parse(command: string): Item[] {
   const out: Item[] = [], added = new Map<string, { files: string[], notes: string[] }>()   // 레포별로 아직 커밋 안 된 git add
+  const vars = new Map<string, string>(), expand = (w: string) => w.replace(/\$(?:\{(\w+)\}|(\w+))/g, (m, a, b) => vars.get(a ?? b) ?? m)
+  const assign = (ws: string[]) => { for (const w of ws) { const m = /^(\w+)=([\s\S]*)$/.exec(w); if (m) vars.set(m[1]!, expand(m[2]!)) } }
   let cd: string[] = []
   for (const { argv, body } of split(command)) {
     const h = argv.findIndex(w => !/^\w+=/.test(w) && !SKIP.includes(w))
-    if (h < 0) continue
-    const a = argv.slice(h)
+    if (h < 0) { assign(argv); continue }   // W=… 만 있는 줄 — 명령 앞에 붙은 W=… 는 그 명령에만 걸려 뒤로 남지 않는다
+    if (argv[h] === 'export') { assign(argv.slice(h + 1)); continue }
+    const a = argv.slice(h).map(expand)
     if (a[0] === 'cd' || a[0] === 'pushd') { cd = [...cd, a[1] ?? '~']; continue }
     if (!/(^|[\\/])git(\.exe)?$/.test(a[0] ?? '')) continue
     const dirs = [...cd]
@@ -173,15 +177,31 @@ export async function missingKeys($: any, command: string) {
   return [...new Set(keys.filter((k): k is string => !!k && TICKET.test(k)))]
 }
 
-// main · master 로 가는 push — 질문 머리를 「⚠ main 푸시」 로 바꿔 EDITH 가 빨강으로 보인다(web/src/screenMenu.ts mainPush).
-// 대상은 refspec(<원격> <src>[:<dst>])의 dst, refspec 이 없거나 HEAD 면 지금 브랜치. 원격을 안 적으면 origin 으로 적는다.
-// ponytail: 값을 받는 옵션(-o x · --repo x)의 값을 원격으로 읽을 수 있고, --all · --mirror · push.default · 다른 upstream 설정은 보지 않는다
+// push 가 무엇을 어디로 — refspec(<원격> <src>[:<dst>])마다 src → dst. refspec 이 없거나 HEAD 면 지금 브랜치, src 가 비면(:x · --delete x) 지움.
+// 원격을 안 적으면 origin 으로 적는다.
+// ponytail: 값을 받는 옵션(-o x · --repo x)의 값을 원격으로 읽을 수 있고, push.default · 다른 upstream 설정은 보지 않는다 — --all · --mirror · --tags 는 풀지 않는다
+export function pushRefs(args: string[], current?: string): { remote: string, refs: { src?: string, dst?: string }[] } {
+  const [remote = 'origin', ...refs] = args.filter(a => !a.startsWith('-')), del = args.includes('--delete') || args.includes('-d')
+  if (!refs.length && args.some(a => /^--(all|mirror|tags)$/.test(a))) return { remote, refs: [] }
+  const name = (b: string) => b === 'HEAD' || !b ? current : b.replace(/^refs\/heads\//, '')
+  return { remote, refs: (refs.length ? refs : ['HEAD']).map(r => {
+    const [s = '', d] = r.replace(/^\+/, '').split(':')
+    return { src: del || (d !== undefined && !s) ? '' : name(s), dst: name(d ?? s) }
+  }) }
+}
+
+// main · master 로 가는 push — 질문 머리를 「⚠ main 푸시」 로 바꿔 EDITH 가 빨강으로 보인다(web/src/screenMenu.ts mainPush)
 const MAIN = /^(main|master)$/
 export function pushTo(args: string[], current?: string): { branch: string, remote: string } | null {
-  const [remote = 'origin', ...refs] = args.filter(a => !a.startsWith('-'))
-  const dst = (r: string) => { const d = r.replace(/^\+/, '').split(':').pop()!.replace(/^refs\/heads\//, ''); return d === 'HEAD' || !d ? current : d }
-  const branch = (refs.length ? refs.map(dst) : [current]).find(b => b && MAIN.test(b))
+  const { remote, refs } = pushRefs(args, current), branch = refs.map(r => r.dst).find(b => b && MAIN.test(b))
   return branch ? { branch, remote } : null
+}
+
+// 충돌을 풀고 마무리하는 머지 커밋이면(MERGE_HEAD 가 있다) 무엇을 어디에 — git 이 쓴 MERGE_MSG 첫 줄 「Merge (remote-tracking) branch 'X' into Y」.
+// into 가 없으면(main · master 로 합칠 때 git 이 뺀다) 지금 브랜치. 못 읽은 꼴이면 그 줄 그대로
+export function mergeLine(msg: string, current?: string) {
+  const first = msg.split('\n')[0]?.trim() ?? '', m = /^Merge (?:remote-tracking branch|branch|commit|tag) '([^']+)'(?: of \S+)?(?: into (\S+))?$/.exec(first)
+  return m ? `${m[1]} → ${m[2] ?? current ?? '지금 브랜치'}` : first || '머지 중'
 }
 
 export async function describe($: any, command: string) {
@@ -194,13 +214,30 @@ export async function describe($: any, command: string) {
     const text = await $.fs.read(pathIn(home, it.dirs, it.msgFile)).catch(() => '')
     it.title = String(text).split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#')) ?? it.title
   }
-  const seen = await Promise.all(items.map(async it => { await titled(it); return { it, ...await look($, home, it.dirs) } }))
+  // 커밋이 머지를 마무리하면 MERGE_MSG 를 읽는다 — 머지 중이 아니면 rev-parse 가 실패해 읽지 않는다
+  const merging = async (it: Item) => {
+    const git = gitIn($, home, it.dirs)
+    if (it.op !== 'commit' || !await git('rev-parse', '-q', '--verify', 'MERGE_HEAD')) return undefined
+    const f = await git('rev-parse', '--path-format=absolute', '--git-path', 'MERGE_MSG')
+    return f ? String(await $.fs.read(f).catch(() => '')) : ''
+  }
+  const seen = await Promise.all(items.map(async it => { await titled(it); const [l, merge] = await Promise.all([look($, home, it.dirs), merging(it)]); return { it, merge, ...l } }))
   const count = (op: string) => items.filter(it => it.op === op).length
   const lines = [`${['commit', 'push'].filter(count).map(op => `git ${op} ${count(op)}건`).join(' · ')} — 실행할까?`]
-  for (const { it, top, branch, staged } of seen) {
-    const files = [...new Set([...it.files, ...(it.op === 'commit' && staged ? staged.split('\n') : [])])]
-    lines.push('', `${top?.split(/[\\/]/).pop() ?? it.dirs.at(-1) ?? '(지금 폴더)'} (${branch || (branch === '' ? 'HEAD 분리' : '브랜치 모름')})`)
-    if (it.op === 'commit') lines.push(`  제목: ${it.title ?? '(못 읽었다)'}`)
+  // ponytail: 브랜치는 명령 전 지금 브랜치 — 같은 명령 안의 checkout · switch 는 따라가지 않는다
+  for (const { it, top, branch, staged, merge } of seen) {
+    const files = [...new Set([...it.files, ...(it.op === 'commit' && staged ? staged.split('\n') : [])])], cur = branch || undefined
+    // 그 폴더에서 git 을 못 돌렸으면 까닭을 — 묻는 것은 실행 전이라 이 명령이 만들 폴더는 아직 없다
+    const why = it.dirs.some(d => d.includes('$')) ? '경로의 변수를 풀지 못했다' : '아직 없는 폴더(이 명령이 만든다) · git 레포 밖 · git 이 2초 안에 답하지 않음 중 하나'
+    lines.push('', top?.split(/[\\/]/).pop() ?? `${it.dirs.at(-1) ?? '(지금 폴더)'} — 폴더를 못 읽었다: ${why}`)
+    if (it.op === 'commit') {
+      lines.push(`  커밋할 브랜치: ${branch || (branch === '' ? '없음(HEAD 분리)' : '모름')}`)
+      if (merge !== undefined) lines.push(`  머지 마무리: ${mergeLine(merge, cur)}`)
+      lines.push(`  제목: ${it.title ?? '(못 읽었다)'}`)
+    } else {
+      const { remote, refs } = pushRefs(it.args ?? [], cur)
+      lines.push(...refs.map(r => r.src === '' ? `  push: ${remote}/${r.dst ?? '?'} 지움` : `  push: ${r.src ?? '(지금 브랜치 모름)'} → ${remote}/${r.dst ?? '?'}`))
+    }
     if (files.length) lines.push(`  파일 ${files.length}개: ${files.slice(0, 8).join(', ')}${files.length > 8 ? ` 외 ${files.length - 8}개` : ''}`)
     else if (it.op === 'commit' && staged === '' && !it.notes.length) lines.push('  staged 파일 없음')
     lines.push(...it.notes.map(t => `  ${t}`))
