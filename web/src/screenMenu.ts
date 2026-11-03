@@ -23,7 +23,8 @@ const BOX = /^\[([ ✔✓xX])\]\s*(.*)$/;          // 여러 개 고르기의 �
 const TABS = /^←.*→$/;                           // 질문 여럿일 때 맨 위 줄
 const CHIP = /^[☐☒✔]\s+\S/;                      // 질문 하나일 때 맨 위 머리표(「☐ git commit」) — tabs 자리에 작게 보인다
 const STEP = /^(Next|Submit)$/;                  // 여러 개 고르기 아래의 「다음」 줄 — 선택지 설명이 아니다
-const SIDE = /^(.*?)(?:^|\s{2,})([┌│└].*[┐│┘])\s*$/;   // 선택지 줄 오른쪽에 붙은 미리 보기 상자 조각(┌─┐ · │ … │ · └─┘)
+const BOXAT = /^(.*?\S)\s{2,}([┌│└])/;            // 글 뒤에 두 칸 넘게 띄우고 붙은 미리 보기 상자 조각(┌ · │ · └)
+const JUNK = /\s+[┌│└┐┘].*$/;                      // 선택지 글 뒤에 남은 상자 조각 — 선택지 이름에는 상자 글자가 없다
 
 // 번호를 누른 뒤에도 그 번호에 커서(›·❯)가 남아 있으면 아직 확정 전 — Codex 폴더 신뢰 화면은 숫자가 고르기만 하고 Enter 로 확정한다.
 // 여러 개 고르기([ ]·☐)는 숫자가 체크만 하는 게 맞으니 확정 전으로 보지 않는다.
@@ -41,6 +42,23 @@ export function mainPush(m: Menu | null): { branch: string; ref: string; questio
   if (!m || !branch) return null;
   const head = m.question.match(/^⚠ \S+ 에 바로 올라간다 — (\S+)\n*/);
   return { branch, ref: head?.[1] ?? branch, question: head ? m.question.slice(head[0].length) : m.question };
+}
+
+// 터미널 칸 — 줄을 칸 col 에서 둘로 나눈다(두 칸 글자가 걸치면 왼쪽에 둔다)
+function cutAt(l: string, col: number): [string, string] {
+  const cs = [...l];
+  let n = 0, i = 0;
+  for (; i < cs.length && n < col; i++) n += wide(cs[i]) ? 2 : 1;
+  return [cs.slice(0, i).join(''), cs.slice(i).join('')];
+}
+// 줄에서 미리 보기 상자가 시작하는 칸 — 상자 조각만 있는 줄은 그 들여쓰기, 아니면 글 뒤 두 칸 넘게 띄운 ┌ · │ · └. 없으면 null
+// (상자 조각만 있는 줄을 BOXAT 로 읽으면 왼쪽 테두리를 글로 보고 오른쪽 테두리에서 자른다)
+const cellsOf = (s: string) => [...s].reduce((n, c) => n + (wide(c) ? 2 : 1), 0);
+const isBox = (s: string) => /^[┌│└]/.test(s.trimStart());
+function boxCol(l: string): number | null {
+  if (isBox(l)) return cellsOf(l.slice(0, l.length - l.trimStart().length));
+  const m = BOXAT.exec(l);
+  return m ? cellsOf(l.slice(0, m[0].length - 1)) : null;
 }
 
 // 직접 써서 답하는 선택지(「Type something」 등) — 고르면 글을 받아야 한다
@@ -66,10 +84,19 @@ export function parseMenu(lines: string[]): Menu | null {
   const opts = [...lines.keys()].filter(i => OPT.test(lines[i]));
   const first = opts.findLast(i => lines[i].match(OPT)![1] === '1') ?? opts[0] ?? -1;
   if (first < 0) return cursorMenu(lines);
-  // 미리 보기가 붙은 질문은 첫 선택지 줄 오른쪽에서 상자(┌)가 시작한다 — 줄마다 오른쪽 상자 조각을 떼어 미리 보기로 모은다.
+  // 미리 보기가 붙은 질문은 첫 선택지 줄 오른쪽에 상자가 붙는다 — 그 칸(col)부터 오른쪽을 줄마다 떼어 미리 보기로 모은다.
   // 이 꼴에서 Claude 는 선택지 설명을 화면에 그리지 않는다(desc 가 빈다).
-  const side = SIDE.exec(lines[first])?.[2].startsWith('┌'), box: string[] = [];
-  const rest = lines.slice(first).map(l => { const m = side && l.match(SIDE); if (!m) return l; box.push(m[2]); return m[1]; });
+  // Windows(ConPTY)는 한글 · 「·」 같은 글자 폭을 Claude 와 다르게 세어 화면이 어긋난다 — 상자 오른쪽 테두리가 없거나, 상자 조각이 줄마다
+  // 다른 칸 · 질문 줄에 남는다. 그래서 테두리 짝을 찾지 않고 칸으로 자르고, 줄에 제 상자 자리가 있으면 그걸, 선택지 글 뒤 남은 조각은 떼어 낸다.
+  const col = boxCol(lines[first]), side = col !== null, box: string[] = [];
+  const rest = lines.slice(first).map(l => {
+    if (!side) return l;
+    const [a, b] = cutAt(l, boxCol(l) ?? col);
+    if (isBox(b)) box.push(b.trim());
+    return a.replace(JUNK, '');
+  });
+  // 질문 줄 오른쪽에 밀려온 상자 조각 · 상자 조각만 남은 줄도 뗀다 — 질문 왼쪽 막대(「│ 질문」, 맨 앞 몇 칸)는 상자가 아니다
+  const top = side ? lines.slice(0, first).map(l => { const c = boxCol(l); return c === null || c <= 4 ? l : cutAt(l, c)[0].trimEnd(); }) : lines.slice(0, first);
   const options: Menu['options'] = [];
   let ruled = false;   // 선택지 아래 가로줄 밑(「Chat about this」 등)은 번호 선택지만 받고 설명으로 붙이지 않는다
   for (const l of rest) {
@@ -81,15 +108,16 @@ export function parseMenu(lines: string[]): Menu | null {
   if (options.length < 2) return null;
   // 상자 안 글(┌ 다음부터 └ 앞까지, 양옆 │ 를 뗀다)은 커서(❯) 선택지의 미리 보기
   const end = box.findIndex(b => b.startsWith('└')), cur = rest.find(l => /^\s*[❯›>]\s*\d/.test(l))?.match(OPT)?.[1];
-  const preview = side && { ...(cur ? { n: Number(cur) } : {}), text: box.slice(1, end < 0 ? undefined : end).map(b => b.replace(/^│ ?/, '').replace(/\s*│$/, '')).join('\n') };
+  const from = box[0]?.startsWith('┌') ? 1 : 0;   // 화면이 어긋나면 상자 윗줄이 선택지 줄에 없을 수 있다
+  const preview = side && { ...(cur ? { n: Number(cur) } : {}), text: box.slice(from, end < 0 ? undefined : end).map(b => b.replace(/^│ ?/, '').replace(/\s*│$/, '')).join('\n') };
   let multi = false;
   for (const o of options) {
     const b = o.label.match(BOX);
     if (b) { multi = true; o.label = b[2].trim(); o.checked = b[1] !== ' '; }
   }
-  const head = lines.slice(0, first).map(l => l.trim()), tabs = head.findLast(l => TABS.test(l))?.replace(/^←\s*|\s*→$/g, '') ?? head.findLast(l => CHIP.test(l))?.replace(/^[☐☒✔]\s+/, '');
-  const q = question(lines, first), top = tabs ?? q.kind;
-  return { question: q.text, options, ...(multi ? { multi } : {}), ...(top ? { tabs: top } : {}), ...(preview ? { preview } : {}), ...(q.block ? { block: q.block } : {}) };
+  const head = top.map(l => l.trim()), tabs = head.findLast(l => TABS.test(l))?.replace(/^←\s*|\s*→$/g, '') ?? head.findLast(l => CHIP.test(l))?.replace(/^[☐☒✔]\s+/, '');
+  const q = question([...top, ...lines.slice(first)], first), chip = tabs ?? q.kind;
+  return { question: q.text, options, ...(multi ? { multi } : {}), ...(chip ? { tabs: chip } : {}), ...(preview ? { preview } : {}), ...(q.block ? { block: q.block } : {}) };
 }
 
 // 커서 메뉴 — ❯ 줄의 글자 자리(칸)와 같은 칸에서 시작하는 줄이 선택지, 더 들여 쓴 줄은 그 설명. 빈 줄·가로줄·안내·덜 들여 쓴 줄에서 끝난다.
