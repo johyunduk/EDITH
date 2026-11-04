@@ -13,7 +13,7 @@ import { ANY, change, commit, DEPLOY_FILE, git, loadStore, mainRepo, note, out, 
 import { closeWorkspace, spaces } from './herdr.ts';
 import { each } from './reach.ts';
 import { readRefs } from './repos.ts';
-import { deployHook, listRuns, loadRun, RUNS, runHook, type RunAction } from './runner.ts';
+import { deployHook, listRuns, loadRun, RUNS, runHook, type Run, type RunAction } from './runner.ts';
 import { lastLine } from './timeline.ts';
 import { refsIn, removeUploads, runRefPaths, transcriptDir } from './uploads.ts';
 
@@ -43,6 +43,18 @@ export function runSpacesOf(all: Space[], panes: string[]) {
   const mine = ws.filter(s => !s.busy && s.panes!.every(p => panes.includes(p)));
   return { mine, kept: ws.filter(s => !mine.includes(s)) };
 }
+// 런이 쓴 pane — 본 줄과 갈래마다
+const runPanes = (r: Run) => [r.pane, ...Object.values(r.panes ?? {}).map(o => o.pane)].filter((p): p is string => !!p);
+// 런 화면 「워크스페이스 닫기」 — 끝난 런 하나의 워크스페이스. 배포 목록에 안 이어지는 런(리뷰 등)은 정리가 닫지 않는다.
+// 정리와 같은 기준(runSpacesOf) — 런 밖 pane 이 있거나 일하는 중이면 닫지 않고 까닭을 돌려준다
+export async function closeRunSpaces(id: number, all: () => Promise<Space[]> = spaces, close: (id: string) => Promise<unknown> = closeWorkspace, load = loadRun) {
+  const r = load(id);
+  if (!r) throw new Error('없는 런이다');
+  if (r.state !== 'done' && r.state !== 'dropped') throw new Error('끝난 런만 닫는다 — 멈춘 런은 이어 갈 수 있어서');
+  const { mine, kept } = runSpacesOf(await all(), runPanes(r)), closed: string[] = [], errs: string[] = [];
+  for (const w of mine) try { await close(w.id); closed.push(w.label); } catch (e) { errs.push(`「${w.label}」 — ${(e as Error).message.split('\n')[0]}`); }
+  return { closed, kept: kept.map(k => `「${k.label}」 — ${k.busy ? '일하는 중' : '런 밖 pane 이 있다'}`), errs };
+}
 // 그 항목에 이어진 런과, 그 원본에 합친 이슈 브랜치(런 edith-repos.json 의 via)
 // active — 아직 끝나지 않은 런(끝 · 버림이 아니면 — 멈춤도 이어 갈 수 있다). 그 런이 쓰는 워크트리는 치우지 않는다
 async function linked(x: Item) {
@@ -54,7 +66,7 @@ async function linked(x: Item) {
     runs.add(r.id);
     if (r.state !== 'done' && r.state !== 'dropped') active.add(r.id);
   }
-  const ended = [...runs].filter(n => !active.has(n)).map(n => { const r = loadRun(n); return { id: n, panes: r ? [r.pane, ...Object.values(r.panes ?? {}).map(o => o.pane)].filter((p): p is string => !!p) : [] }; });
+  const ended = [...runs].filter(n => !active.has(n)).map(n => { const r = loadRun(n); return { id: n, panes: r ? runPanes(r) : [] }; });
   return { runs: [...runs], issues: [...issues], active: [...active], ended };
 }
 const hookEnv = (p: CleanPlan, mode: 'check' | 'run' | 'fix') => ({ EDITH_CLEAN_MODE: mode, EDITH_CLEAN_REPO: p.repo, EDITH_CLEAN_BRANCH: p.branch, EDITH_DEPLOY_ID: p.id,

@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cleanFix, cleanPlan, cleanRun, cleanStart, cleanState, contentIn, parseLines, runSpacesOf, spacesOf, type Space } from './cleanup.ts';
+import { cleanFix, cleanPlan, cleanRun, cleanStart, cleanState, closeRunSpaces, contentIn, parseLines, runSpacesOf, spacesOf, type Space } from './cleanup.ts';
+import type { Run } from './runner.ts';
 import { importItems, loadStore } from './deploy.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -67,6 +68,21 @@ test('runSpacesOf — 끝난 런 pane 이 든 워크스페이스만, 런 밖 pan
   const { mine, kept } = runSpacesOf(all, ['r:p1', 'r:p2', 'x:p1', 'b:p1']);
   assert.deepEqual(mine.map(s => s.id), ['r']);
   assert.deepEqual(kept.map(s => s.id), ['x', 'b']);
+});
+
+test('closeRunSpaces — 끝난 런의 본 줄 · 갈래 워크스페이스만 닫고, 섞인 것은 까닭을 남긴다. 안 끝난 런은 거절', async () => {
+  const all = async (): Promise<Space[]> => [
+    { id: 'm', label: '런·리뷰 #9', busy: false, cwds: ['/w'], panes: ['m:p1', 'm:p2'] },
+    { id: 'x', label: '런·리뷰 #9 · 옛 갈래', busy: false, cwds: ['/w'], panes: ['x:p1', 'x:p2'] },
+    { id: 'o', label: '다른 일', busy: false, cwds: ['/w'], panes: ['o:p1'] },
+  ];
+  const run = (state: string) => () => ({ state, pane: 'm:p1', panes: { claude: { pane: 'm:p2' }, old: { pane: 'x:p1' } } }) as unknown as Run;
+  const shut: string[] = [];
+  const v = await closeRunSpaces(9, all, async id => { shut.push(id); }, run('done'));
+  assert.deepEqual(shut, ['m']);
+  assert.deepEqual(v, { closed: ['런·리뷰 #9'], kept: ['「런·리뷰 #9 · 옛 갈래」 — 런 밖 pane 이 있다'], errs: [] });
+  await assert.rejects(closeRunSpaces(9, all, async id => { shut.push(id); }, run('stopped')), /끝난 런만/);
+  assert.deepEqual(shut, ['m']);
 });
 
 test('parseLines — 마지막 줄의 JSON 만, 틀린 줄은 버린다', () => {

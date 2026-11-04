@@ -392,6 +392,17 @@ function RunDetail({ r }: { r: Run }) {
     catch (e) { toast(`하지 못했다 — ${(e as Error).message}`, 5000); }
     setBusy(false);
   };
+  // 끝난 런의 워크스페이스가 아직 열려 있으면 「워크스페이스 닫기」 — 배포 「정리」 로 이어지지 않는 런도 치우게(src/cleanup.ts closeRunSpaces)
+  const herdr = useHerdr(), mine = [r.pane, ...Object.values(r.panes ?? {}).map(o => o.pane)];
+  const spacesOpen = ended(r.state) && !!herdr.data?.panes.some(p => mine.includes(p.id));
+  const closeSpaces = async () => {
+    setBusy(true);
+    try {
+      const v = await post<{ closed: string[]; kept: string[]; errs: string[] }>(`/api/runs/${r.id}/spaces`, {});
+      toast([v.closed.length ? `닫음 ${v.closed.join(' · ')}` : '닫을 워크스페이스가 없다', ...v.kept.map(k => `남김 ${k}`), ...v.errs.map(e => `못 닫음 ${e}`)].join('\n'), 6000);
+    } catch (e) { toast(`하지 못했다 — ${(e as Error).message}`, 5000); }
+    setBusy(false);
+  };
   const live = r.steps.filter(s => !s.fixOnly), done = live.filter(s => ['done', 'skipped'].includes(r.nodes[s.key].state)).length;
   const s = r.steps.find(x => x.key === sel), [first, ...more] = r.input.split('\n'), notion = notionUrl(r.input);
   const detail = (bare = false) => s ? <NodeDetail r={r} s={s} busy={busy} armed={armed} arm={setArmed} act={act} bare={bare} /> : null;
@@ -419,6 +430,8 @@ function RunDetail({ r }: { r: Run }) {
             ))}
           </span>
           {r.live && <Button size="sm" variant={watch ? 'default' : 'outline'} className="h-7 text-xs" aria-pressed={watch} onClick={() => setWatch(!watch)}>브라우저 화면</Button>}
+          {spacesOpen && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => void closeSpaces()}
+            title="이 런이 연 herdr 워크스페이스를 닫는다 — 런 기록 · 산출물은 남는다. 런 밖 pane 이 섞였거나 일하는 중이면 남긴다">워크스페이스 닫기</Button>}
           {r.state === 'running' && <Button size="sm" variant="outline" className="h-7 text-xs text-destructive" disabled={busy} onClick={() => void act('stop')}>멈춤</Button>}
           {(r.state === 'check' || r.state === 'stopped') && <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void act('resume')}>이어서</Button>}
           {r.state === 'queued' && <>

@@ -758,7 +758,8 @@ function notify(title: string, body = '') {
 // 런 워크스페이스 이름 — 「런·이름 #번호[ · 갈래·브랜치]」. 첫 「·」 앞이 사이드바 묶음(web/src/wsGroups.ts)이라 런이 「런」 한 묶음에 모인다(옛 런은 「▶ 이름 #번호」)
 export const runSpace = (name: string, id: number, more?: string) => `런·${name} #${id}${more ? ` · ${more}` : ''}`;
 
-// 런 pane — 본 줄은 「런·이름 #번호」 워크스페이스를 작업 폴더에서 만들고, 갈래는 본 줄 pane 옆을 나눠(없으면 「런·이름 #번호 · 갈래」 워크스페이스)
+// 런 pane — 본 줄은 「런·이름 #번호」 워크스페이스를 작업 폴더에서 만들고, 갈래는 본 줄 pane 옆을 나눠
+// (본 줄 pane 이 아직 없으면 — 명령 노드로 시작해 바로 갈라진 런 — 본 줄 워크스페이스를 먼저 열어 둔다. 갈래 워크스페이스를 따로 열면 합치는 본 줄 노드가 하나를 더 연다)
 // Claude 를 띄운다(실행 폴더는 --add-dir 로 쓸 수 있게). 띄운 인자(want — 모델 · 강도 · MCP)가 이번 노드 것과 다르면 /exit 로 끄고
 // 그 인자로 다시 띄운다(노드마다 새 대화라 잃는 것이 없다). 못 하면 그 까닭(노드를 확인 필요로), 되면 null.
 async function ensureClaude(r: Run, track: string, want: string[]): Promise<string | null> {
@@ -779,7 +780,10 @@ async function ensureClaude(r: Run, track: string, want: string[]): Promise<stri
     }
   }
   try {
-    if (!o.pane) o.pane = track && r.pane && await find(r.pane) ? await split(r.pane, 'right') : await newWorkspace(runSpace(r.name, r.id, track), r.cwd);
+    if (!o.pane) {
+      if (track && !(r.pane && await find(r.pane))) r.pane = await newWorkspace(runSpace(r.name, r.id), r.cwd);
+      o.pane = track ? await split(r.pane!, 'right') : await newWorkspace(runSpace(r.name, r.id), r.cwd);
+    }
     saveRun(r);
     await start(o.pane, 'claude', ['--add-dir', dirOf(r.id), ...want]);
     o.claude = want;

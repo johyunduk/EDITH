@@ -33,7 +33,7 @@ import { runAnalysis } from './analysis.ts';
 import { answerRequest, listRequests, readRequest, REQ_ID, REQUESTS } from './requests.ts';
 import { brief, dayAi, todoOp, todoState } from './today.ts';
 import { addItem, addTask, checkTask, deployBoard, deployDiff, deployDone, deployFetch, deployFile, editItems, prepareMerge, prepItems, promoteCheck, promoteMany } from './deploy.ts';
-import { cleanFix, cleanRun, cleanStart, cleanState } from './cleanup.ts';
+import { cleanFix, cleanRun, cleanStart, cleanState, closeRunSpaces } from './cleanup.ts';
 import { withAgenda } from './agenda.ts';
 import { readSettings, saveSettings, settingsPages } from './engineSettings.ts';
 
@@ -281,7 +281,7 @@ export function serve(port: number) {
       // 런 단추 기록(최근 5개, code null 이면 도는 중) — 배포 화면이 단추를 누른 뒤 끝났는지만 가볍게 본다
       const rac = path.match(/^\/api\/runs\/(\d{1,6})\/acted$/);
       if (rac && req.method === 'GET') return reply(res, 200, acted(Number(rac[1])).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) })));   // repo — 레포 줄 단추(화면이 레포마다 막는다)
-      const ru = path.match(/^\/api\/runs\/(\d{1,6})(?:\/(stop|resume|skip|rewind|action|drop))?$/);
+      const ru = path.match(/^\/api\/runs\/(\d{1,6})(?:\/(stop|resume|skip|rewind|action|drop|spaces))?$/);
       if (ru && !ru[2] && req.method === 'GET') { const v = runView(Number(ru[1])); return v ? reply(res, 200, withAgenda([v])[0]) : reply(res, 404, '없는 런'); }
       // 런의 레포 커밋 상태 — 엔진이 남긴 edith-repos.json 의 레포를 git 으로 읽는다(src/repos.ts)
       const rp = path.match(/^\/api\/runs\/(\d{1,6})\/repos$/);
@@ -311,6 +311,7 @@ export function serve(port: number) {
         try {
           if (ru[2] === 'action') return reply(res, 200, { ok: true, ...await runAction(Number(ru[1]), b.n, b.text, b.repo) });
           if (ru[2] === 'drop') { dropRun(Number(ru[1]), b.reason); return reply(res, 200, { ok: true }); }
+          if (ru[2] === 'spaces') return reply(res, 200, await closeRunSpaces(Number(ru[1])));   // 끝난 런의 워크스페이스 닫기(src/cleanup.ts)
           act(Number(ru[1]), { do: ru[2] as 'stop' | 'resume' | 'skip' | 'rewind', key: b.key });
           return reply(res, 200, { ok: true });
         } catch (e) { return fail(e); }
