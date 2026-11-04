@@ -547,6 +547,13 @@ type Action = { do: 'stop' } | { do: 'resume' } | { do: 'skip'; key: string } | 
 const driving = new Set<number>(), queued = new Map<number, Action[]>(), procs = new Map<string, ChildProcess>(), exits = new Map<string, number>();
 // 명령 프로세스 · 끝 코드는 시도마다 따로 — 멈춘 시도가 늦게 끝나도 다음 시도의 결과로 읽히지 않게
 const pk = (r: Run, key: string) => `${r.id}:${key}:${r.nodes[key].attempt}`;
+// 고리 쉬기 — 명령이 끝나면 2초를 다 채우지 않고 깨운다(명령 노드마다 2초씩 늘던 것). 쉬기 전에 끝났으면 다음 쉬기를 건너뛴다
+const naps = new Map<number, () => void>(), woke = new Set<number>();
+export function nap(id: number, ms: number) {
+  if (woke.delete(id)) return Promise.resolve();
+  return new Promise<void>(res => { const t = setTimeout(go, ms); function go() { clearTimeout(t); naps.delete(id); res(); } naps.set(id, go); });
+}
+export const wake = (id: number) => { const go = naps.get(id); if (go) go(); else woke.add(id); };
 // 갈래의 pane · Claude 인자 자리 — 본 줄은 run 자신(pane · claude), 갈래는 panes[이름]
 const slot = (r: Run, track = ''): { pane?: string; claude?: string[] } => track ? ((r.panes ??= {})[track] ??= {}) : r;
 // 고리를 돌릴 것이 있나 — 도는 중이거나, 확인 필요여도 다른 갈래에 도는 노드 · 돌 수 있는 노드가 있으면
@@ -641,7 +648,7 @@ export function drive(id: number) {
         if (checks(r) > held) notify(`런 #${id} ${r.name} — 확인 필요`, r.reason);
         saveRun(r);
         if (!moving(r)) break;
-        await sleep(2000);
+        await nap(id, 2000);
       }
     } catch (e) {
       const r = loadRun(id);
@@ -704,7 +711,8 @@ async function begin(r: Run, next: Step) {
   writeFileSync(join(at, 'prompt.txt'), text, { mode: 0o600 });
   try {
     await promptAgent(pane, '/clear');
-    await sleep(3000);
+    // /clear 는 0.7초쯤에 끝난다 — 곧바로~3초 뒤에 보낸 18번이 모두 새 대화에 들었다(실측). 1초는 여유(전엔 3초)
+    await sleep(1000);
     await promptAgent(pane, text);
     n.state = 'running';
   } catch (e) {
@@ -712,14 +720,23 @@ async function begin(r: Run, next: Step) {
   }
 }
 
+// 결과 파일을 쓰고도 마무리 글을 쓰는 중이면(실측 중앙 10초) 끊어도 된다 — 결과 파일이 노드의 마지막 동작이라. 쓴 지 3초는 기다린다(결과 파일을 쓴 명령이 마저 끝나게)
+export const closingTalk = (status: string | null | undefined, wroteAgo: number) => !['idle', 'done', 'blocked'].includes(status ?? '') && wroteAgo > 3000;
+const ageOf = (f: string) => { try { return Date.now() - statSync(f).mtimeMs; } catch { return 0; } };
+
 // 스킬 노드 지켜보기 — Claude 가 쉬는 상태(idle · done)이고 이번 시도 결과 파일이 있으면 끝. 결과 없이 쉬면 한 번 일깨우고, 그래도 없으면 사람에게.
 async function watch(r: Run, s: Step) {
   const n = r.nodes[s.key], pane = slot(r, s.track).pane, p = (await snapshot()).panes.find(x => x.id === pane);
   if (!pane || !p || p.agent !== 'claude') return hold(r, s, '런 pane 이 없거나 Claude 가 꺼졌다 — pane 을 보고 「이어서」');
   if (p.status === 'blocked') { if (n.state !== 'blocked') notify(`런 #${r.id} ${r.name} — 답을 기다린다`, where(s)); n.state = 'blocked'; n.idle = 0; return; }
   n.state = 'running';
-  if (p.status !== 'idle' && p.status !== 'done') { n.idle = 0; return; }
   const res = join(attemptDir(r.id, s.key, n.attempt), 'result.json');
+  if (p.status !== 'idle' && p.status !== 'done') {
+    n.idle = 0;
+    // Esc 로 마무리 글만 끊고, 쉬는 상태가 된 다음 틱에 아래에서 받는다(같은 틱에 다음 노드의 /clear 를 보내지 않게)
+    if (closingTalk(p.status, ageOf(res))) await keys(pane, 'esc').catch(() => undefined);
+    return;
+  }
   if (existsSync(res)) {
     const o = parseResult(readFileSync(res, 'utf8'));
     if (typeof o === 'string') return hold(r, s, o);
@@ -800,7 +817,7 @@ function runCommand(r: Run, s: Step, at: string, why: string[]) {
   if (why.length) log.write(`${why.join('\n')}\n\n`);
   const child = shell(s.command!, r.cwd, { ...runEnv(r, s.engine), EDITH_REWIND: join(at, 'rewind.json'), EDITH_LANE: s.track ?? '' }, log);
   procs.set(k, child);
-  child.on('close', code => { procs.delete(k); exits.set(k, code ?? 1); });
+  child.on('close', code => { procs.delete(k); exits.set(k, code ?? 1); wake(r.id); });
   r.nodes[s.key].state = 'running';
 }
 const runEnv = (r: Run, engine: string) => ({ EDITH_RUN: dirOf(r.id), EDITH_WORK: join(dirOf(r.id), 'work'), EDITH_ENGINE: join(dirOf(r.id), 'engine', engine), EDITH_INPUT: r.input, EDITH_UNATTENDED: r.unattended ? '1' : '' });

@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, flatten, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runSpace, settle, skip, skipRest, unattend, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, closingTalk, flatten, nap, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runSpace, settle, skip, skipRest, unattend, wake, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
 import { groupOf, shortName } from '../web/src/wsGroups.ts';
 
@@ -14,6 +14,25 @@ test('actBlocked — 레포 줄 단추는 레포마다 따로, 런 전체 단추
   assert.equal(actBlocked(new Set(['/w/be']), '/w/be'), true);
   assert.equal(actBlocked(new Set(['/w/be']), ''), true);   // 런 전체 단추는 무엇이든 돌면 막힌다
   assert.equal(actBlocked(new Set(['']), '/w/fe'), true);
+});
+
+test('nap · wake — 명령이 끝나면 2초를 다 기다리지 않고, 쉬기 전에 끝났으면 다음 쉬기를 건너뛴다', async () => {
+  let t = Date.now(); const p = nap(901, 2000); wake(901); await p;
+  assert.ok(Date.now() - t < 500);
+  wake(902); t = Date.now(); await nap(902, 2000);   // 고리가 쉬기 전에 끝난 명령
+  assert.ok(Date.now() - t < 100);
+  t = Date.now(); await nap(903, 60);   // 깨우지 않으면 시간대로
+  assert.ok(Date.now() - t >= 50);
+});
+
+test('closingTalk — 결과 파일을 쓴 지 3초 넘게 마무리 글을 쓰면 끊는다, 쉬거나 묻는 중 · 막 쓴 것 · 결과 없음(0)은 그대로', () => {
+  assert.equal(closingTalk('working', 3500), true);
+  assert.equal(closingTalk('unknown', 3500), true);
+  assert.equal(closingTalk('working', 1000), false);   // 막 썼다 — 결과 파일을 쓴 명령이 아직 끝나는 중일 수 있다
+  assert.equal(closingTalk('working', 0), false);   // 결과 파일 없음
+  assert.equal(closingTalk('blocked', 9000), false);   // 질문 카드는 끊지 않는다
+  assert.equal(closingTalk('idle', 9000), false);
+  assert.equal(closingTalk('done', 9000), false);
 });
 
 test('cutOff — EDITH 가 뜨기 전에 시작해 끝 코드가 빈 단추 기록은 끊긴 것으로, 뜬 뒤의 것 · 끝난 것은 그대로', () => {
