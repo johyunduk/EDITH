@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mainPush, parseMenu } from '../web/src/screenMenu.ts';
+import { guardCard, mainPush, parseMenu } from '../web/src/screenMenu.ts';
 
 test('번호 메뉴 — 번호·설명 줄·질문, 커서는 없다', () => {
   const m = parseMenu([
@@ -138,6 +138,30 @@ test('main 푸시 질문(커밋 지킴이) — 머리표 「⚠ main 푸시」 �
   assert.equal(mainPush(parseMenu(lines.map(l => l.replace(' ☐ ⚠ main 푸시', ' ☐ git push')))), null);
   assert.equal(mainPush(parseMenu(['⏺ 「☐ ⚠ main 푸시」 머리표를 단다', '────────', ' ☐ git commit', '│ git commit 1건 — 실행할까?', '❯ 1. 실행', '  2. 막기'])), null);
   assert.equal(mainPush(null), null);
+});
+
+test('커밋 지킴이 질문 카드 — 같은 레포의 커밋 · 푸시는 한 상자, 머지는 커밋 앞, 접힌 줄은 앞 줄에, 명령 원문은 따로', () => {
+  const q = ['왜: 쿠폰 수정을 커밋하고', '올린다', '', 'git commit 2건 · git push 1건 — 실행할까?', '',
+    'shop-web · 워크트리 coupon', '  커밋할 브랜치: merge/coupon', '  머지 마무리: origin/dev → merge/coupon', '  제목: (못 읽었다)', '  파일 3개: a.ts,', 'b.ts, c.ts', '',
+    'shop-web · 워크트리 coupon', '  push: merge/coupon → origin/dev', '  git push origin merge/coupon:dev', '',
+    '$X — 폴더를 못 읽었다: 경로의 변수를', '풀지 못했다', '  커밋할 브랜치: 모름', '  제목: x', '  commit -a — 추적 중인 바뀐 파일 전부', '',
+    '명령 글에 git commit·push 가 1번 더 보인다 — 원문에서 확인', '', '명령 원문(앞 400자):', 'cd ~/w && git commit', '--no-edit'].join('\n');
+  assert.deepEqual(guardCard(q), {
+    why: '왜: 쿠폰 수정을 커밋하고 올린다',
+    boxes: [
+      { repo: 'shop-web', worktree: 'coupon', rows: [
+        { op: 'merge', refs: ['origin/dev', 'merge/coupon'], notes: [] },
+        { op: 'commit', refs: ['merge/coupon'], title: '(못 읽었다)', files: '파일 3개 · a.ts, b.ts, c.ts', notes: [] },
+        { op: 'push', refs: ['merge/coupon', 'origin/dev'], notes: ['git push origin merge/coupon:dev'] },
+      ] },
+      { repo: '$X — 폴더를 못 읽었다: 경로의 변수를 풀지 못했다', worktree: undefined, rows: [{ op: 'commit', refs: ['모름'], title: 'x', notes: ['commit -a — 추적 중인 바뀐 파일 전부'] }] },
+    ],
+    warn: ['명령 글에 git commit·push 가 1번 더 보인다 — 원문에서 확인'],
+    raw: 'cd ~/w && git commit\n--no-edit',
+  });
+  // 설명을 못 푼 명령(「git push 실행할까?」) · 다른 질문은 글 그대로
+  assert.equal(guardCard('왜: 올린다\n\ngit push 실행할까?\n\ngit push'), null);
+  assert.equal(guardCard('어느 색?'), null);
 });
 
 test('Claude 승인 화면 — 첫 줄은 종류(tabs), 점선 사이는 block(줄 번호), Tip 줄은 빠진다', () => {

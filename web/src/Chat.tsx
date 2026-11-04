@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { get, type HPane } from './api.ts';
 import { Empty, Icon, Md } from './ui.tsx';
 import { Ansi } from './ansi.tsx';
-import { mainPush, parseMenu, type Menu } from './screenMenu.ts';
+import { guardCard, mainPush, parseMenu, type Menu } from './screenMenu.ts';
 import { Kind, WARN } from './herdrUi.tsx';
 import { AskBand, useAsksOpen } from './Asks.tsx';
 
@@ -155,7 +155,7 @@ function WaitNote({ menu }: { menu: Menu }) {
       <div className={`flex items-center gap-1.5 text-xs font-semibold ${mp ? 'text-rose-700 dark:text-rose-400' : 'text-amber-700 dark:text-amber-400'}`}>
         {mp ? <><Icon className="size-3.5">{WARN}</Icon>{mp.branch} 푸시를 기다린다 — 아래 입력칸에서 고른다</> : <><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다 — 아래 입력칸에서 고른다</>}
       </div>
-      {q && <div className="mt-1 whitespace-pre-wrap">{q.split('\n')[0]}</div>}
+      {q && <div className="mt-1 whitespace-pre-wrap">{guardCard(q)?.why ?? q.split('\n')[0]}</div>}
     </div>
   );
 }

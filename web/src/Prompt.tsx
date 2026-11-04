@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { get, post, type HPane } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Icon } from './ui.tsx';
-import { isFree, mainPush, wide, type Menu } from './screenMenu.ts';
+import { guardCard, isFree, mainPush, wide, type Guard, type Menu } from './screenMenu.ts';
 import { WARN } from './herdrUi.tsx';
 import { toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
@@ -54,10 +54,53 @@ export function putDraft(id: string, add: string) {
   saveDraft(id, now ? `${now}\n\n${add}` : add);
   window.dispatchEvent(new CustomEvent(DRAFT_EVENT, { detail: id }));
 }
+// 커밋 지킴이 질문 — 「왜」 는 굵게, 레포마다 상자 하나에 줄마다 커밋 · 푸시 · 머지 표와 브랜치 칩. 명령 원문은 접어 둔다
+const OP = {
+  commit: ['커밋', 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'],
+  push: ['푸시', 'bg-sky-500/12 text-sky-700 dark:text-sky-400'],
+  merge: ['머지', 'bg-violet-500/12 text-violet-700 dark:text-violet-400'],
+} as const;
+const UNREAD = '(못 읽었다)';
+function GuardCard({ g }: { g: Guard }) {
+  const pill = (r: string) => <span className="rounded-md border bg-card px-1.5 font-mono text-xs font-bold whitespace-nowrap">{r}</span>;
+  return (
+    <div className="space-y-2 text-[0.8125rem] [overflow-wrap:anywhere]">
+      <div className="text-[0.84375rem] font-semibold">{g.why}</div>
+      {g.boxes.map((b, i) => (
+        <div key={i} className="overflow-hidden rounded-lg border bg-card">
+          <div className="border-b bg-muted px-2.5 py-1.5 font-bold">{b.repo}{b.worktree && <span className="ml-1.5 font-normal text-muted-foreground">워크트리 {b.worktree}</span>}</div>
+          {b.rows.map((r, j) => (
+            <div key={j} className={`grid grid-cols-[3.4em_1fr] items-baseline gap-x-2 px-2.5 py-2 ${j ? 'border-t border-dashed' : ''}`}>
+              <span className={`rounded-[5px] text-center text-[0.6875rem] font-bold ${OP[r.op][1]}`}>{OP[r.op][0]}</span>
+              <div className="min-w-0 space-y-1">
+                {r.refs.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                    {r.refs.map((x, k) => <span key={k} className="contents">{k > 0 && <span className="font-bold text-muted-foreground">→</span>}{pill(x)}</span>)}
+                  </div>
+                )}
+                {r.title && <div className={r.title === UNREAD ? 'text-muted-foreground italic' : 'text-[0.84375rem] font-bold'}>{r.title === UNREAD ? `제목 ${UNREAD}` : r.title}</div>}
+                {r.files && <div className="font-mono text-xs text-muted-foreground">{r.files}</div>}
+                {r.notes.map((n, k) => <div key={k} className="font-mono text-xs text-muted-foreground">{n}</div>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+      {g.warn.map((w, i) => <div key={i} className="text-xs font-semibold text-amber-700 dark:text-amber-400">{w}</div>)}
+      {g.raw && (
+        <details className="group text-xs">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground"><span className="transition-transform group-open:rotate-90">›</span>명령 원문(앞 400자)</summary>
+          <pre className="mt-1.5 rounded-md bg-code px-2.5 py-2 font-mono break-all whitespace-pre-wrap text-code-foreground">{g.raw}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
 export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   const agent = !!p.agent, { menu, raw } = useScreen(p), qc = useQueryClient();
   // main · master 푸시 질문(커밋 지킴이)은 카드를 빨강으로 — 머리에 브랜치 · 원격, 질문은 ⚠ 첫 줄을 뗀 나머지
   const mp = mainPush(menu), question = mp?.question ?? menu?.question ?? '';
+  const guard = guardCard(question);   // 커밋 지킴이 질문이면 레포별 상자로
   const [text, setText] = useState(() => loadDraft(p.id)), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
   const ac = useComplete(p, text, caret);
@@ -133,7 +176,7 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
           {menu.tabs && <div className="text-[0.6875rem] text-muted-foreground">{menu.tabs}</div>}
           {/* 질문 첫 줄(무엇을 묻는지)은 굵게, 나머지(레포·제목·파일·명령 원문 등)는 보통 글씨로 — 긴 경로는 아무 데서나 줄을 바꾼다.
               승인 화면의 명령·파일 내용·diff(block)는 첫 줄 아래에 터미널 색 그대로, 「$ 명령」 줄(Codex 승인)은 고정폭으로 */}
-          {(question || menu.block) && (
+          {guard ? <GuardCard g={guard} /> : (question || menu.block) && (
             <div className="space-y-1.5 text-[0.8125rem] whitespace-pre-wrap [overflow-wrap:anywhere]">
               {question && <div className="text-[0.84375rem] font-semibold">{question.split('\n')[0]}</div>}
               {menu.block && <Ansi text={raw.slice(...menu.block).map(l => l.replace(BAR, '$1$2')).join('\n')} className="max-h-64 overflow-auto text-xs" />}

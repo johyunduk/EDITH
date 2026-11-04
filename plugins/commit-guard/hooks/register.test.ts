@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { gitWrite, mergeLine, parse, pathIn, pushRefs, pushTo } from './register.ts'
+import { gitWrite, mergeLine, parse, pathIn, pushRefs, pushTo, repoLabel } from './register.ts'
 
 test('git commit·push 를 찾는다 — 옵션·경로·이어 붙인 명령·셸 안 따옴표까지, 다른 git 명령과 이름만 비슷한 것은 아니다', async () => {
   for (const c of ['git commit -m x', 'git push', 'cd a && git add -A && git commit -q -F - <<EOF', 'git -C "my dir" push origin main',
@@ -78,7 +78,7 @@ test('질문 창에 커밋을 풀어 보이고 원문은 아래에 남긴다', a
   on('process.run', ($: any, e: any) => {
     const sub = e.argv.slice(e.argv.lastIndexOf('-C') + 2).join(' ')
     if (sub.includes('MERGE_HEAD')) return { value: { exitCode: 1, stdout: '', stderr: '' } }   // 머지 중 아님
-    const out = sub === 'rev-parse --show-toplevel' ? '/r/my-repo' : sub === 'branch --show-current' ? 'main' : 'already.ts'
+    const out = sub === 'rev-parse --show-toplevel' ? '/r/my-repo' : sub === 'branch --show-current' ? 'main' : sub.includes('--git-common-dir') ? '/r/my-repo/.git' : 'already.ts'
     return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } }
   })
   await $.tool.call({ tool: 'Bash', command: 'git -C /r/my-repo add new.ts && git -C /r/my-repo commit -m "새 기능"', description: '새 기능을 main 에 커밋한다' })
@@ -164,12 +164,21 @@ test('질문 창 — 커밋할 브랜치 · 머지 마무리(X → Y) · push(sr
   on('fs.read', ($: any, e: any) => ({ value: e.path === '/r/wt/.git/MERGE_MSG' ? "Merge remote-tracking branch 'origin/dev' into merge/123-x\n" : '' }))
   on('process.run', ($: any, e: any) => {
     const sub = e.argv.slice(e.argv.lastIndexOf('-C') + 2).join(' ')
-    const out = sub === 'rev-parse --show-toplevel' ? '/r/wt' : sub === 'branch --show-current' ? 'merge/123-x' : sub.includes('--git-path') ? '/r/wt/.git/MERGE_MSG' : sub.includes('MERGE_HEAD') ? 'abc' : 'a.php'
+    const out = sub === 'rev-parse --show-toplevel' ? '/r/wt' : sub === 'branch --show-current' ? 'merge/123-x' : sub.includes('--git-common-dir') ? '/r/app/.git' : sub.includes('--git-path') ? '/r/wt/.git/MERGE_MSG' : sub.includes('MERGE_HEAD') ? 'abc' : 'a.php'
     return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } }
   })
   await $.tool.call({ tool: 'Bash', command: 'cd /r/wt && git commit --no-edit && git push origin merge/123-x:dev' })
-  expect(asked).toContain('wt\n  커밋할 브랜치: merge/123-x\n  머지 마무리: origin/dev → merge/123-x\n')
-  expect(asked).toContain('wt\n  push: merge/123-x → origin/dev\n  git push origin merge/123-x:dev')
+  // /r/wt 는 /r/app 의 워크트리 — 머리에 원래 레포 이름을 앞에
+  expect(asked).toContain('app · 워크트리 wt\n  커밋할 브랜치: merge/123-x\n  머지 마무리: origin/dev → merge/123-x\n')
+  expect(asked).toContain('app · 워크트리 wt\n  push: merge/123-x → origin/dev\n  git push origin merge/123-x:dev')
+})
+
+test('레포 이름 — 워크트리면 「원래 레포 · 워크트리 폴더」, 본 체크아웃 · bare · 서브모듈 · 못 읽은 공통 폴더는 폴더 이름만', async () => {
+  expect(repoLabel('/w/shop-web', '/w/shop-web/.git')).toBe('shop-web')
+  expect(repoLabel('/wt/shop-web-coupon', '/w/shop-web/.git')).toBe('shop-web · 워크트리 shop-web-coupon')
+  expect(repoLabel('/wt/coupon', '/w/shop.git')).toBe('shop · 워크트리 coupon')
+  expect(repoLabel('/w/app/libs/ui', '/w/app/.git/modules/libs/ui')).toBe('ui')
+  expect(repoLabel('C:\\w\\shop-web', undefined)).toBe('shop-web')
 })
 
 test('같은 명령에서 정한 변수(W=… · export · ${W})는 cd · -C · -F · push 인자에서 푼다, 못 푼 것은 그대로', async () => {

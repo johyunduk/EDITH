@@ -44,6 +44,44 @@ export function mainPush(m: Menu | null): { branch: string; ref: string; questio
   return { branch, ref: head?.[1] ?? branch, question: head ? m.question.slice(head[0].length) : m.question };
 }
 
+// 커밋 지킴이 질문을 카드로 — 「왜:」 단락, 레포마다 커밋 · 푸시 · 머지 줄, 명령 원문(plugins/commit-guard describe 가 쓰는 줄 꼴).
+// 같은 레포가 잇따르면(커밋하고 푸시) 한 상자. 못 알아보는 꼴(설명을 못 푼 명령 · 다른 질문)이면 null — 카드는 글 그대로 보인다.
+// 터미널 폭에서 접힌 줄은 아는 머리(커밋할 브랜치: · push: …)로 시작하지 않으면 앞 줄에 잇는다.
+// shortcut: 접힌 줄을 빈칸 하나로 잇는다 — 낱말 가운데서 잘린 긴 경로는 빈칸이 끼어 보인다
+export type GuardRow = { op: 'commit' | 'push' | 'merge'; refs: string[]; title?: string; files?: string; notes: string[] };
+export type Guard = { why: string; boxes: { repo: string; worktree?: string; rows: GuardRow[] }[]; warn: string[]; raw: string };
+const GUARD_KV = /^(커밋할 브랜치|머지 마무리|제목|push|파일 \d+개): (.*)$/;
+const GUARD_HEAD = /^(커밋할 브랜치|머지 마무리|제목|push|파일 \d+개): |^(staged 파일 없음$|git (add|push)\b|commit (-a|--all) —|amend —)/;
+const RAW = '\n명령 원문(앞 400자):\n';
+
+export function guardCard(q: string): Guard | null {
+  const at = q.indexOf(RAW), paras = (at < 0 ? q : q.slice(0, at)).split(/\n\s*\n/).map(p => p.split('\n').map(l => l.trim()).filter(Boolean));
+  if (!paras[0]?.[0]?.startsWith('왜:') || !/^git (commit|push) \d+건/.test(paras[1]?.[0] ?? '')) return null;
+  const g: Guard = { why: paras[0].join(' '), boxes: [], warn: [], raw: at < 0 ? '' : q.slice(at + RAW.length) };
+  for (const p of paras.slice(2)) {
+    const lines: string[] = [];
+    for (const l of p) if (lines.length && !GUARD_HEAD.test(l)) lines[lines.length - 1] += ` ${l}`; else lines.push(l);
+    const [head, ...items] = lines;
+    if (head.startsWith('명령 글에 git commit·push 가')) { g.warn.push(head); continue; }
+    const m = /^(.+?) · 워크트리 (.+)$/.exec(head), repo = m?.[1] ?? head, worktree = m?.[2];
+    let box = g.boxes.at(-1), row: GuardRow | undefined;
+    if (!box || box.repo !== repo || box.worktree !== worktree) g.boxes.push(box = { repo, worktree, rows: [] });
+    for (const it of items) {
+      const [, k = '', v = ''] = GUARD_KV.exec(it) ?? [];
+      if (k === '커밋할 브랜치') box.rows.push(row = { op: 'commit', refs: [v], notes: [] });
+      else if (k === '머지 마무리') box.rows.splice(box.rows.length - 1, 0, { op: 'merge', refs: v.split(' → '), notes: [] });   // 커밋 줄 앞에
+      else if (k === 'push') box.rows.push(row = { op: 'push', refs: v.split(' → '), notes: [] });
+      else if (k === '제목' && row) row.title = v;
+      else if (k.startsWith('파일') && row) row.files = `${k} · ${v}`;
+      else {
+        if (!row) box.rows.push(row = { op: 'push', refs: [], notes: [] });   // push: 줄 없는 push(--tags 등)는 원문 줄만
+        row.notes.push(it);
+      }
+    }
+  }
+  return g;
+}
+
 // 터미널 칸 — 줄을 칸 col 에서 둘로 나눈다(두 칸 글자가 걸치면 왼쪽에 둔다)
 function cutAt(l: string, col: number): [string, string] {
   const cs = [...l];

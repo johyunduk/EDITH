@@ -161,8 +161,17 @@ export const pathIn = (home: string, dirs: string[], f: string) =>
 
 async function look($: any, home: string, dirs: string[]) {
   const git = gitIn($, home, dirs)
-  const [top, branch, staged] = await Promise.all([git('rev-parse', '--show-toplevel'), git('branch', '--show-current'), git('diff', '--cached', '--name-only')])
-  return { top, branch, staged }
+  const [top, branch, staged, common] = await Promise.all([git('rev-parse', '--show-toplevel'), git('branch', '--show-current'), git('diff', '--cached', '--name-only'),
+    git('rev-parse', '--path-format=absolute', '--git-common-dir')])
+  return { top, branch, staged, common }
+}
+
+// 레포 이름 — 맨 위 폴더 이름. 워크트리면 맨 위가 워크트리 폴더라 원래 레포(공통 .git 폴더의 주인)를 앞에: 「shop-web · 워크트리 shop-web-coupon」.
+// <레포>/.git 이면 <레포>, bare(<이름>.git)면 그 이름. EDITH 카드가 이 꼴을 읽는다(web/src/screenMenu.ts guardCard)
+export function repoLabel(top: string, common?: string) {
+  const name = top.split(/[\\/]/).filter(Boolean).at(-1) ?? top, parts = common?.split(/[\\/]/).filter(Boolean) ?? []
+  const repo = parts.at(-1) === '.git' ? parts.at(-2) : parts.at(-1)?.replace(/\.git$/, '')
+  return repo && repo !== name ? `${repo} · 워크트리 ${name}` : name
 }
 
 // 티켓키 — 워크트리 설정 gada.ticket(PROJ-<id>·ISSUE-<id>, gada-tree 가 건다)이 있는데 커밋 제목에 [PROJ-…]·[ISSUE-…] 가 없으면 그 키를 돌려준다.
@@ -225,11 +234,11 @@ export async function describe($: any, command: string) {
   const count = (op: string) => items.filter(it => it.op === op).length
   const lines = [`${['commit', 'push'].filter(count).map(op => `git ${op} ${count(op)}건`).join(' · ')} — 실행할까?`]
   // ponytail: 브랜치는 명령 전 지금 브랜치 — 같은 명령 안의 checkout · switch 는 따라가지 않는다
-  for (const { it, top, branch, staged, merge } of seen) {
+  for (const { it, top, branch, staged, merge, common } of seen) {
     const files = [...new Set([...it.files, ...(it.op === 'commit' && staged ? staged.split('\n') : [])])], cur = branch || undefined
     // 그 폴더에서 git 을 못 돌렸으면 까닭을 — 묻는 것은 실행 전이라 이 명령이 만들 폴더는 아직 없다
     const why = it.dirs.some(d => d.includes('$')) ? '경로의 변수를 풀지 못했다' : '아직 없는 폴더(이 명령이 만든다) · git 레포 밖 · git 이 2초 안에 답하지 않음 중 하나'
-    lines.push('', top?.split(/[\\/]/).pop() ?? `${it.dirs.at(-1) ?? '(지금 폴더)'} — 폴더를 못 읽었다: ${why}`)
+    lines.push('', top ? repoLabel(top, common) : `${it.dirs.at(-1) ?? '(지금 폴더)'} — 폴더를 못 읽었다: ${why}`)
     if (it.op === 'commit') {
       lines.push(`  커밋할 브랜치: ${branch || (branch === '' ? '없음(HEAD 분리)' : '모름')}`)
       if (merge !== undefined) lines.push(`  머지 마무리: ${mergeLine(merge, cur)}`)
