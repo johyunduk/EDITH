@@ -12,6 +12,7 @@ import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { DATA_DIR } from './config.ts';
 import { sh } from './sh.ts';
 import { each, reachOf, runActions, runRepos, runTag, runTitle, type Reach, type ReachAction, type ReachRepo } from './reach.ts';
+import { deployOutputs } from './outputs.ts';
 import { readRefs } from './repos.ts';
 import { acted, deployHook, listRuns, loadRun, runHook, RUNS, type Run } from './runner.ts';
 import { lastLine } from './timeline.ts';
@@ -184,7 +185,9 @@ export type Act = { label: string; at: number; code: number | null; note?: strin
 // 런 입력 글에서 첫 http(s) 주소 — 끝 문장부호 · 괄호는 뺀다. 다른 스킴(javascript: 등)은 잡지 않는다
 export const inputLink = (input: string) => input.match(/https?:\/\/[^\s<>"'`)\]]+/)?.[0].replace(/[.,;:!?]+$/, '');
 // link — 런 입력의 첫 http(s) 주소(기획 원문 등). 카드가 그 런 꼬리표(티켓)를 이 주소로 잇는다
-export type RunLink = { id: number; title: string; tag?: string; link?: string; state: Run['state']; now?: string; created: number; actions: ReachAction[]; issue?: ReachRepo; path?: string; acting?: Act; last?: Act };
+// docs — 엔진이 배포 화면에도 걸라고 한 산출물(edith-outputs.json 의 deploy, src/outputs.ts) — i 는 그 런 산출물 차례
+export type RunLink = { id: number; title: string; tag?: string; link?: string; state: Run['state']; now?: string; created: number; actions: ReachAction[]; issue?: ReachRepo; path?: string; acting?: Act; last?: Act;
+  docs?: { label: string; i: number }[] };
 // 런이 지금 하는 노드 — 사람 확인이 먼저
 const nowOf = (r: Run) => {
   const at = (st: string[]) => r.steps.filter(s => st.includes(r.nodes[s.key]?.state)).map(s => s.title);
@@ -209,9 +212,10 @@ export async function deployBoard(file = DEPLOY_FILE) {
     const repos = at.some(a => a && (a.via || (!a.id && !a.old))) ? await runRepos(full) : [];
     const tag = runTag(full), url = inputLink(full.input), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) }));
     const acting = done.find(a => a.code === null), last = done.find(a => a.code !== null);
+    const docs = deployOutputs(join(RUNS, String(full.id), 'work'), [full.cwd, join(RUNS, String(full.id))]);
     const link = (issue?: ReachRepo, path?: string): RunLink => ({ id: full.id, title: runTitle(full), ...(tag ? { tag } : {}), ...(url ? { link: url } : {}), state: full.state, ...(path ? { path } : {}),
       ...(full.state === 'done' ? {} : { now: nowOf(full) }), created: full.created, actions: full.state === 'done' ? runActions(full) : [], ...(issue ? { issue } : {}),
-      ...(acting ? { acting } : {}), ...(last ? { last } : {}) });
+      ...(acting ? { acting } : {}), ...(last ? { last } : {}), ...(docs.length ? { docs } : {}) });
     const loose: ReachRepo[] = [];
     at.forEach((a, i) => {
       if (!a) return;

@@ -65,7 +65,9 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   const list = useQuery({ queryKey: ['runs'], queryFn: () => get<Item[]>('/api/runs'), refetchInterval: 3000 });
   const [fold, setFoldState] = useState(() => { try { return localStorage.getItem('edith.runs.pane') === 'off'; } catch { return false; } });
   const setFold = (v: boolean) => { setFoldState(v); try { localStorage.setItem('edith.runs.pane', v ? 'off' : 'on'); } catch { /* 저장 안 됨 */ } };
-  const n = id && /^\d+$/.test(id) ? Number(id) : undefined, [req, setReq] = useState<Req | null>(null);
+  // 주소 #/runs/<번호>[/out/<산출물 차례>] — 뒤엣것은 배포 카드의 산출물 링크가 그 문서를 바로 열게
+  const m = id?.match(/^(\d+)(?:\/out\/(\d{1,2}))?$/), n = m ? Number(m[1]) : undefined, out = m?.[2] ? Number(m[2]) : undefined;
+  const [req, setReq] = useState<Req | null>(null);
   const run = useQuery({
     queryKey: ['run', n], queryFn: () => get<Run>(`/api/runs/${n}`), enabled: n !== undefined,
     refetchInterval: q => q.state.data?.state === 'running' || q.state.data?.acted.some(a => a.code === null) ? 1500 : 5000,   // 단추 명령이 도는 동안도 자주
@@ -83,7 +85,7 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
         {n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
           : run.error && !run.data ? <div className="p-6"><Empty>런을 읽지 못했다 — {String(run.error)}</Empty></div>
           : !run.data ? <div className="p-6"><Empty>불러오는 중…</Empty></div>
-          : <RunDetail r={run.data} />}
+          : <RunDetail r={run.data} out={out} />}
       </main>
       <RunPane panes={run.data ? [{ track: '', id: run.data.pane }, ...Object.entries(run.data.panes ?? {}).map(([track, v]) => ({ track, id: v.pane }))].filter(x => x.id) as { track: string; id: string }[] : []}
         fold={fold} setFold={setFold} />
@@ -378,7 +380,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
 type View = 'summary' | 'timeline' | 'canvas' | 'stats';
 const VIEWS: [View, string][] = [['summary', '요약'], ['timeline', '타임라인'], ['canvas', '캔버스'], ['stats', '분석']];
 
-function RunDetail({ r }: { r: Run }) {
+function RunDetail({ r, out }: { r: Run; out?: number }) {
   const qc = useQueryClient();
   const [sel, setSel] = useState<string | null>(null), [busy, setBusy] = useState(false), [armed, setArmed] = useState(''), [view, setView] = useState<View>('timeline'), [watch, setWatch] = useState(false);
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(''), 3000); return () => clearTimeout(t); }, [armed]);
@@ -479,6 +481,7 @@ function RunDetail({ r }: { r: Run }) {
         </div>
       )}
       <Waiting r={r} />
+      {out !== undefined && <OutputSheet id={r.id} i={out} onClose={() => { location.hash = `#/runs/${r.id}`; }} />}
       {view !== 'summary' && <>
         <RepoOutputs id={r.id} />
         {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
@@ -716,7 +719,6 @@ function Waiting({ r }: { r: Run }) {
 // 칩은 이름만 — 설명(파일 이름 같은 것) · 경로는 마우스를 올리면. folds 는 「▸ 이름 수」 로 접어 두고 누르면 그 자리에 편다
 function OutputChips({ id, items, folds = [] }: { id: number; items: [OutputItem, number][]; folds?: OutputGroup<OutputItem>['folds'] }) {
   const [view, setView] = useState<number | null>(null), [open, setOpen] = useState<string[]>([]);
-  const one = useQuery({ queryKey: ['run-output', id, view], queryFn: () => get<{ label: string; path: string; text: string }>(`/api/runs/${id}/outputs/${view}`), enabled: view !== null });
   const cls = 'rounded-md border bg-background px-2 py-0.5 text-xs hover:border-primary/60 disabled:opacity-50';
   const chip = ([o, i]: [OutputItem, number]) => {
     const tip = [o.note, o.error ?? o.path ?? o.url].filter(Boolean).join('\n');
@@ -739,16 +741,21 @@ function OutputChips({ id, items, folds = [] }: { id: number; items: [OutputItem
           );
         })}
       </span>
-      {view !== null && (
-        <Sheet title={[...items, ...folds.flatMap(f => f.items)].find(([, i]) => i === view)?.[0].label ?? ''} sub={one.data?.path} onClose={() => setView(null)}>
-          {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
-            : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
-              // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
-              : /\.(html?|svg)$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={one.data.text} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
-              : <pre className="code-panel whitespace-pre-wrap">{one.data.text}</pre>)}
-        </Sheet>
-      )}
+      {view !== null && <OutputSheet id={id} i={view} label={[...items, ...folds.flatMap(f => f.items)].find(([, i]) => i === view)?.[0].label} onClose={() => setView(null)} />}
     </>
+  );
+}
+// 산출물 하나 보기 창 — 칩을 누르거나 주소 #/runs/<번호>/out/<차례>(배포 카드 링크)로 연다
+function OutputSheet({ id, i, label, onClose }: { id: number; i: number; label?: string; onClose: () => void }) {
+  const one = useQuery({ queryKey: ['run-output', id, i], queryFn: () => get<{ label: string; path: string; text: string }>(`/api/runs/${id}/outputs/${i}`) });
+  return (
+    <Sheet title={label ?? one.data?.label ?? ''} sub={one.data?.path} onClose={onClose}>
+      {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
+        : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
+          // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
+          : /\.(html?|svg)$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={one.data.text} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
+          : <pre className="code-panel whitespace-pre-wrap">{one.data.text}</pre>)}
+    </Sheet>
   );
 }
 

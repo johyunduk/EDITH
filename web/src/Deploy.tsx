@@ -20,7 +20,10 @@ type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: 
 type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; row?: boolean; wait?: string };   // row — 레포 줄마다(그 줄 레포만), wait — 아직 누를 때가 아니면 그 까닭(서버 markWait)
 type RepoReach = { name: string; path: string; branch?: string; error?: string; dirty?: number; pushed?: boolean | null; fresh?: boolean; headAt?: number; via?: Reach; envs: Reach[] };
 type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };   // 런 단추 기록 — code null 이면 도는 중, repo — 레포 줄 단추로 그 레포만
-type RunLink = { id: number; title: string; tag?: string; link?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act };   // path — 이 항목에 해당하는 그 런 워크트리
+// path — 이 항목에 해당하는 그 런 워크트리, docs — 엔진이 배포 화면에도 걸라고 한 산출물(i 는 그 런 산출물 차례 — #/runs/<번호>/out/<i> 로 바로 연다)
+type RunLink = { id: number; title: string; tag?: string; link?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act;
+  docs?: { label: string; i: number }[] };
+const docLinks = (r: RunLink, cls: string) => (r.docs ?? []).map(d => <a key={`${r.id}-${d.i}`} href={`#/runs/${r.id}/out/${d.i}`} title={`런 #${r.id} 산출물`} className={cls}>{d.label} ›</a>);
 // 런 단추가 도는지 · 마지막 결과 — 카드 깊숙한 단계 칸이 읽는다(DeployPage 가 1.5초마다 /api/runs/<번호>/acted 로 채운다)
 // running — 그 런에서 도는 단추들(레포 줄 단추는 레포마다 따로 돈다), done — 끝난 기록(최근 것부터)
 const ActCtx = createContext<{ running: (run: number) => Act[]; done: (run: number) => Act[]; now: number }>({ running: () => [], done: () => [], now: 0 });
@@ -434,6 +437,7 @@ function LooseCard({ e, onPick, onFiles }: { e: Board['extra'][number]; onPick: 
     <Bracketed label={`런 #${e.run.id}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <a href={`#/runs/${e.run.id}`} className="font-mono text-xs text-primary hover:underline">#{e.run.id}</a>
+        {docLinks(e.run, 'text-xs font-semibold text-primary hover:underline')}
         <span className="text-base font-bold">{e.run.title}</span>
         {e.run.tag && <span className="rounded border px-1.5 font-mono text-[0.6875rem] text-primary">{e.run.tag}</span>}
         <span className="ml-auto rounded border border-dashed px-1.5 text-xs text-muted-foreground" title="배포 목록에 등록되지 않은 런 일 — edith deploy add 로 넣으면 안건 카드로 묶인다">목록에 없음</span>
@@ -459,6 +463,7 @@ function Row({ name, branch, label, runs, error, sub, onDiff, children }: { name
         <div className="truncate font-mono text-[0.6875rem] text-muted-foreground" title={branch}>{branch}</div>
         {label && <div className="truncate text-xs font-semibold text-primary" title={label}>{label}</div>}
         {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} title={r.title} className="mr-2 text-xs font-semibold text-primary hover:underline">런 #{r.id} ›</a>)}
+        {runs.flatMap(r => docLinks(r, 'mr-2 text-xs font-semibold text-primary hover:underline'))}
         {onDiff && <button type="button" onClick={onDiff} title="이 브랜치가 운영에 더할 코드 — 워크트리 체크아웃과 상관없이 커밋으로 본다" className="text-xs font-semibold text-primary hover:underline">변경 ›</button>}
       </div>
       {error ? <p className="text-sm text-rose-700 dark:text-rose-300">{error}</p> : children}

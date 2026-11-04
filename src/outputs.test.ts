@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listOutputs, parseOutputs, readOutput } from './outputs.ts';
+import { deployOutputs, listOutputs, parseOutputs, readOutput } from './outputs.ts';
 
 test('산출물 목록 읽기 — 이름 + 절대 경로나 http(s) 주소만, 틀린 줄은 뺀다', () => {
   assert.deepEqual(parseOutputs(JSON.stringify([
@@ -30,5 +30,20 @@ test('산출물 파일 — 런 작업 폴더 안만, 링크로 밖을 가리키�
     assert.throws(() => readOutput(work, roots, 2), /밖이거나/);
     assert.throws(() => readOutput(work, roots, 3), /글 파일이 아니다/);
     assert.throws(() => readOutput(work, roots, 9), /없는 산출물/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('배포 화면에 걸 산출물 — deploy: true 이고 볼 수 있는 파일만, 차례는 전체 목록 기준', () => {
+  assert.deepEqual(parseOutputs(JSON.stringify([{ label: '가이드', path: '/w/g.html', deploy: true }, { label: '글자', path: '/w/x.md', deploy: 'yes' }])),
+    [{ label: '가이드', path: '/w/g.html', deploy: true }, { label: '글자', path: '/w/x.md' }]);
+  const root = mkdtempSync(join(tmpdir(), 'edith-out-')), cwd = join(root, 'wt'), work = join(root, 'run', 'work');
+  try {
+    mkdirSync(cwd, { recursive: true }); mkdirSync(work, { recursive: true });
+    writeFileSync(join(cwd, 'plan.md'), '# 계획'); writeFileSync(join(cwd, 'guide.html'), '<p>따라 하기</p>');
+    writeFileSync(join(work, 'edith-outputs.json'), JSON.stringify([
+      { label: '계획', path: join(cwd, 'plan.md') }, { label: '없는 가이드', path: join(cwd, 'gone.html'), deploy: true },
+      { label: 'dev 확인 가이드', path: join(cwd, 'guide.html'), deploy: true }, { label: '주소', url: 'https://example.com', deploy: true },
+    ]));
+    assert.deepEqual(deployOutputs(work, [cwd, join(root, 'run')]), [{ label: 'dev 확인 가이드', i: 2 }]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
