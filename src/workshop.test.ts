@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyDraft, check, createEngine, discardDraft, listEngines, place, readEngine, removeEngine, saveEngine, syncGuide } from './workshop.ts';
+import { applyDraft, check, createEngine, discardDraft, listEngines, place, readEngine, removeEngine, saveEngine, setSchedule, syncGuide } from './workshop.ts';
 
 const node = (id: string, skill: unknown = null) => ({ id, title: `노드 ${id}`, skill, x: 0, y: 0 });
 
@@ -124,6 +124,28 @@ test('작업 폴더 설정 · 초안(draft.json) — 자리 채우기, 적용 ·
     symlinkSync(join(out, 'secret.json'), join(root, 'e/draft.json'));
     assert.equal(readEngine('e', root).draft, null);   // 링크는 읽지 않는다
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(out, { recursive: true, force: true }); }
+});
+
+test('스케줄 — 형식 검사, 늘 같은 폴더일 때만 켜기, 끄기, 스케줄을 모르는 초안은 스케줄을 지우지 않는다', () => {
+  const sc = (v: unknown) => check({ name: 'a', nodes: [], edges: [], schedule: v });
+  assert.deepEqual((sc({ at: '08:40', days: 'mon-fri' }) as { schedule: unknown }).schedule, { at: '08:40', days: 'mon-fri' });
+  for (const bad of [{ at: '8:40', days: 'mon-fri' }, { at: '24:00', days: 'daily' }, { at: '08:40', days: 'weekend' }, '08:40']) assert.ok(Array.isArray(sc(bad)), JSON.stringify(bad));
+
+  const root = mkdtempSync(join(tmpdir(), 'edith-sched-'));
+  try {
+    const r = createEngine('e', 'E', 'chain', root);
+    assert.throws(() => setSchedule('e', { at: '08:40', days: 'mon-fri' }, root), /늘 같은 폴더/);   // 작업 폴더를 고를 사람이 없다
+    saveEngine('e', { ...r.engine, workdir: { kind: 'fixed', dir: '/tmp' } }, r.version, root);
+    assert.deepEqual(setSchedule('e', { at: '08:40', days: 'mon-fri' }, root).engine?.schedule, { at: '08:40', days: 'mon-fri' });
+    assert.deepEqual(listEngines(root).find(x => x.id === 'e')?.schedule, { at: '08:40', days: 'mon-fri' });
+    assert.throws(() => setSchedule('e', { at: 'x', days: 'daily' }, root), /HH:MM/);
+    // 초안 — schedule 이 없으면 지금 것을 둔다, null 이면 끈다
+    writeFileSync(join(root, 'e/draft.json'), JSON.stringify({ workdir: { kind: 'fixed', dir: '/tmp' }, nodes: [{ id: 'n1', title: '명령', command: 'true' }], edges: [] }));
+    const a = applyDraft('e', readEngine('e', root).version, root);
+    assert.deepEqual(a.engine?.schedule, { at: '08:40', days: 'mon-fri' });
+    assert.equal(setSchedule('e', null, root).engine?.schedule, undefined);
+    assert.equal(listEngines(root).find(x => x.id === 'e')?.schedule, undefined);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('런(kind run) — 돌릴 엔진 하나 · 노드 없음, 만들 때 엔진을 확인하고, 런이 돌리는 엔진은 지우지 않는다', () => {

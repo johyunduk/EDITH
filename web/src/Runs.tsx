@@ -19,6 +19,7 @@ import { claudeChip, dropShared, dur, notionUrl, pastDays, phases, type ClaudeUs
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
 import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
+import { DAYS, nextText, type Sched } from './schedule.ts';
 
 type Step = FlowStep & { skill?: string; command?: string; max?: number };
 type RunState = 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped';   // dropped = 버림(엔진 「버리기」) — 기록만, 아무것도 못 한다
@@ -41,7 +42,7 @@ type Summary = {
   check: { title: string; note?: string; items: string[] }[];
 };
 type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
-type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number; tag?: string; title?: string; agenda?: string };
+type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number; tag?: string; title?: string; agenda?: string; scheduled?: { at: string } };
 type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; at: number };
 
 const RUN_LABEL: Record<RunState, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝', dropped: '버림' };
@@ -56,7 +57,9 @@ const PLAY = <path d="M6 4.5v15l12.5-7.5z" />;
 const KIND = { chain: '체인', engine: '엔진' } as const;
 // 노션 로고(채운 모양) — simple-icons notion.svg(CC0)
 const NOTION = 'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z';
-const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />;
+const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />, CLOCK = <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>;
+// 스케줄 런 점 — 상태 칩과 같은 색
+const DOT: Record<RunState, string> = { queued: 'bg-violet-500', running: 'bg-sky-500', check: 'bg-amber-500', stopped: 'bg-muted-foreground/40', done: 'bg-emerald-500', dropped: 'bg-muted-foreground/40' };
 // 노드 자리 — 바깥 엔진부터(백엔드 › 계획). 옛 런은 든 엔진 이름만
 const place = (s: Step) => s.boxes?.map(b => b.name).join(' › ') ?? s.lane;
 const when = (t: number) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -65,8 +68,8 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   const list = useQuery({ queryKey: ['runs'], queryFn: () => get<Item[]>('/api/runs'), refetchInterval: 3000 });
   const [fold, setFoldState] = useState(() => { try { return localStorage.getItem('edith.runs.pane') === 'off'; } catch { return false; } });
   const setFold = (v: boolean) => { setFoldState(v); try { localStorage.setItem('edith.runs.pane', v ? 'off' : 'on'); } catch { /* 저장 안 됨 */ } };
-  // 주소 #/runs/<번호>[/out/<산출물 차례>] — 뒤엣것은 배포 카드의 산출물 링크가 그 문서를 바로 열게
-  const m = id?.match(/^(\d+)(?:\/out\/(\d{1,2}))?$/), n = m ? Number(m[1]) : undefined, out = m?.[2] ? Number(m[2]) : undefined;
+  // 주소 #/runs/<번호>[/out/<산출물 차례>] — 뒤엣것은 배포 카드의 산출물 링크가 그 문서를 바로 열게. #/runs/schedule/<엔진> — 스케줄 하나
+  const m = id?.match(/^(\d+)(?:\/out\/(\d{1,2}))?$/), n = m ? Number(m[1]) : undefined, out = m?.[2] ? Number(m[2]) : undefined, sched = id?.match(/^schedule\/(.+)$/)?.[1];
   const [req, setReq] = useState<Req | null>(null);
   const run = useQuery({
     queryKey: ['run', n], queryFn: () => get<Run>(`/api/runs/${n}`), enabled: n !== undefined,
@@ -79,10 +82,11 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
         <NewRun req={req} done={() => setReq(null)} />
         {!list.data ? <p className="p-2.5 text-xs text-muted-foreground">불러오는 중…</p>
           : !list.data.length ? <p className="p-2.5 text-xs text-muted-foreground">아직 런이 없다</p>
-          : <RunList items={list.data} current={n} />}
+          : <RunList items={list.data} current={n} sched={sched} />}
       </aside>
       <main className="flex min-h-[32rem] min-w-0 flex-1 flex-col overflow-y-auto">
-        {n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
+        {sched ? <ScheduleDetail id={sched} />
+          : n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
           : run.error && !run.data ? <div className="p-6"><Empty>런을 읽지 못했다 — {String(run.error)}</Empty></div>
           : !run.data ? <div className="p-6"><Empty>불러오는 중…</Empty></div>
           : <RunDetail r={run.data} out={out} />}
@@ -93,11 +97,14 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   );
 }
 
-// 런 목록 — 「진행 중」(대기 · 도는 중 · 확인 필요 · 멈춤)과 「지난 런」(끝 · 버림) 두 탭. 지난 런은 찾기 · 상태 칩 · 만든 날 묶음.
-// 고른 탭은 이 브라우저에 기억한다. 보는 런이 지난 런이면(주소로 열었거나 보던 런이 끝났거나) 그 탭으로 넘어가 어디 있는지 보이게
-function RunList({ items, current }: { items: Item[]; current?: number }) {
-  const [tab, setTabState] = useState<'live' | 'past'>(() => { try { return localStorage.getItem('edith.runs.tab') === 'past' ? 'past' : 'live'; } catch { return 'live'; } });
-  const setTab = (t: 'live' | 'past') => { setTabState(t); try { localStorage.setItem('edith.runs.tab', t); } catch { /* 저장 안 됨 */ } };
+// 런 목록 — 「진행 중」(대기 · 도는 중 · 확인 필요 · 멈춤) · 「스케줄」(스케줄이 걸린 엔진) · 「지난 런」(끝 · 버림) 세 탭. 지난 런은 찾기 · 상태 칩 · 만든 날 묶음.
+// 고른 탭은 이 브라우저에 기억한다. 보는 런이 지난 런이면(주소로 열었거나 보던 런이 끝났거나) 그 탭으로, 스케줄을 보고 있으면 스케줄 탭으로 넘어가 어디 있는지 보이게
+type Tab = 'live' | 'sched' | 'past';
+function RunList({ items, current, sched }: { items: Item[]; current?: number; sched?: string }) {
+  const [tab, setTabState] = useState<Tab>(() => { try { const t = localStorage.getItem('edith.runs.tab'); return t === 'past' || t === 'sched' ? t : 'live'; } catch { return 'live'; } });
+  const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem('edith.runs.tab', t); } catch { /* 저장 안 됨 */ } };
+  const scheds = useQuery({ queryKey: ['schedule'], queryFn: () => get<Sched[]>('/api/schedule'), refetchInterval: 10_000 }).data ?? [];
+  useEffect(() => { if (sched) setTab('sched'); }, [sched]);
   const [q, setQ] = useState(''), [only, setOnly] = useState<'all' | 'done' | 'dropped'>('all');
   const live = items.filter(r => !ended(r.state)), past = items.filter(r => ended(r.state));
   const cur = items.find(r => r.id === current), curPast = !!cur && ended(cur.state);
@@ -109,11 +116,25 @@ function RunList({ items, current }: { items: Item[]; current?: number }) {
   const row = (r: Item) => `flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 ${r.id === current ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`;
   return (
     <>
-      <div role="tablist" aria-label="런 목록" className="my-1.5 grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+      <div role="tablist" aria-label="런 목록" className="my-1.5 grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
         <button type="button" role="tab" aria-selected={tab === 'live'} onClick={() => setTab('live')} className={tabCls(tab === 'live')}>진행 중 {live.length}</button>
+        <button type="button" role="tab" aria-selected={tab === 'sched'} onClick={() => setTab('sched')} className={tabCls(tab === 'sched')}>스케줄 {scheds.length}</button>
         <button type="button" role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')} className={tabCls(tab === 'past')}>지난 런 {past.length}</button>
       </div>
-      {tab === 'live' ? (
+      {tab === 'sched' ? (
+        <div role="tabpanel" aria-label="스케줄" className="space-y-1">
+          {scheds.map(s => (
+            <a key={s.id} href={`#/runs/schedule/${s.id}`} className={`block rounded-md border-l-2 px-2 py-1.5 ${s.id === sched ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`}>
+              <span className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground"><Icon className="size-3">{CLOCK}</Icon>{DAYS[s.schedule.days]} {s.schedule.at}{s.error && <span className="ml-auto text-destructive">못 시작함</span>}</span>
+              <span className="block truncate text-[0.8125rem] font-semibold">{s.name}</span>
+              <span className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground tabular-nums">다음 {nextText(s.next)}
+                {s.runs.length > 0 && <span className="ml-1 flex items-center gap-0.5" aria-label={`최근 ${Math.min(5, s.runs.length)}번`}>· 최근{s.runs.slice(0, 5).reverse().map(r => <span key={r.id} title={`#${r.id} ${RUN_LABEL[r.state]}`} className={`ml-0.5 size-1.5 rounded-full ${DOT[r.state]}`} />)}</span>}
+              </span>
+            </a>
+          ))}
+          <p className="p-2.5 text-[0.6875rem] text-muted-foreground">{scheds.length ? '' : '스케줄이 걸린 엔진이 없다. '}스케줄은 공방에서 건다 — 엔진 머리 「스케줄」 줄</p>
+        </div>
+      ) : tab === 'live' ? (
         <div role="tabpanel" aria-label="진행 중">
           {!live.length && <p className="p-2.5 text-xs text-muted-foreground">진행 중인 런이 없다 — 위 「새 런」에서 시작한다</p>}
           {live.map(r => (
@@ -152,6 +173,57 @@ function RunList({ items, current }: { items: Item[]; current?: number }) {
         </div>
       )}
     </>
+  );
+}
+
+// 스케줄 하나 — 다음 실행 · 단추(지금 돌리기 · 멈춰 두기) · 그 엔진의 지난 스케줄 런(최근 것부터). 멈춰 두기는 스케줄 끄기다(다시 켜려면 공방)
+function ScheduleDetail({ id }: { id: string }) {
+  const qc = useQueryClient(), q = useQuery({ queryKey: ['schedule'], queryFn: () => get<Sched[]>('/api/schedule'), refetchInterval: 10_000 });
+  const [busy, setBusy] = useState(false), [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 3000); return () => clearTimeout(t); }, [armed]);
+  const s = q.data?.find(x => x.id === id);
+  if (!q.data) return <div className="p-6"><Empty>불러오는 중…</Empty></div>;
+  if (!s) return <div className="p-6"><Empty>이 엔진에 걸린 스케줄이 없다 — <a href={`#/workshop/${id}`} className="text-primary hover:underline">공방</a> 엔진 머리 「스케줄」 줄에서 켠다.</Empty></div>;
+  const runNow = async () => {
+    setBusy(true);
+    try { const r = await post<{ id: number }>('/api/runs', { engine: id, unattended: true }); location.hash = `#/runs/${r.id}`; }
+    catch (e) { toast(`시작하지 못했다 — ${(e as Error).message}`, 5000); }
+    setBusy(false);
+  };
+  const pause = async () => {
+    if (!armed) return setArmed(true);
+    setArmed(false); setBusy(true);
+    try { await post(`/api/schedule/${id}`, { schedule: null }); toast('스케줄을 껐다 — 다시 켜려면 공방 엔진 「스케줄」 줄', 4000); void qc.invalidateQueries({ queryKey: ['schedule'] }); void qc.invalidateQueries({ queryKey: ['workshop'] }); }
+    catch (e) { toast(`끄지 못했다 — ${(e as Error).message}`, 5000); }
+    setBusy(false);
+  };
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 px-2 py-px text-[0.6875rem] font-semibold text-primary"><Icon className="size-3">{CLOCK}</Icon>스케줄</span>
+        <span className="text-xs text-muted-foreground">{KIND[s.kind as keyof typeof KIND] ?? '엔진'} <a href={`#/workshop/${id}`} className="hover:underline">{s.name}</a> · {DAYS[s.schedule.days]} {s.schedule.at} · 무인</span>
+        <span className="ml-auto flex gap-1.5">
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void pause()} title="스케줄을 끈다 — 다시 켜려면 공방 엔진 「스케줄」 줄"
+            className={`h-7 text-xs ${armed ? 'border-amber-500 bg-amber-500 text-white hover:bg-amber-500/90' : ''}`}>{armed ? '스케줄 끄기 — 한 번 더' : '멈춰 두기'}</Button>
+          <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void runNow()} title="기다리지 않고 지금 무인 런으로 시작한다 — 스케줄 시각은 그대로 둔다">지금 돌리기</Button>
+        </span>
+      </div>
+      <h2 className="text-lg font-bold">{s.name} <span className="ml-1 text-sm font-normal text-muted-foreground">다음 실행 <b className="font-semibold text-foreground">{nextText(s.next)}</b></span></h2>
+      {s.error && <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">마지막 스케줄 — {s.error}</p>}
+      {!s.runs.length ? <Empty>아직 스케줄이 시작한 런이 없다 — 「지금 돌리기」 는 여기 대신 진행 중 · 지난 런에 보인다</Empty> : (
+        <ol className="space-y-2 border-l pl-4">
+          {s.runs.map(r => (
+            <li key={r.id} className="relative">
+              <span className={`absolute -left-[1.3rem] top-3 size-2.5 rounded-full ring-2 ring-background ${DOT[r.state]}`} />
+              <a href={`#/runs/${r.id}`} className="block rounded-md border bg-card px-3 py-2 hover:bg-muted/50">
+                <span className="flex items-center gap-2 text-[0.8125rem] font-semibold tabular-nums">#{r.id} · {when(r.created)}<span className={`rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span></span>
+                {(r.title ?? r.reason) && <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">{r.title ?? r.reason}</span>}
+              </a>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 

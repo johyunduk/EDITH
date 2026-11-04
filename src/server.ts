@@ -24,7 +24,8 @@ import { closeTunnels, connectMachine, machines, openMachine, tailscalePeers } f
 import { canShoot, screenshot } from './screenshot.ts';
 import { prune, UPLOAD_KEEP, UPLOADS } from './uploads.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
-import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, syncGuide } from './workshop.ts';
+import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, setSchedule, syncGuide } from './workshop.ts';
+import { scheduleList, startSchedule } from './schedule.ts';
 import { act, acted, actionsOf, dropRun, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
 import { repoDiff, repoStatus } from './repos.ts';
 import { listOutputs, readOutput } from './outputs.ts';
@@ -202,6 +203,10 @@ export function serve(port: number) {
         const b = await body(req) as { engine?: unknown; version?: unknown };
         try { return reply(res, 200, saveEngine(we[1], b.engine, b.version)); } catch (e) { return fail(e); }
       }
+      // 스케줄(src/schedule.ts) — 걸린 엔진 목록(다음 시각 · 최근 스케줄 런), 켜기 · 바꾸기 · 끄기({ schedule: null })
+      if (path === '/api/schedule' && req.method === 'GET') return reply(res, 200, scheduleList());
+      const sc = path.match(/^\/api\/schedule\/([^/]+)$/);
+      if (sc && NAME.test(sc[1]) && req.method === 'POST') { try { return reply(res, 200, setSchedule(sc[1], (await body(req) as { schedule?: unknown }).schedule)); } catch (e) { return fail(e); } }
       // 런 — 목록, 새 런(체인 · 엔진, 작업 폴더, 입력), 하나 보기, 멈춤 · 이어서 · 건너뛰기
       if (path === '/api/runs' && req.method === 'GET') return reply(res, 200, withAgenda(listRuns()));   // 안건 이름(배포 목록 tag)까지 — src/agenda.ts
       // 동시 런 한도 — 넘으면 새 런은 줄을 선다
@@ -485,6 +490,6 @@ export function serve(port: number) {
   });
   return new Promise<string>((ok, no) => {
     server.once('error', no);
-    server.listen(port, '127.0.0.1', () => { watchHerdr(); resumeRuns(port); try { syncGuide(); } catch { /* 안내는 다음에 */ } ok(`http://127.0.0.1:${port}/?key=${KEY}`); });
+    server.listen(port, '127.0.0.1', () => { watchHerdr(); resumeRuns(port); startSchedule(port); try { syncGuide(); } catch { /* 안내는 다음에 */ } ok(`http://127.0.0.1:${port}/?key=${KEY}`); });
   });
 }

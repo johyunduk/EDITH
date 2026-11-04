@@ -38,6 +38,7 @@ export type Run = {
   id: number; engine: string; name: string; cwd: string; input: string; created: number; branch?: string;   // branch = 새 워크트리로 돌 때 그 브랜치
   def?: string;   // 공방 런(kind run)으로 시작했으면 그 폴더 — 런 설정 사본은 run/, engine 은 그 런이 돌린 엔진
   unattended?: boolean;   // 무인 — 사람을 기다리지 않는다(unattend). 엔진은 run.json · $EDITH_UNATTENDED 로 안다
+  scheduled?: { at: string };   // 스케줄이 시작한 런(src/schedule.ts) — 그 엔진 스케줄의 시각. 런 화면 「스케줄」 탭이 이것으로 모은다
   state: 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped'; reason?: string;   // queued = 동시 런 한도에 걸려 줄 서 있다, dropped = 버림(끝 — 기록만)
   owner?: { pid: number; port: number }; pane?: string;
   steps: Step[]; nodes: Record<string, NodeRun>; fixing?: { fixer: string; for: string }[];   // 고치는 중 — 갈래마다 하나
@@ -400,7 +401,7 @@ export function listRuns() {
     const r = loadRun(id);
     if (!r) return [];
     const live = r.steps.filter(s => !s.fixOnly);
-    return [{ id, name: r.name, engine: r.engine, ...(r.def ? { def: r.def } : {}), state: r.state, reason: r.reason, created: r.created, total: live.length, done: live.filter(s => ok(r, s.key)).length, ...labelOf(r) }];
+    return [{ id, name: r.name, engine: r.engine, ...(r.def ? { def: r.def } : {}), ...(r.scheduled ? { scheduled: r.scheduled } : {}), state: r.state, reason: r.reason, created: r.created, total: live.length, done: live.filter(s => ok(r, s.key)).length, ...labelOf(r) }];
   });
 }
 // 화면에 줄 것 — run 과 노드마다 보낸 글 · 명령 출력 끝(실행 폴더 안에서 서버가 정한 경로만)
@@ -466,8 +467,8 @@ const folderOf = (v: unknown, what: string) => {
   return f;
 };
 // request — 받은 요청에서 연 런이면 그 요청(요청자 · 방 · meta)을 작업 문서 edith-request.json 에 두고 시작한다(노드가 요청 쪽에 알릴 때 쓴다)
-// what — 공방 런(kind run — 그 런이 정한 엔진을 그 설정으로) 또는 엔진 · 체인(시험 — 그 엔진 설정으로)
-export async function startRun(what: unknown, cwd: unknown, input: unknown, branch: unknown, port: number, unattended?: unknown, request?: object) {
+// what — 공방 런(kind run — 그 런이 정한 엔진을 그 설정으로) 또는 엔진 · 체인(시험 — 그 엔진 설정으로). scheduled — 스케줄이 시작할 때만
+export async function startRun(what: unknown, cwd: unknown, input: unknown, branch: unknown, port: number, unattended?: unknown, request?: object, scheduled?: { at: string }) {
   const read = (id: unknown) => {
     if (typeof id !== 'string' || !NAME.test(id) || !existsSync(join(WORKSHOP, id, 'engine.json'))) throw new Error('공방에 없다');
     const e = check(JSON.parse(readFileSync(join(WORKSHOP, id, 'engine.json'), 'utf8')));
@@ -501,7 +502,7 @@ export async function startRun(what: unknown, cwd: unknown, input: unknown, bran
   }
   const r: Run = {
     id, engine, ...(run ? { def: what as string } : {}), name: run?.name ?? top.name, cwd: folder, input: (input as string | undefined)?.trim() ?? '', created: Date.now(), state: 'running', owner: { pid: process.pid, port },
-    ...(br ? { branch: br } : {}), ...(pane ? { pane } : {}), ...(unattended === true ? { unattended: true } : {}),
+    ...(br ? { branch: br } : {}), ...(pane ? { pane } : {}), ...(unattended === true ? { unattended: true } : {}), ...(scheduled ? { scheduled } : {}),
     steps: steps as Step[], nodes: Object.fromEntries((steps as Step[]).map(s => [s.key, { state: 'wait', attempt: 0, fails: 0 } as NodeRun])),
   };
   if (busy() >= runLimit()) { r.state = 'queued'; r.reason = WAIT; }

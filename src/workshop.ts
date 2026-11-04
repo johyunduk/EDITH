@@ -25,7 +25,9 @@ export type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind:
 // common — 이 엔진의 모든 스킬 노드 지시 앞에 같이 붙는 스킬(공통 규칙). kind 가 없으면 체인(check 는 늘 채운다).
 // kind run — 런(돌리는 단위): 돌릴 엔진 · 체인 하나(engine)와 작업 폴더 · 입력칸 안내(input) · 새 런 칸의 무인 처음 값(unattended). 노드는 없다.
 // 런 단추 · 고르기 · 요청 훅(actions.json)은 런 폴더에 두거나, 없으면 그 엔진 것을 쓴다. 작업 폴더도 없으면 엔진 것.
-export type Engine = { name: string; kind?: 'chain' | 'engine' | 'run'; nodes: Node[]; edges: Edge[]; common?: SkillRef; workdir?: Workdir; engine?: string; input?: string; unattended?: boolean };
+// schedule — 이 엔진 · 체인을 정한 시각에 무인 런으로 시작한다(src/schedule.ts). 엔진 · 체인만 — 런(kind run)에는 두지 않는다
+export type Schedule = { at: string; days: 'mon-fri' | 'daily' };
+export type Engine = { name: string; kind?: 'chain' | 'engine' | 'run'; nodes: Node[]; edges: Edge[]; common?: SkillRef; workdir?: Workdir; engine?: string; input?: string; unattended?: boolean; schedule?: Schedule };
 // 브랜치 이름 — 인자로만 넘기지만 git 이 받는 꼴로 미리 거른다(- 로 시작 · .. 금지)
 export const BRANCH = /^(?!-)(?!.*\.\.)[\p{L}\p{N}._/-]{1,100}$/u;
 
@@ -38,6 +40,11 @@ const skillRef = (v: unknown): SkillRef | null | undefined => {
     : s.from === 'engine' && typeof s.id === 'string' && NAME.test(s.id) ? { from: 'engine', id: s.id }
     : s.from === 'installed' && text(s.id, 200) ? { from: 'installed', id: s.id as string } : undefined;
 };
+// 스케줄 — 없으면 null, 틀리면 undefined. 시각은 이 기기 시각대의 HH:MM
+const scheduleOf = (v: unknown): Schedule | null | undefined => {
+  const s = v as Record<string, unknown> | null | undefined;
+  return s == null ? null : typeof s.at === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.at) && (s.days === 'mon-fri' || s.days === 'daily') ? { at: s.at, days: s.days } : undefined;
+};
 
 // 형식 검사 — 맞으면 아는 칸만 남긴 엔진, 틀리면 사람이 읽을 사유 목록
 export function check(v: unknown): Engine | string[] {
@@ -46,6 +53,8 @@ export function check(v: unknown): Engine | string[] {
   if (!text(e.name, 100)) errs.push('name 은 1~100자 한 줄 글');
   const common = skillRef(e.common);
   if (common === undefined) errs.push('common 은 null 또는 { from: engine|installed, id }');
+  const schedule = scheduleOf(e.schedule);
+  if (schedule === undefined) errs.push('schedule 은 null 또는 { at: "HH:MM", days: mon-fri|daily }');
   const w = e.workdir as Record<string, unknown> | null | undefined;
   const workdir: Workdir | undefined | null = w == null || w.kind === 'ask' ? undefined
     : w.kind === 'fixed' && path(w.dir) ? { kind: 'fixed', dir: (w.dir as string).trim() }
@@ -104,7 +113,7 @@ export function check(v: unknown): Engine | string[] {
   const left = new Map(nodes.map(n => [n.id, edges.filter(x => !x.fail && x.to === n.id).length])), queue = nodes.filter(n => !left.get(n.id)).map(n => n.id);
   for (let i = 0; i < queue.length; i++) for (const x of edges.filter(x => !x.fail && x.from === queue[i])) if (left.set(x.to, left.get(x.to)! - 1).get(x.to) === 0) queue.push(x.to);
   if (queue.length < nodes.length) errs.push('화살표가 고리를 만든다 — 되돌아가는 길은 「실패하면」 화살표로 잇는다');
-  return errs.length ? [...new Set(errs)] : { name: (e.name as string).trim(), kind, nodes, edges, ...(common ? { common } : {}), ...(workdir ? { workdir } : {}) };
+  return errs.length ? [...new Set(errs)] : { name: (e.name as string).trim(), kind, nodes, edges, ...(common ? { common } : {}), ...(workdir ? { workdir } : {}), ...(schedule ? { schedule } : {}) };
 }
 
 // 엔진 폴더 — 이름 규칙을 지나고, 있으면 실제 위치도 공방 폴더 바로 아래여야 한다(링크로 밖을 가리키지 않게)
@@ -146,9 +155,9 @@ function draftOf(d: string, cur: Engine | null) {
   try { r = check(place(JSON.parse(readFileSync(f, 'utf8')), cur)); } catch (e) { r = [`draft.json 이 JSON 이 아니다 — ${(e as Error).message}`]; }
   return Array.isArray(r) ? { engine: null, errors: r } : { engine: r, errors: [] };
 }
-// 초안 자리 — 이름 · 종류가 없으면 지금 것, x · y 가 없는 노드는 지금 엔진의 같은 노드 자리, 그것도 없으면 화살표 깊이로 줄을 세운다(고치는 노드는 고칠 노드 줄에)
+// 초안 자리 — 이름 · 종류 · 스케줄이 없으면 지금 것(스케줄을 모르는 초안이 적용되며 스케줄이 말없이 꺼지지 않게 — 끄려면 "schedule": null), x · y 가 없는 노드는 지금 엔진의 같은 노드 자리, 그것도 없으면 화살표 깊이로 줄을 세운다(고치는 노드는 고칠 노드 줄에)
 export function place(raw: unknown, cur: Engine | null): unknown {
-  const e = raw as { name?: unknown; kind?: unknown; nodes?: unknown; edges?: unknown } | null;
+  const e = raw as { name?: unknown; kind?: unknown; nodes?: unknown; edges?: unknown; schedule?: unknown } | null;
   if (!e || typeof e !== 'object' || !Array.isArray(e.nodes)) return raw;
   const edges = (Array.isArray(e.edges) ? e.edges : []) as { from?: unknown; to?: unknown; fail?: unknown }[];
   const depth = new Map<unknown, number>(), row = new Map<number, number>();
@@ -169,7 +178,7 @@ export function place(raw: unknown, cur: Engine | null): unknown {
     row.set(k, r + 1);
     return { ...n, x: k * 260, y: r * 120 };
   });
-  return { ...e, name: e.name ?? cur?.name, kind: e.kind ?? cur?.kind, nodes };
+  return { ...e, name: e.name ?? cur?.name, kind: e.kind ?? cur?.kind, ...(e.schedule === undefined && cur?.schedule ? { schedule: cur.schedule } : {}), nodes };
 }
 export function applyDraft(id: string, ver: unknown, root = ROOT) {
   const d = dir(root, id), r = readEngine(id, root);
@@ -193,7 +202,7 @@ export function listEngines(root = ROOT) {
     try {
       const r = readEngine(id, root), show = r.draft?.engine ?? r.engine;
       return [{ id, name: show?.name ?? id, nodes: r.engine?.nodes.length ?? 0, kind: r.engine?.kind ?? 'chain', broken: !r.engine, uses: show?.nodes.flatMap(n => n.engine ? [n.engine] : []) ?? [], draft: !!r.draft,
-        ...(r.engine?.kind === 'run' ? { engine: r.engine.engine } : {}) }];   // 런은 돌릴 엔진(트리의 uses 에는 넣지 않는다 — 엔진이 런 밑으로 숨지 않게)
+        ...(r.engine?.kind === 'run' ? { engine: r.engine.engine } : {}), ...(r.engine?.schedule ? { schedule: r.engine.schedule } : {}) }];   // 런은 돌릴 엔진(트리의 uses 에는 넣지 않는다 — 엔진이 런 밑으로 숨지 않게), schedule 은 적용된 것
     } catch { return []; }
   });
 }
@@ -227,6 +236,20 @@ export function saveEngine(id: string, engine: unknown, ver: unknown, root = ROO
   if (Array.isArray(e)) throw new Error(e.join(' · '));
   const cyc = loop(root, id, e);
   if (cyc) throw new Error(`체인이 서로를 부르는 고리가 생긴다 — ${cyc.join(' → ')}`);
+  write(file, e);
+  return readEngine(id, root);
+}
+
+// 스케줄 켜기 · 바꾸기 · 끄기(null) — 공방 · 런 화면이 부른다. engine.json 의 schedule 칸만 바꾼다(읽은 판 검사 없이 지금 파일에 — 칸 하나라 다른 고침을 덮지 않는다).
+// 켤 때는 작업 폴더가 「늘 같은 폴더」 여야 한다 — 사람 없이 시작하니 폴더를 고를 사람이 없다
+export function setSchedule(id: string, s: unknown, root = ROOT) {
+  const file = join(dir(root, id), 'engine.json'), e = check(JSON.parse(readFileSync(file, 'utf8')));
+  if (Array.isArray(e)) throw new Error(e.join(' · '));
+  if (e.kind === 'run') throw new Error('스케줄은 엔진 · 체인에 둔다 — 런에는 두지 않는다');
+  const v = scheduleOf(s);
+  if (v === undefined) throw new Error('스케줄은 { at: "HH:MM", days: mon-fri|daily }');
+  if (v && e.workdir?.kind !== 'fixed') throw new Error('작업 폴더를 「늘 같은 폴더」 로 둬야 스케줄을 켤 수 있다 — 사람 없이 시작해 폴더를 고를 사람이 없다');
+  if (v) e.schedule = v; else delete e.schedule;
   write(file, e);
   return readEngine(id, root);
 }

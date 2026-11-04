@@ -22,26 +22,27 @@ import { StageMap } from './StageMap.tsx';
 import { EngineMap, ROLE } from './EngineMap.tsx';
 import type { FlowStep } from './stepFlow.ts';
 import { skillBrief, skillDetail } from './skillDesc.ts';
+import { DAYS, nextText, type Sched, type Schedule } from './schedule.ts';
 
 type SkillRef = { from: 'engine' | 'installed'; id: string };
 type WNode = { id: string; title: string; skill: SkillRef | null; command?: string; engine?: string; x: number; y: number };
 type WEdge = { from: string; to: string; fail?: true; max?: number };
 type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
 // kind run — 런(돌리는 단위): 돌릴 엔진(engine) · 작업 폴더 · 입력칸 안내 · 무인 처음 값. 노드 없음
-type Engine = { name: string; kind?: 'chain' | 'engine' | 'run'; nodes: WNode[]; edges: WEdge[]; common?: SkillRef; workdir?: Workdir; engine?: string; input?: string; unattended?: boolean };
+type Engine = { name: string; kind?: 'chain' | 'engine' | 'run'; nodes: WNode[]; edges: WEdge[]; common?: SkillRef; workdir?: Workdir; engine?: string; input?: string; unattended?: boolean; schedule?: Schedule };
 // actions — 이 폴더(런이면 단추를 빌려 쓰는 엔진까지)의 단추 목록과 어느 폴더 것인지
 type Read = { id: string; engine: Engine | null; errors: string[]; version: string; skills: { id: string; desc: string }[]; draft: { engine: Engine | null; errors: string[] } | null;
   picks?: string; actions?: { from: string; list: { label: string; on?: string; when?: string; danger?: boolean; copy?: boolean }[] } };
 type List = { root: string; engines: Item[]; claude: string | null };
 // uses — 노드가 부르는 체인 · 엔진(노드 순서, 적용된 engine.json 기준), draft — draft.json 이 있다
-type Item = { id: string; name: string; nodes: number; kind: 'chain' | 'engine' | 'run'; broken: boolean; uses: string[]; draft: boolean; engine?: string };   // engine — 런이 돌리는 엔진
+type Item = { id: string; name: string; nodes: number; kind: 'chain' | 'engine' | 'run'; broken: boolean; uses: string[]; draft: boolean; engine?: string; schedule?: Schedule };   // engine — 런이 돌리는 엔진, schedule — 걸린 스케줄
 type Installed = { id: string; name: string; call: string; agents: string[]; desc: string };
 
 const PLUS = <path d="M12 5v14M5 12h14" />;
 const KIND = { chain: '체인', engine: '엔진', run: '런' } as const;
 const VIEWS = [['map', '흐름 지도', '단계 칸과 줄로 본다 — 줄을 누르면 하는 일 · Claude 가 받는 지시 · 앞뒤 흐름'], ['canvas', '캔버스', '노드 · 화살표를 놓고 고친다'],
   ['flat', '펼쳐 보기', '엔진 전체를 역 지도로 — 역을 누르면 그 안의 체인 · 노드까지']] as const;
-const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />;
+const CHEVRON_L = <path d="m15 18-6-6 6-6" />, CHEVRON_R = <path d="m9 18 6-6-6-6" />, CLOCK = <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>;
 const PENCIL = <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></>, ALERT = <><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></>;
 // 목록의 종류 표시 — 엔진은 겹친 판, 체인은 사슬
 const KIND_ICON = {
@@ -336,6 +337,8 @@ function EngineTree({ engines, sel }: { engines: Item[]; sel?: string }) {
             <span className="sr-only">{KIND[e.kind]}</span>
             <span className={`min-w-0 truncate text-[0.8125rem] ${e.kind === 'engine' ? 'font-medium' : ''}`}>{e.name}</span>
             {e.draft && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-label="초안" />}
+            {e.schedule && <span title={`스케줄 — ${DAYS[e.schedule.days]} ${e.schedule.at} 무인으로 돈다`}
+              className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-full border border-primary/40 px-1.5 py-px font-mono text-[0.625rem] text-primary"><Icon className="size-3">{CLOCK}</Icon>{e.schedule.at}</span>}
             {e.broken && <span className="ml-auto shrink-0 text-[0.6875rem] text-destructive">형식 오류</span>}
           </a>
         </div>
@@ -607,6 +610,7 @@ function Editor({ id, root, engines, claude, onAsk }: { id: string; root: string
           </label>
           <span className="ml-auto"><RemoveEngine id={id} what={what} /></span>
         </div>
+        <ScheduleSetting id={id} s={eng.schedule} fixed={eng.workdir?.kind === 'fixed'} onChange={(v, wait) => update(x => ({ ...x, schedule: v }), wait)} />
       </div>
       {draft && (
         <div className="flex flex-wrap items-center gap-2 border-b bg-violet-500/10 px-4 py-2 text-sm">
@@ -924,6 +928,29 @@ function WorkdirSetting({ w, onChange }: { w?: Workdir; onChange: (w: Workdir | 
         기준<input value={base} onChange={e => { setBase(e.target.value); onChange(tree(repo, e.target.value), 600); }} placeholder="origin/main" className={`${field} w-28`} />
       </>}
     </span>
+  );
+}
+
+// 스케줄 — 이 엔진 · 체인을 정한 시각에 무인 런으로 시작한다(서버가 1분마다 본다). 작업 폴더가 늘 같은 폴더일 때만 켠다 — 사람 없이 시작해 폴더를 고를 사람이 없다.
+// 다음 실행 · 지난 스케줄 런은 GET /api/schedule(걸린 엔진만)
+function ScheduleSetting({ id, s, fixed, onChange }: { id: string; s?: Schedule; fixed: boolean; onChange: (s: Schedule | undefined, wait?: number) => void }) {
+  const q = useQuery({ queryKey: ['schedule'], queryFn: () => get<Sched[]>('/api/schedule'), refetchInterval: 10_000, enabled: !!s });
+  const info = q.data?.find(x => x.id === id), last = info?.runs[0];
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border bg-muted/40 px-2 py-1 text-xs text-muted-foreground" title="정한 시각에 이 엔진을 무인 런(사람 없이 끝까지)으로 시작한다 — EDITH 가 켜져 있어야 돈다. 꺼져 있던 날은 켜질 때 그날 몫을 한 번 돌린다">
+      <span>스케줄</span>
+      <select value={s?.days ?? ''} disabled={!s && !fixed} onChange={e => onChange(e.target.value ? { at: s?.at ?? '08:40', days: e.target.value as Schedule['days'] } : undefined)}
+        className="h-7 rounded-md border bg-background px-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/50 disabled:opacity-50">
+        <option value="">안 함</option><option value="mon-fri">평일</option><option value="daily">매일</option>
+      </select>
+      {s && <input type="time" required value={s.at} onChange={e => { if (e.target.value) onChange({ ...s, at: e.target.value }, 600); }} aria-label="시각"
+        className="h-7 rounded-md border bg-background px-1.5 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/50" />}
+      {s && <span>무인으로 돈다 · 다음 <b className="font-semibold text-foreground">{info ? nextText(info.next) : '…'}</b>
+        {last && <> · 지난 <a href={`#/runs/${last.id}`} className="text-primary hover:underline">#{last.id}</a> {new Date(last.created).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</>}</span>}
+      {s && <a href={`#/runs/schedule/${id}`} className="text-primary hover:underline">스케줄 런 ›</a>}
+      {info?.error && <span className="text-destructive">{info.error}</span>}
+      {!fixed && <span className={s ? 'text-destructive' : ''}>{s ? '작업 폴더가 「늘 같은 폴더」 가 아니라 시작하지 못한다' : '작업 폴더를 「늘 같은 폴더」 로 두면 켤 수 있다'}</span>}
+    </div>
   );
 }
 
