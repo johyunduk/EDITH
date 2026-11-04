@@ -64,6 +64,12 @@ test('다른 Claude 세션과 주고받은 말 — 받은 것은 보낸 이와 �
   assert.deepEqual(items.map(i => [i.kind, i.text, i.from]), [['peer', '안녕', 'peer-a'], ['tool', 'SendMessage → peer-a · 받았어', undefined], ['tool', 'SendMessage → peer-c · 봐 줘', undefined]]);
 });
 
+test('일하는 중간의 진행 설명(thinking 블록) — 내용이 있으면 말풍선으로, 빈 생각은 뺀다', () => {
+  const items: Parameters<typeof claudeLine>[0] = [], byId = new Map();
+  claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: '', signature: 'x' }, { type: 'thinking', thinking: '확인했어요. 이제 다시 띄웁니다.\n\n', signature: 'y' }] } }));
+  assert.deepEqual(items.map(i => [i.kind, i.text]), [['text', '확인했어요. 이제 다시 띄웁니다.']]);
+});
+
 test('Codex 한도 창 — 길이로 고르고, 7일 창 하나만 오면 5시간은 없다', () => {
   const day = { used_percent: 1, window_minutes: 10080 }, five = { used_percent: 30, window_minutes: 300 };
   assert.deepEqual(windows({ primary: day, secondary: null }), { five: null, week: day });

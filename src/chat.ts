@@ -16,7 +16,7 @@ import { sh } from './sh.ts';
 // at 은 그 항목이 나온 줄의 파일 안 바이트 위치 — 화면이 「이전 대화 더 보기」 로 그 앞을 달라고 할 때 쓴다.
 // peer 는 다른 Claude 세션이 SendMessage 로 보낸 말(from 은 그 세션 이름)
 export type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; id?: string; result?: string; error?: boolean; at?: number };
-type Block = { type?: string; text?: string; name?: string; id?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown; is_error?: boolean };
+type Block = { type?: string; text?: string; thinking?: string; name?: string; id?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown; is_error?: boolean };
 
 const TAIL = 4 * 1024 * 1024, KEEP = 600, FILES = 8;
 const cut = (s: string, n: number) => s.length > n ? `${s.slice(0, n)}…` : s;
@@ -43,6 +43,9 @@ export function claudeLine(items: Item[], byId: Map<string, Item>, line: string)
   }
   if (o.type === 'assistant' && Array.isArray(c)) for (const b of c) {
     if (b.type === 'text' && b.text) items.push({ t, kind: 'text', text: b.text });
+    // 일하는 중간에 터미널에 ● 로 뜨는 진행 설명은 thinking 블록으로 남는다(진짜 생각은 내용이 비어 있다)
+    // ponytail: 생각 전문이 기록에 남는 설정이면 그것도 말풍선으로 보인다 — 그런 기록이 보이면 서명의 narration 표시로 가른다
+    if (b.type === 'thinking' && b.thinking?.trim()) items.push({ t, kind: 'text', text: b.thinking.trim() });
     if (b.type === 'tool_use') {
       // 선택 질문은 질문 글로 — 답은 결과(User has answered…)에 붙는다
       // 다른 세션에 보낸 말은 받는 이와 본문으로 — 받은 말에 답하면 받는 이가 주소(uds:…)라 그 말을 보낸 세션 이름으로 바꿔 보인다
