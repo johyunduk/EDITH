@@ -15,12 +15,18 @@ import { sh } from './sh.ts';
 
 // at 은 그 항목이 나온 줄의 파일 안 바이트 위치 — 화면이 「이전 대화 더 보기」 로 그 앞을 달라고 할 때 쓴다.
 // peer 는 다른 Claude 세션이 SendMessage 로 보낸 말(from 은 그 세션 이름)
-export type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; id?: string; result?: string; error?: boolean; at?: number };
+export type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; id?: string; result?: string; error?: boolean; blocked?: boolean; at?: number };
 type Block = { type?: string; text?: string; thinking?: string; name?: string; id?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown; is_error?: boolean };
 
 const TAIL = 4 * 1024 * 1024, KEEP = 600, FILES = 8;
 const cut = (s: string, n: number) => s.length > n ? `${s.slice(0, n)}…` : s;
 const arg = (i: Record<string, unknown> = {}) => String(i.command ?? i.file_path ?? i.pattern ?? i.url ?? i.description ?? i.prompt ?? JSON.stringify(i));
+// 권한·훅·auto 모드 판정기에 막혀 도구가 돌지 않은 결과 — 대화 보기에서 도구 줄을 숨겨도 이것은 빨갛게 남긴다.
+// 사람이 직접 거절한 것(doesn't want to proceed · 사용자가 … 막았다)은 이미 아는 일이라 뺀다.
+// shortcut: Claude Code·커밋 지킴이 문구로 가른다, 문구가 바뀌어 막힘이 숨으면 여기에 더한다
+// 글 맨 앞만 본다 — 명령이 실패해 찍은 「Permission denied」(Exit code …) 는 막힘이 아니다
+const BLOCKED = /^(<tool_use_error>)?(Permission .*denied|[^\n]*requires? (manual )?approval|A variable in this command can't be checked|\S+ in .* was blocked\. For security|Claude requested permissions|Blocked:|커밋 지킴이.*실행하지 않았다)/;
+export const blocked = (result: string) => BLOCKED.test(result);
 const resultText = (c: unknown): string => typeof c === 'string' ? c
   : Array.isArray(c) ? c.map(x => (x as Block).type === 'text' ? (x as Block).text ?? '' : `[${(x as Block).type}]`).join('\n') : '';
 
@@ -37,7 +43,7 @@ export function claudeLine(items: Item[], byId: Map<string, Item>, line: string)
       if (b.type === 'text' && b.text && !b.text.startsWith('<')) items.push({ t, kind: 'user', text: b.text });
       if (b.type === 'tool_result' && b.tool_use_id) {
         const it = byId.get(b.tool_use_id);
-        if (it) { it.result = cut(resultText(b.content), 4000); it.error = !!b.is_error; }
+        if (it) { it.result = cut(resultText(b.content), 4000); it.error = !!b.is_error; if (it.error && blocked(it.result)) it.blocked = true; }
       }
     }
   }

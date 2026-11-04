@@ -1,5 +1,5 @@
 // 에이전트 pane 본문 — Claude·Codex 대화(세션 기록), 기록에 아직 없는 지금 화면(진행·질문). useScreen 은 입력칸도 쓴다.
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, type HPane } from './api.ts';
 import { Empty, Icon, Md } from './ui.tsx';
@@ -8,7 +8,16 @@ import { guardCard, mainPush, parseMenu, type Menu } from './screenMenu.ts';
 import { Kind, WARN } from './herdrUi.tsx';
 import { AskBand, useAsksOpen } from './Asks.tsx';
 
-type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; result?: string; error?: boolean; at?: number };
+type Item = { t: number; kind: 'user' | 'peer' | 'text' | 'tool' | 'out'; text: string; from?: string; result?: string; error?: boolean; blocked?: boolean; at?: number };
+
+// 도구 줄(Bash·Write…) 보기 — 모든 pane 이 같이 쓰고, 새로 고침해도 남게 저장한다. 기본은 꺼짐.
+let tools = (() => { try { return localStorage.getItem('edith.chat.tools') === 'on'; } catch { return false; } })();
+const toolSubs = new Set<() => void>();
+export function useTools(): [boolean, () => void] {
+  const on = useSyncExternalStore(f => { toolSubs.add(f); return () => toolSubs.delete(f); }, () => tools);
+  return [on, () => { tools = !tools; try { localStorage.setItem('edith.chat.tools', tools ? 'on' : 'off'); } catch { /* 저장 안 됨 */ } toolSubs.forEach(f => f()); }];
+}
+export const WRENCH = <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />;   // lucide wrench
 
 // 지금 화면 아래쪽(기록에 아직 없는 화면) — 작업 중이면 진행 부분, 입력칸이 안 보이면 질문·메뉴. 대화 칸과 입력칸이 같이 쓴다.
 // raw 는 터미널 색 그대로(진행 부분 그리기), lines 는 색을 뺀 글(읽기·찾기).
@@ -49,7 +58,7 @@ export function Chat({ p }: { p: HPane }) {
   const box = useRef<HTMLDivElement>(null), stick = useRef(true), keep = useRef<number | null>(null);
   const [older, setOlder] = useState<Item[]>([]), [olderMore, setOlderMore] = useState<boolean | null>(null), [loading, setLoading] = useState(false);
   const [away, setAway] = useState(false);   // 아래에서 멀리 올라가 있으면 「맨 아래로」 버튼
-  const [asks, toggleAsks] = useAsksOpen(p.id);
+  const [asks, toggleAsks] = useAsksOpen(p.id), [tools] = useTools();
   const toBottom = () => { const el = box.current; if (!el) return; stick.current = true; el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }); };
   const toAsk = (at: number) => { stick.current = false; box.current?.querySelector(`[data-at="${at}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
   useEffect(() => { setOlder([]); setOlderMore(null); }, [p.id, data?.file]);
@@ -77,8 +86,8 @@ export function Chat({ p }: { p: HPane }) {
         </button>
       )}
       {!more && older.length > 0 && <p className="text-center text-xs text-muted-foreground/70">대화 처음</p>}
-      {older.map((it, i) => <ChatItem key={`o${older.length - i}`} it={it} agent={p.agent} />)}
-      {data?.items.map((it, i) => <ChatItem key={i} it={it} agent={p.agent} />)}
+      {older.map((it, i) => <ChatItem key={`o${older.length - i}`} it={it} agent={p.agent} tools={tools} />)}
+      {data?.items.map((it, i) => <ChatItem key={i} it={it} agent={p.agent} tools={tools} />)}
       {screen.menu ? <WaitNote menu={screen.menu} /> : (p.status === 'working' || !screen.input) && screen.raw.length > 0 && <LiveText raw={screen.raw} lines={screen.lines} working={p.status === 'working'} />}
       {away && (
         <div className="pointer-events-none sticky bottom-0 flex justify-center">
@@ -122,7 +131,7 @@ const Avatar = ({ agent }: { agent: string | null }) =>
   <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-accent ring-1 ring-border"><Kind agent={agent} /></span>;
 
 // 새로 붙은 항목만 그린다 — 다시 받은 목록에서 바뀌지 않은 항목은 TanStack Query 가 같은 객체로 남겨 둔다.
-const ChatItem = memo(function ChatItem({ it, agent }: { it: Item; agent: string | null }) {
+const ChatItem = memo(function ChatItem({ it, agent, tools }: { it: Item; agent: string | null; tools: boolean }) {
   if (it.kind === 'user') return (
     <div data-at={it.at} className="ml-auto w-fit max-w-[82%] rounded-2xl rounded-br-md border border-primary/20 bg-accent px-3.5 py-2 text-[0.84375rem] leading-relaxed break-words whitespace-pre-wrap text-foreground shadow-xs">{it.text}</div>
   );
@@ -134,11 +143,14 @@ const ChatItem = memo(function ChatItem({ it, agent }: { it: Item; agent: string
   );
   if (it.kind === 'text') return <div className="flex gap-3"><Avatar agent={agent} /><div className="min-w-0 flex-1"><div className="w-fit max-w-full rounded-2xl rounded-tl-md bg-muted/70 px-3.5 py-2.5"><Md text={it.text} /></div></div></div>;
   if (it.kind === 'out') return <div className="ml-9"><Ansi text={it.text} /></div>;
+  // 도구 줄(Bash·Write…)은 「도구」 를 켰을 때만 — 꺼도 대화인 선택 질문·다른 세션에 보낸 말, 막힌 줄(빨강)은 남긴다
+  if (!tools && !it.blocked && !/^(질문|SendMessage) /.test(it.text)) return null;
   const [name, ...rest] = it.text.split(' '), tone = TOOL.find(([re]) => re.test(name))?.[1] ?? 'text-muted-foreground';
   return (
     <details className="group ml-9">
       <summary className={`flex max-w-full cursor-pointer list-none items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-[0.71875rem] hover:bg-muted/60 ${it.error ? 'border-destructive/40 bg-destructive/5' : 'bg-muted/40'}`}>
         <span className="text-muted-foreground transition-transform group-open:rotate-90">›</span>
+        {it.blocked && <span className="shrink-0 rounded bg-destructive/10 px-1 font-sans font-semibold text-destructive">막힘</span>}
         <span className={`shrink-0 font-semibold ${it.error ? 'text-destructive' : tone}`}>{name}</span>
         <span className="truncate text-muted-foreground">{rest.join(' ')}</span>
       </summary>

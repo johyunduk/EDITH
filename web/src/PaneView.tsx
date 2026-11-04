@@ -7,7 +7,7 @@ import { openMenu } from './Menu.tsx';
 import { copyText, toast } from './copy.ts';
 import { PaneDiff } from './Diff.tsx';
 import { BgTasks } from './Tasks.tsx';
-import { Chat } from './Chat.tsx';
+import { Chat, WRENCH, useTools } from './Chat.tsx';
 import { PIN, isAgent, useAsksOpen } from './Asks.tsx';
 import { ShellLog } from './ShellLog.tsx';
 import { QuickKeys, Term } from './Term.tsx';
@@ -169,7 +169,7 @@ export function PaneView({ p, data }: { p: HPane; data: HerdrView }) {
               className={`flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition ${diffOn ? 'border-primary bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'}`}>
               <Icon className="size-3.5">{GIT_COMPARE}</Icon>{diffOn ? '변경 닫기' : '변경'}
             </button>
-            <AsksToggle p={p} /><RawToggle p={p} /><PaneActions p={p} />
+            <AsksToggle p={p} /><ToolsToggle p={p} /><RawToggle p={p} /><PaneActions p={p} />
           </span>
         </div>
         {/* 둘째 줄 하나에 pane 이름·사용량·경로(홈은 ~, 길면 자름 — 복사는 전체 경로)·칸 보기 전환을 모아 본문 자리를 넓힌다 */}
@@ -295,6 +295,17 @@ function AsksToggle({ p, small }: { p: HPane; small?: boolean }) {
     </button>
   );
 }
+// 대화에 도구 줄(Bash·Write…) 보이기·숨기기 — 모든 pane 같이. 꺼도 막힌 줄은 보인다
+function ToolsToggle({ p, small }: { p: HPane; small?: boolean }) {
+  const [on, toggle] = useTools(), [raw] = useRaw(p.id);
+  if (!isAgent(p) || raw || !hasView(p)) return null;
+  return (
+    <button onClick={e => { e.preventDefault(); e.stopPropagation(); toggle(); }} title={on ? '도구 줄 숨기기(막힌 줄은 남는다)' : '대화에 Bash·Write 같은 도구 줄도 보인다'}
+      className={`flex items-center gap-1.5 rounded-md border font-semibold shadow-xs transition ${small ? 'h-6 px-1.5 text-[0.6875rem]' : 'h-7 px-2 text-xs'} ${on ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+      <Icon className="size-3.5">{WRENCH}</Icon>도구
+    </button>
+  );
+}
 function Body({ p }: { p: HPane }) {
   const [raw] = useRaw(p.id);
   const agent = p.agent === 'claude' || p.agent === 'codex';
@@ -351,7 +362,7 @@ function TabLayout({ lay, data, sel }: { lay: HerdrView['layouts'][number]; data
                 <Kind agent={p.agent} /><span className="truncate">{paneText(p)}</span>
                 {p.status === 'blocked' && (p.push ? <span className="shrink-0 font-semibold text-rose-600 dark:text-rose-400">⚠ {p.push} 푸시</span> : <span className="shrink-0 text-amber-600 dark:text-amber-400">승인 대기</span>)}
                 <span className="ml-1.5"><Usage p={p} short /></span>
-                <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap" onClick={e => e.preventDefault()}><AsksToggle p={p} small /><RawToggle p={p} small /><PaneActions p={p} /></span>
+                <span className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap" onClick={e => e.preventDefault()}><AsksToggle p={p} small /><ToolsToggle p={p} small /><RawToggle p={p} small /><PaneActions p={p} /></span>
               </a>
               <div className="min-h-0 flex-1 p-1.5"><Body p={p} /></div>
             </div>

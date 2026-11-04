@@ -64,6 +64,24 @@ test('다른 Claude 세션과 주고받은 말 — 받은 것은 보낸 이와 �
   assert.deepEqual(items.map(i => [i.kind, i.text, i.from]), [['peer', '안녕', 'peer-a'], ['tool', 'SendMessage → peer-a · 받았어', undefined], ['tool', 'SendMessage → peer-c · 봐 줘', undefined]]);
 });
 
+test('막힌 도구 — 권한·auto 모드·커밋 지킴이에 막힌 결과만 blocked, 명령 실패·사람이 거절한 것은 아니다', () => {
+  const items: Parameters<typeof claudeLine>[0] = [], byId = new Map();
+  const results = [
+    'Permission for this action was denied by the Claude Code auto mode classifier. Reason: …',
+    'This Bash command contains multiple operations. The following part requires approval: rm -rf x',
+    'mv with flags requires manual approval to ensure path safety',
+    '<tool_use_error>커밋 지킴이가 사용자에게 묻지 못했다(물을 사람이 없거나 창이 닫힘) — 실행하지 않았다</tool_use_error>',
+    'Exit code 255\nPermission denied (publickey).',
+    "The user doesn't want to proceed with this tool use. The tool use was rejected …",
+    '<tool_use_error>사용자가 git push 실행을 막았다 — 다시 시도하지 말고 사용자에게 어떻게 할지 묻는다</tool_use_error>',
+  ];
+  results.forEach((text, i) => {
+    claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `b${i}`, name: 'Bash', input: { command: 'x' } }] } }));
+    claudeLine(items, byId, JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `b${i}`, is_error: true, content: text }] } }));
+  });
+  assert.deepEqual(items.map(i => !!i.blocked), [true, true, true, true, false, false, false]);
+});
+
 test('일하는 중간의 진행 설명(thinking 블록) — 내용이 있으면 말풍선으로, 빈 생각은 뺀다', () => {
   const items: Parameters<typeof claudeLine>[0] = [], byId = new Map();
   claudeLine(items, byId, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: '', signature: 'x' }, { type: 'thinking', thinking: '확인했어요. 이제 다시 띄웁니다.\n\n', signature: 'y' }] } }));
