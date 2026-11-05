@@ -161,9 +161,9 @@ export const pathIn = (home: string, dirs: string[], f: string) =>
 
 async function look($: any, home: string, dirs: string[]) {
   const git = gitIn($, home, dirs)
-  const [top, branch, staged, common] = await Promise.all([git('rev-parse', '--show-toplevel'), git('branch', '--show-current'), git('diff', '--cached', '--name-only'),
-    git('rev-parse', '--path-format=absolute', '--git-common-dir')])
-  return { top, branch, staged, common }
+  const [top, branch, staged, common, head] = await Promise.all([git('rev-parse', '--show-toplevel'), git('branch', '--show-current'), git('diff', '--cached', '--name-only'),
+    git('rev-parse', '--path-format=absolute', '--git-common-dir'), git('log', '-1', '--format=%h %s')])
+  return { top, branch, staged, common, head }
 }
 
 // 레포 이름 — 맨 위 폴더 이름. 워크트리면 맨 위가 워크트리 폴더라 원래 레포(공통 .git 폴더의 주인)를 앞에: 「shop-web · 워크트리 shop-web-coupon」.
@@ -234,7 +234,8 @@ export async function describe($: any, command: string) {
   const count = (op: string) => items.filter(it => it.op === op).length
   const lines = [`${['commit', 'push'].filter(count).map(op => `git ${op} ${count(op)}건`).join(' · ')} — 실행할까?`]
   // ponytail: 브랜치는 명령 전 지금 브랜치 — 같은 명령 안의 checkout · switch 는 따라가지 않는다
-  for (const { it, top, branch, staged, merge, common } of seen) {
+  const made = new Map<string, string | undefined>()   // 이 명령에서 앞서 커밋한 레포 → 그 제목(push 가 보낼 새 커밋)
+  for (const { it, top, branch, staged, merge, common, head } of seen) {
     const files = [...new Set([...it.files, ...(it.op === 'commit' && staged ? staged.split('\n') : [])])], cur = branch || undefined
     // 그 폴더에서 git 을 못 돌렸으면 까닭을 — 묻는 것은 실행 전이라 이 명령이 만들 폴더는 아직 없다
     const why = it.dirs.some(d => d.includes('$')) ? '경로의 변수를 풀지 못했다' : '아직 없는 폴더(이 명령이 만든다) · git 레포 밖 · git 이 2초 안에 답하지 않음 중 하나'
@@ -243,9 +244,18 @@ export async function describe($: any, command: string) {
       lines.push(`  커밋할 브랜치: ${branch || (branch === '' ? '없음(HEAD 분리)' : '모름')}`)
       if (merge !== undefined) lines.push(`  머지 마무리: ${mergeLine(merge, cur)}`)
       lines.push(`  제목: ${it.title ?? '(못 읽었다)'}`)
+      if (top) made.set(top, it.title)
     } else {
+      // 보낼 커밋도 「제목:」 으로 — 지금 HEAD 면 그 커밋(이 명령이 앞서 커밋했으면 그 새 커밋), 다른 브랜치 · 커밋이면 그 끝 커밋
       const { remote, refs } = pushRefs(it.args ?? [], cur)
-      lines.push(...refs.map(r => r.src === '' ? `  push: ${remote}/${r.dst ?? '?'} 지움` : `  push: ${r.src ?? '(지금 브랜치 모름)'} → ${remote}/${r.dst ?? '?'}`))
+      for (const r of refs) {
+        if (r.src === '') { lines.push(`  push: ${remote}/${r.dst ?? '?'} 지움`); continue }
+        lines.push(`  push: ${r.src ?? (branch === '' ? 'HEAD 분리' : '(지금 브랜치 모름)')} → ${remote}/${r.dst ?? '?'}`)
+        const here = r.src === undefined || r.src === cur
+        const tip = here && top && made.has(top) ? ['(이 명령의 새 커밋)', made.get(top)].filter(Boolean).join(' ')
+          : here ? head : await gitIn($, home, it.dirs)('log', '-1', '--format=%h %s', r.src!, '--')
+        if (tip) lines.push(`  제목: ${tip}`)
+      }
     }
     if (files.length) lines.push(`  파일 ${files.length}개: ${files.slice(0, 8).join(', ')}${files.length > 8 ? ` 외 ${files.length - 8}개` : ''}`)
     else if (it.op === 'commit' && staged === '' && !it.notes.length) lines.push('  staged 파일 없음')

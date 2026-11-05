@@ -170,7 +170,26 @@ test('질문 창 — 커밋할 브랜치 · 머지 마무리(X → Y) · push(sr
   await $.tool.call({ tool: 'Bash', command: 'cd /r/wt && git commit --no-edit && git push origin merge/123-x:dev' })
   // /r/wt 는 /r/app 의 워크트리 — 머리에 원래 레포 이름을 앞에
   expect(asked).toContain('app · 워크트리 wt\n  커밋할 브랜치: merge/123-x\n  머지 마무리: origin/dev → merge/123-x\n')
-  expect(asked).toContain('app · 워크트리 wt\n  push: merge/123-x → origin/dev\n  git push origin merge/123-x:dev')
+  expect(asked).toContain('app · 워크트리 wt\n  push: merge/123-x → origin/dev\n  제목: (이 명령의 새 커밋)\n  git push origin merge/123-x:dev')
+})
+
+test('push 가 보낼 커밋 — HEAD 분리면 「HEAD 분리」 와 그 커밋, 다른 브랜치면 그 끝 커밋, 앞서 커밋했으면 그 새 커밋', async ($: any, on: any) => {
+  let asked = ''
+  on('tool.call', { tool: 'Bash' }, () => ({ result: 'ok' }))
+  on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => { asked = e.questions[0].question; return answer(e.questions[0].options[0].label)($, e) })
+  on('env.get', () => ({ value: '/home/me' }))
+  on('process.run', ($: any, e: any) => {
+    const sub = e.argv.slice(e.argv.lastIndexOf('-C') + 2).join(' ')
+    const out = sub === 'rev-parse --show-toplevel' ? '/r/app' : sub.includes('--git-common-dir') ? '/r/app/.git'
+      : sub === 'log -1 --format=%h %s' ? 'a2cfec1 merge.[123] 머지' : sub === 'log -1 --format=%h %s feature/x --' ? 'b1b1b1b feat. 고침' : ''   // 브랜치 '' = HEAD 분리
+    return { value: { exitCode: 0, stdout: `${out}\n`, stderr: '' } }
+  })
+  await $.tool.call({ tool: 'Bash', command: 'cd /r/app && git push origin HEAD:master' })
+  expect(asked).toContain('\n  push: HEAD 분리 → origin/master\n  제목: a2cfec1 merge.[123] 머지\n')
+  await $.tool.call({ tool: 'Bash', command: 'git -C /r/app push origin feature/x:dev' })
+  expect(asked).toContain('\n  push: feature/x → origin/dev\n  제목: b1b1b1b feat. 고침\n')
+  await $.tool.call({ tool: 'Bash', command: 'cd /r/app && git commit -m "fix[PROJ-1]. 고침" && git push origin HEAD:stage' })
+  expect(asked).toContain('\n  push: HEAD 분리 → origin/stage\n  제목: (이 명령의 새 커밋) fix[PROJ-1]. 고침\n')
 })
 
 test('레포 이름 — 워크트리면 「원래 레포 · 워크트리 폴더」, 본 체크아웃 · bare · 서브모듈 · 못 읽은 공통 폴더는 폴더 이름만', async () => {
