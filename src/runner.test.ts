@@ -124,7 +124,9 @@ test('돌리기 — 실패하면 고치고 다시, 한도를 넘으면 사람에
 });
 
 test('다시 켰을 때 · 이어서 — 보내는 중이던 노드는 다시 보내지 않고, 이어서는 결과가 있으면 받는다', () => {
-  const r = run(flatten('flow', load, resolve) as Step[]);
+  const steps = flatten('flow', load, resolve) as Step[];
+  delete steps.find(s => s.key === 'be.b2')!.humanWait;
+  const r = run(steps);
   r.nodes.a = { state: 'sending', attempt: 1, fails: 0 };
   r.nodes['be.b2'] = { state: 'running', attempt: 1, fails: 0 };
   recover(r);
@@ -135,6 +137,16 @@ test('다시 켰을 때 · 이어서 — 보내는 중이던 노드는 다시 �
   assert.equal(r.nodes.a.state, 'done');
   assert.equal(r.nodes['be.b2'].state, 'wait');   // 명령은 다시 돌린다
   assert.equal(r.state, 'running');
+});
+
+test('다시 켰을 때 — 사람을 기다리는 명령은 멈추지 않고 다시 돌린다', () => {
+  const r = run(flatten('flow', load, resolve) as Step[]);
+  r.nodes.a.state = 'done'; r.nodes['be.b1'].state = 'done';
+  r.nodes['be.b2'] = { state: 'running', attempt: 1, fails: 0 };
+  recover(r);
+  assert.equal(r.state, 'running');
+  assert.equal(r.nodes['be.b2'].state, 'wait');
+  assert.equal((nextStep(r) as Step).key, 'be.b2');
 });
 
 test('건너뛰기 끝 코드 — 명령 노드가 든 엔진의 남은 노드만 건너뛰고, 그 뒤는 돈다', () => {

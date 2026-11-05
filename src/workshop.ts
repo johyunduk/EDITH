@@ -16,7 +16,7 @@ export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 export type SkillRef = { from: 'engine' | 'installed'; id: string };
 // 노드는 셋 중 하나를 가리킨다 — 스킬(Claude 가 한다), 명령(실행기가 돌린다), 다른 엔진(그 자리에서 그 엔진의 노드들이 돈다). 아무것도 없으면 빈 노드.
-// humanWait — 사람(기획자 답 등)을 「도는 중」 으로 기다리는 명령 노드. 실행기는 그대로 돌리고, 런 분석만 그 시간을 사람 대기로 본다
+// humanWait — 사람(기획자 답 등)을 「도는 중」 으로 기다리는 명령 노드. 런 분석이 그 시간을 사람 대기로 보고, EDITH 를 다시 켜면 멈추지 않고 다시 돌린다(다시 돌려도 안전한 명령에만)
 export type Node = { id: string; title: string; skill: SkillRef | null; command?: string; humanWait?: true; engine?: string; x: number; y: number };
 // 실패 화살표 — from 이 실패하면 to(고치는 노드)를 돌리고 from 을 다시 돌린다. 최대 max 번.
 export type Edge = { from: string; to: string; fail?: true; max?: number };

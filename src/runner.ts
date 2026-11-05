@@ -28,7 +28,7 @@ export type Step = {
   key: string; title: string; lane: string; group: string;   // lane = 든 엔진 이름(화면 묶음), group = 그 엔진 자리(같은 엔진을 두 번 써도 따로)
   kind: 'skill' | 'command'; skill?: string; command?: string; engine: string;   // skill = SKILL.md 실제 경로, engine = 든 엔진 id($EDITH_ENGINE)
   common?: string; deps: string[]; failTo?: string; max?: number; fixOnly?: boolean;
-  humanWait?: true;   // 사람을 「도는 중」 으로 기다리는 명령 노드(엔진 노드의 humanWait) — 런 분석만 그 시간을 사람 대기로 본다
+  humanWait?: true;   // 사람을 「도는 중」 으로 기다리는 명령 노드(엔진 노드의 humanWait) — 런 분석이 그 시간을 사람 대기로 보고, EDITH 를 다시 켜면 멈추지 않고 다시 돌린다
   track?: string;   // 갈래 — 화살표가 갈려 따로(동시에) 도는 줄의 이름. 없으면 본 줄
   boxes?: { name: string; kind: 'chain' | 'engine' }[];   // 맨 위 엔진 밑에서 이 노드까지 든 체인 · 엔진(바깥부터, group 의 마디마다) — 펼친 캔버스의 상자. 옛 런엔 없다
 };
@@ -203,11 +203,15 @@ export function settle(r: Run, s: Step, o: Outcome) {
     : s.failTo ? `${n.fails}번 고쳐도 실패 — 한도 ${s.max}번${o.reason ? ` · ${o.reason}` : ''}` : o.reason ?? '실패');
 }
 // EDITH 를 다시 켰을 때 — 보내는 중이던 노드는 받았는지 모르고, 명령은 EDITH 와 함께 끝났다. 둘 다 다시 보내지 않고 사람에게.
+// 사람을 기다리기만 하는 명령(humanWait)만 그냥 다시 돌린다 — 몇 시간짜리 기다림이 다시 켤 때마다 「이어서」 를 기다리며 멈추지 않게
 export function recover(r: Run) {
   for (const s of r.steps) {
     const n = r.nodes[s.key];
     if (n.state === 'sending') hold(r, s, '보내는 중에 EDITH 가 꺼졌다 — 받았는지 모른다. pane 을 보고 「이어서」(다시 보냄) 또는 「건너뛰기」');
-    else if (s.kind === 'command' && n.state === 'running') hold(r, s, '명령이 EDITH 와 함께 끝났다 — 「이어서」로 다시 돌린다');
+    else if (s.kind === 'command' && n.state === 'running') {
+      if (s.humanWait) n.state = 'wait';
+      else hold(r, s, '명령이 EDITH 와 함께 끝났다 — 「이어서」로 다시 돌린다');
+    }
   }
 }
 // 이어서 — 멈춘 · 확인 필요 노드는 이번 시도 결과가 이미 있으면 받고, 없으면 새 시도로 다시 보낸다
