@@ -20,6 +20,7 @@ import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStat
 import type { FlowStep } from './stepFlow.ts';
 import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
 import { DAYS, nextText, type Sched } from './schedule.ts';
+import { ActBand, JobLine, useJob } from './OutputAct.tsx';
 
 type Step = FlowStep & { skill?: string; command?: string; max?: number };
 type RunState = 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped';   // dropped = 버림(엔진 「버리기」) — 기록만, 아무것도 못 한다
@@ -723,7 +724,8 @@ function Repos({ id, bare }: { id: number; bare?: boolean }) {
 }
 
 // 보기 창 — 산출물 글 · 레포 변경을 화면 위에(브라우저 dialog — Esc · 바깥 누르기로 닫힌다)
-function Sheet({ title, sub, onClose, children }: { title: string; sub?: string; onClose: () => void; children: ReactNode }) {
+// extra — 닫기 앞 머리줄 단추, band — 머리줄 아래 띠(산출물 단추 OutputAct.tsx)
+function Sheet({ title, sub, onClose, children, extra, band }: { title: string; sub?: string; onClose: () => void; children: ReactNode; extra?: ReactNode; band?: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const d = ref.current; d?.showModal(); return () => d?.close(); }, []);
   return (
@@ -731,8 +733,10 @@ function Sheet({ title, sub, onClose, children }: { title: string; sub?: string;
       className="m-auto w-[min(64rem,94vw)] max-w-none rounded-xl border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/40">
       <div className="flex items-center gap-3 border-b px-4 py-2.5">
         <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{title}</span>{sub && <span className="block truncate font-mono text-xs text-muted-foreground">{sub}</span>}</span>
+        {extra}
         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onClose}>닫기</Button>
       </div>
+      {band}
       <div className="max-h-[80vh] overflow-auto px-4 py-3">{children}</div>
     </dialog>
   );
@@ -818,10 +822,16 @@ function OutputChips({ id, items, folds = [] }: { id: number; items: [OutputItem
   );
 }
 // 산출물 하나 보기 창 — 칩을 누르거나 주소 #/runs/<번호>/out/<차례>(배포 카드 링크)로 연다
+// 공방 엔진에 이 산출물 단추(on: "output")가 있으면 머리줄에 그 단추 — 누르면 창 안 띠(ActBand), 도는 동안은 진행 줄(JobLine)
 function OutputSheet({ id, i, label, onClose }: { id: number; i: number; label?: string; onClose: () => void }) {
-  const one = useQuery({ queryKey: ['run-output', id, i], queryFn: () => get<{ label: string; path: string; text: string }>(`/api/runs/${id}/outputs/${i}`) });
+  const one = useQuery({ queryKey: ['run-output', id, i], queryFn: () => get<{ label: string; path: string; text: string; act?: { label: string; hint?: string } }>(`/api/runs/${id}/outputs/${i}`) });
+  const act = one.data?.act, [band, setBand] = useState(false), { job, refresh } = useJob(id, i, !!act);
+  const running = job?.state === 'running';
   return (
-    <Sheet title={label ?? one.data?.label ?? ''} sub={one.data?.path} onClose={onClose}>
+    <Sheet title={label ?? one.data?.label ?? ''} sub={one.data?.path} onClose={onClose}
+      extra={act && <Button size="sm" variant={band ? 'secondary' : 'default'} className="h-7 text-xs" title={act.hint} disabled={running} aria-expanded={band} onClick={() => setBand(b => !b)}>▶ {act.label}</Button>}
+      band={act && (running || job?.state === 'failed') && !band ? <JobLine id={id} i={i} job={job!} onStopped={() => void refresh()} />
+        : act && band && !running ? <ActBand id={id} i={i} onClose={() => setBand(false)} onStarted={() => { setBand(false); void refresh(); }} /> : null}>
       {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
         : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
           // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다

@@ -53,10 +53,11 @@ export default function App() {
     return () => removeEventListener('hashchange', f);
   }, []);
   const herdr = useHerdr(), view = useView().data, remote = view?.remote ? view.host : null;
-  // 탭 제목 — herdr 는 보고 있는 pane 의 워크스페이스 이름, 나머지(pane 을 안 열었을 때도)는 「EDITH | 메뉴」, 런 하나를 열었으면 「EDITH | 런 #12」
+  // 탭 제목 — herdr 는 보고 있는 pane 의 「세션 이름 | 워크스페이스 이름」(탭이 좁으면 뒤가 잘리니 세션 이름이 앞), 나머지(pane 을 안 열었을 때도)는 「EDITH | 메뉴」, 런 하나를 열었으면 「EDITH | 런 #12」
   const pane = r.view === 'herdr' ? herdr.data?.panes.find(p => p.id === r.id) : undefined;
   const menu = r.view === 'runs' && /^\d+$/.test(r.id ?? '') ? `${MENU.runs} #${r.id}` : MENU[r.view];
-  const title = herdr.data?.workspaces.find(w => w.workspace_id === pane?.workspace)?.label || `${APP_NAME} | ${menu}`;
+  const place = herdr.data?.workspaces.find(w => w.workspace_id === pane?.workspace)?.label;
+  const title = [pane?.title, place].filter(Boolean).join(' | ') || `${APP_NAME} | ${menu}`;
   useBlockedAlert(title, herdr.data, remote);
   const alerts = useAlerts(herdr.data);
   // 받은 요청 수 — 런 화면 목록과 같은 쿼리(시작 · 거절로 답하면 목록에서 빠지고 수도 같이 준다)

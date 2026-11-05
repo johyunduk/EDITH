@@ -186,6 +186,26 @@ function eachLine(file: string, f: (line: string) => void) {
     }
     if (rest) f(rest);
   } finally { closeSync(fd); }
+  return at;
+}
+
+// 기록 전체를 한 번 읽고 그 뒤로는 늘어난 만큼만 apply 한다(파일마다 기억). 파일이 줄었으면 처음부터. 첫 읽기는 읽은 바이트까지를 자리로 삼아 그 사이 붙은 줄을 두 번 세지 않는다.
+function grow<C extends { size: number; rest: string }>(caches: Map<string, C>, file: string, fresh: () => C, apply: (c: C, line: string) => void) {
+  const size = statSync(file).size;
+  let c = caches.get(file);
+  if (!c || size < c.size) {
+    const n = fresh();
+    n.size = eachLine(file, l => apply(n, l));
+    caches.set(file, c = n);
+  } else if (size > c.size) {
+    const fd = openSync(file, 'r'), buf = Buffer.alloc(size - c.size);
+    try { readSync(fd, buf, 0, buf.length, c.size); } finally { closeSync(fd); }
+    const lines = (c.rest + buf.toString('utf8')).split('\n');
+    c.rest = lines.pop() ?? '';
+    for (const l of lines) apply(c, l);
+    c.size = size;
+  }
+  return c;
 }
 
 // 세션 파일의 지금 제목 — 사용자가 붙인 것(custom-title)이 있으면 그것, 없으면 자동 제목.
@@ -414,6 +434,23 @@ export function chat(pane: string, agent: string, cwd: string, title: string, ot
   return { file, items, more: (items[0]?.at ?? 0) > 0 };
 }
 
+// compact 기록 — Claude 는 system/compact_boundary 줄(자동·직접, 줄기 전후 토큰), Codex 는 compacted 줄(시각만). 대화에 같은 글이 나와도 세지 않게 줄을 풀어 종류로 가린다.
+export type Compact = { t: number; trigger?: string; before?: number; after?: number };
+export function compactLine(list: Compact[], line: string) {
+  if (!line.includes('compact_boundary') && !line.includes('"compacted"')) return;
+  let o: { type?: string; subtype?: string; timestamp?: string; compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number } };
+  try { o = JSON.parse(line); } catch { return; }
+  if (o.type !== 'compacted' && !(o.type === 'system' && o.subtype === 'compact_boundary')) return;
+  const m = o.compactMetadata;
+  list.push({ t: Date.parse(o.timestamp ?? '') || 0, trigger: m?.trigger, before: m?.preTokens, after: m?.postTokens });
+}
+const compactCaches = new Map<string, { size: number; rest: string; list: Compact[] }>();
+export const compactsIn = (file: string) => grow(compactCaches, file, () => ({ size: 0, rest: '', list: [] as Compact[] }), (c, l) => compactLine(c.list, l)).list;
+export function compacts(pane: string, agent: string, cwd: string, title: string, others: string[]) {
+  const file = agent === 'codex' ? codexFile(pane, cwd, title) : agent === 'claude' ? claudeFile(pane, cwd, title, others) : null;
+  return file ? compactsIn(file) : [];
+}
+
 // 백그라운드 작업 — Claude 가 run_in_background 로 띄운 셸·에이전트. 세션 기록에서 띄운 명령·작업 id·출력 파일·끝남 알림(task-notification)을 모은다.
 // 출력은 Claude 가 /tmp/claude-<uid>/… /tasks/<id>.output 에 쓴다. 기록은 늘어난 만큼만 더 읽는다(파일마다 기억).
 // ponytail: 끝남 알림 없이 끝난 에이전트 작업은 그 pane 의 claude 가 다시 뜨기 전까지 「실행 중」 으로 남는다(셸은 checkAlive 가 lsof 로 가린다 —
@@ -462,22 +499,7 @@ export function taskLine(c: TaskCache, line: string) {
 export function backgroundTasks(pane: string, cwd: string, title: string, others: string[] = []) {
   const file = claudeFile(pane, cwd, title, others);
   if (!file) return [];
-  const size = statSync(file).size;
-  let c = taskCaches.get(file);
-  if (!c || size < c.size) {
-    c = { size: 0, rest: '', tasks: new Map(), pending: new Map() };
-    const cc = c;
-    eachLine(file, l => taskLine(cc, l));
-    c.size = size;
-    taskCaches.set(file, c);
-  } else if (size > c.size) {
-    const fd = openSync(file, 'r'), buf = Buffer.alloc(size - c.size);
-    try { readSync(fd, buf, 0, buf.length, c.size); } finally { closeSync(fd); }
-    const lines = (c.rest + buf.toString('utf8')).split('\n');
-    c.rest = lines.pop() ?? '';
-    for (const l of lines) taskLine(c, l);
-    c.size = size;
-  }
+  const c = grow(taskCaches, file, () => ({ size: 0, rest: '', tasks: new Map(), pending: new Map() }), taskLine);
   return [...c.tasks.values()].sort((a, b) => b.t - a.t).slice(0, 40).map(t => {
     let m = 0, n = 0;
     try { const st = statSync(t.path); m = st.mtimeMs; n = st.size; } catch { /* 출력 파일 없음 */ }

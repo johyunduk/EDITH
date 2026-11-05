@@ -11,7 +11,7 @@ import { hostname, userInfo } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { CONFIG_DIR, DATA_DIR, HOME, REPO } from './config.ts';
 import { choose, close, control, focus, folders, history, keys, live, movePane, moveWorkspace, newWorkspace, prompt, ratio, renameTab, signature, snapshot, split, start, statusline, knowLimits, streamPane, watch, withPush, workspaceAction, type Usage } from './herdr.ts';
-import { backgroundTasks, chat, checkAlive, claudeStarted, codexUsage, remoteControl, taskOutput } from './chat.ts';
+import { backgroundTasks, chat, checkAlive, claudeStarted, codexUsage, compacts, remoteControl, taskOutput } from './chat.ts';
 import { lastAsks } from '../web/src/asks.ts';
 import { commands, findFiles } from './complete.ts';
 import { firstLine } from './sh.ts';
@@ -26,7 +26,8 @@ import { prune, UPLOAD_KEEP, UPLOADS } from './uploads.ts';
 import { isToggle, setSetting, settings } from './settings.ts';
 import { applyDraft, createEngine, discardDraft, ensureClaude, findClaude, listEngines, NAME, readEngine, removeEngine, ROOT as WORKSHOP, saveEngine, setSchedule, syncGuide } from './workshop.ts';
 import { scheduleList, startSchedule } from './schedule.ts';
-import { act, acted, actionsOf, dropRun, listRuns, loadRun, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
+import { act, acted, actionsOf, dropRun, listRuns, loadRun, outputHook, pickAction, pickRequest, previewSteps, requestHook, resumeRuns, runAction, runLimit, runPicks, RUNS, runView, setRunLimit, startRun } from './runner.ts';
+import { formOf, jobOf, parseStart, startJob, stopJob } from './outputActs.ts';
 import { repoDiff, repoStatus } from './repos.ts';
 import { listOutputs, readOutput } from './outputs.ts';
 import { livePort, stream } from './live.ts';
@@ -304,7 +305,28 @@ export function serve(port: number) {
         const r = loadRun(Number(ro[1]));
         if (!r) return reply(res, 404, '없는 런');
         const work = join(RUNS, ro[1], 'work'), roots = [r.cwd, join(RUNS, ro[1])];
-        try { return reply(res, 200, ro[2] === undefined ? listOutputs(work, roots) : readOutput(work, roots, Number(ro[2]))); } catch (e) { return fail(e); }
+        try {
+          if (ro[2] === undefined) return reply(res, 200, listOutputs(work, roots));
+          // 공방 엔진에 이 산출물 단추(on: "output")가 있으면 그 이름도(src/outputActs.ts)
+          const o = readOutput(work, roots, Number(ro[2])), h = outputHook(r.engine, o.path);
+          return reply(res, 200, { ...o, ...(h ? { act: { label: h.action.label, ...(h.action.hint ? { hint: h.action.hint } : {}) } } : {}) });
+        } catch (e) { return fail(e); }
+      }
+      // 산출물 단추 — form(띠 내용) · job(도는 일) 읽기, act(시작) · stop. 산출물은 목록 차례로만 받고 경로는 readOutput 이 다시 확인한다
+      const oa = path.match(/^\/api\/runs\/(\d{1,6})\/outputs\/(\d{1,2})\/(form|job|act|stop)$/);
+      if (oa) {
+        const id = Number(oa[1]), i = Number(oa[2]), r = loadRun(id);
+        if (!r) return reply(res, 404, '없는 런');
+        if (oa[3] === 'job' && req.method === 'GET') return reply(res, 200, { job: jobOf(id, i) ?? null });
+        if (oa[3] === 'stop' && req.method === 'POST') { try { stopJob(id, i); return reply(res, 200, { ok: true }); } catch (e) { return fail(e); } }
+        const work = join(RUNS, oa[1], 'work');
+        try {
+          const o = readOutput(work, [r.cwd, join(RUNS, oa[1])], i), h = outputHook(r.engine, o.path);
+          if (!h) return reply(res, 404, '이 산출물에는 단추가 없다');
+          const env = { EDITH_OUTPUT_FILE: o.path, EDITH_RUN: join(RUNS, oa[1]), EDITH_WORK: work };
+          if (oa[3] === 'form' && req.method === 'GET') return reply(res, 200, await formOf(h, env));
+          if (oa[3] === 'act' && req.method === 'POST') return reply(res, 200, { job: startJob(h, id, i, env, parseStart(await body(req))) });
+        } catch (e) { return fail(e); }
       }
       // 런이 띄운 브라우저 화면 — 엔진이 남긴 edith-live.json 의 포트(이 기기)에서 MJPEG 로(src/live.ts)
       const rl = path.match(/^\/api\/runs\/(\d{1,6})\/live$/);
@@ -395,7 +417,8 @@ export function serve(port: number) {
         if (p.agent === 'claude' && !knowLimits()) for (const o of snap.panes.filter(o => o.agent === 'claude' && o.id !== p.id)) if ((await statusline(o.id))?.five) break;
         const u = p.agent === 'claude' ? await statusline(p.id) : p.agent === 'codex' ? codexUsage(p.id, p.cwd, p.title) : null;
         if (u) lastUsage.set(p.id, u);
-        return reply(res, 200, u ?? lastUsage.get(p.id) ?? null);
+        const last = u ?? lastUsage.get(p.id) ?? null, others = snap.panes.filter(x => x.agent === p.agent && x.cwd === p.cwd && x.id !== p.id).map(x => x.title);
+        return reply(res, 200, last && { ...last, compacts: compacts(p.id, p.agent ?? '', p.cwd, p.title, others) });
       }
       if (h?.[2] === 'branch' && req.method === 'GET') {
         const s = await snapshot(), p = s.panes.find(p => p.id === h[1]);

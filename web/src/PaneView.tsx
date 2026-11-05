@@ -42,8 +42,10 @@ function Branches({ p }: { p: HPane }) {
 }
 
 // 사용량 — Claude·Codex 의 모델·생각 강도, 컨텍스트 %, 5시간·7일 한도 %(Claude 는 상태줄, Codex 는 세션 기록에서). 50% 넘으면 주황, 80% 넘으면 빨강.
-// short 면(칸 머리처럼 좁은 곳) 남은 시간 글은 빼고, 칸 폭이 좁으면 모델 → 5h·7d → ctx 순으로 숨긴다(칸 머리가 @container). 5시간 · 7일은 마우스를 올리면 리셋 시각.
+// short 면(칸 머리처럼 좁은 곳) 남은 시간 글은 빼고, 칸 폭이 좁으면 모델 → 5h·7d → compact → ctx 순으로 숨긴다(칸 머리가 @container). 5시간 · 7일은 마우스를 올리면 리셋 시각.
+// 이 세션의 compact 횟수는 컨텍스트 칸 안에 — 마우스를 올리면 언제·얼마나 줄었는지, 한 번도 안 했으면 안 보인다.
 type Lim = { pct: number; reset: string | null; at?: number | null; rough?: boolean };
+type Compact = { t: number; trigger?: string; before?: number; after?: number };
 // 리셋 시각 — 「10/26 (월) 14:30」. 시 단위까지만 아는 것(Claude 7일)은 한 시간 폭 「14:21~15:21」
 const WD = ['일', '월', '화', '수', '목', '금', '토'], p2 = (n: number) => String(n).padStart(2, '0');
 const hm = (t: number) => { const d = new Date(t); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
@@ -51,31 +53,36 @@ const hm = (t: number) => { const d = new Date(t); return `${p2(d.getHours())}:$
 const left = (at: number) => { const m = Math.max(0, Math.floor((at - Date.now()) / 60_000)), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
   return d ? `${d}일 ${h}시간` : h ? `${h}시간 ${m % 60}분` : `${m % 60}분`; };
 const resetAt = (l?: Lim | null) => { if (!l?.at) return ''; const d = new Date(l.at); return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} (${WD[d.getDay()]}) ${l.rough ? `${hm(l.at)}~${hm(l.at + 3_600_000)}` : hm(l.at)}`; };
+// compact 목록 한 줄 — 「3회째 · 11/05 12:26 · 자동 · 39.5만 → 2.6만 토큰」. Codex 기록엔 자동·직접과 토큰이 없어 앞의 둘만
+const man = (n: number) => `${(n / 10000).toFixed(1)}만`;
+const compactRow = (c: Compact, i: number) => { const d = new Date(c.t);
+  return [`${i + 1}회째`, `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${hm(c.t)}`, c.trigger === 'auto' ? '자동' : c.trigger === 'manual' ? '직접' : '', c.before != null && c.after != null ? `${man(c.before)} → ${man(c.after)} 토큰` : ''].filter(Boolean).join(' · '); };
 // 한도 칩 — 마우스를 올리면(키보드는 Tab) 바로 리셋 시각 상자. 칸 머리가 overflow-hidden 이라 fixed 로 띄운다(사이드바 상태 목록과 같은 꼴)
-function Limit({ l, className, children }: { l?: Lim | null; className: string; children: ReactNode }) {
+function Limit({ l, tip, className, children }: { l?: Lim | null; tip?: ReactNode; className: string; children: ReactNode }) {
   const [at, setAt] = useState<React.CSSProperties | null>(null), when = resetAt(l);
   // 칩 오른쪽 끝에 맞춘다(머리의 칩은 오른쪽에 있다) — 화면 왼쪽에 붙은 칩만 왼쪽 끝에
   const show = (e: React.SyntheticEvent<HTMLElement>) => { const r = e.currentTarget.getBoundingClientRect(); setAt(r.right > 300 ? { right: innerWidth - r.right, top: r.bottom + 4 } : { left: r.left, top: r.bottom + 4 }); };
-  if (!when) return <span className={className}>{children}</span>;
+  if (!when && !tip) return <span className={className}>{children}</span>;
   return (
     <span tabIndex={0} className={`${className} outline-none focus-visible:ring-2 focus-visible:ring-ring/50`} onMouseEnter={show} onFocus={show} onMouseLeave={() => setAt(null)} onBlur={() => setAt(null)}>
       {children}
-      {at && <span role="tooltip" style={at} className="fixed z-50 rounded-md border bg-popover px-2 py-1 text-xs font-normal whitespace-nowrap text-popover-foreground shadow-lg">리셋 {when} · {l!.rough && l!.reset ? l!.reset.replace(/^(\d+)d(\d+)h$/, '$1일 $2시간') : left(l!.at!)} 남음</span>}
+      {at && <span role="tooltip" style={at} className="fixed z-50 rounded-md border bg-popover px-2 py-1 text-xs font-normal whitespace-nowrap text-popover-foreground shadow-lg">{tip ?? <>리셋 {when} · {l!.rough && l!.reset ? l!.reset.replace(/^(\d+)d(\d+)h$/, '$1일 $2시간') : left(l!.at!)} 남음</>}</span>}
     </span>
   );
 }
 function Usage({ p, short }: { p: HPane; short?: boolean }) {
   const { data: u } = useQuery({
     queryKey: ['usage', p.id], enabled: p.agent === 'claude' || p.agent === 'codex', refetchInterval: p.status === 'working' ? 5000 : 15000,
-    queryFn: () => get<{ model: string | null; effort: string | null; ctx: number | null; five: Lim | null; week: Lim | null } | null>(`/api/herdr/panes/${p.id}/usage`),
+    queryFn: () => get<{ model: string | null; effort: string | null; ctx: number | null; five: Lim | null; week: Lim | null; compacts?: Compact[] } | null>(`/api/herdr/panes/${p.id}/usage`),
   });
   if (!u) return null;
+  const done = u.compacts?.length ?? 0, tip = done ? u.compacts!.map((c, i) => <span key={i} className="block leading-relaxed">{compactRow(c, i)}</span>) : undefined;
   // 넓은 곳(pane 머리)은 막대가 있는 카드 — 50% 넘으면 주황, 80% 넘으면 빨강
   if (!short) {
     const bar = (n: number) => n >= 80 ? 'bg-rose-500' : n >= 50 ? 'bg-amber-500' : 'bg-primary';
-    const card = (label: string, n: number | null | undefined, l: Lim | null | undefined) => n == null ? null : (
-      <Limit key={label} l={l} className="flex min-w-24 flex-col justify-center gap-1 rounded-lg border bg-card px-2.5 py-1 shadow-xs">
-        <span className="flex items-baseline gap-2 whitespace-nowrap"><span className="text-muted-foreground">{label}</span><span className="ml-auto font-semibold text-foreground tabular-nums">{n}%</span></span>
+    const card = (label: string, n: number | null | undefined, l: Lim | null | undefined, chip?: ReactNode, cardTip?: ReactNode) => n == null ? null : (
+      <Limit key={label} l={l} tip={cardTip} className="flex min-w-24 flex-col justify-center gap-1 rounded-lg border bg-card px-2.5 py-1 shadow-xs">
+        <span className="flex items-baseline gap-2 whitespace-nowrap"><span className="text-muted-foreground">{label}</span>{chip}<span className="ml-auto font-semibold text-foreground tabular-nums">{n}%</span></span>
         <span className="block h-1 overflow-hidden rounded-full bg-muted"><span className={`block h-full rounded-full ${bar(n)}`} style={{ width: `${Math.min(100, n)}%` }} /></span>
       </Limit>
     );
@@ -87,7 +94,7 @@ function Usage({ p, short }: { p: HPane; short?: boolean }) {
             {u.effort && <span className="rounded bg-muted px-1 text-[0.625rem] leading-4 text-muted-foreground">{u.effort}</span>}
           </span>
         )}
-        {card('컨텍스트', u.ctx, null)}{card('5시간', u.five?.pct, u.five)}{card('7일', u.week?.pct, u.week)}
+        {card('컨텍스트', u.ctx, null, done > 0 && <span className="rounded bg-muted px-1 text-[0.625rem] leading-4 text-muted-foreground">compact {done}회</span>, tip)}{card('5시간', u.five?.pct, u.five)}{card('7일', u.week?.pct, u.week)}
       </span>
     );
   }
@@ -107,7 +114,9 @@ function Usage({ p, short }: { p: HPane; short?: boolean }) {
           {u.effort && <span className="rounded bg-muted px-1 text-[0.625rem] leading-4 text-muted-foreground">{u.effort}</span>}
         </span>
       )}
-      {item(short ? 'ctx' : '컨텍스트', u.ctx, null, '@xs:flex')}{item('5h', u.five?.pct, u.five, '@lg:flex')}{item('7d', u.week?.pct, u.week, '@lg:flex')}
+      {item(short ? 'ctx' : '컨텍스트', u.ctx, null, '@xs:flex')}
+      {done > 0 && <Limit tip={tip} className={`${fit('@md:flex')} items-center gap-1 whitespace-nowrap`}><span className="text-muted-foreground">compact</span><span className="font-semibold text-foreground/80 tabular-nums">{done}</span></Limit>}
+      {item('5h', u.five?.pct, u.five, '@lg:flex')}{item('7d', u.week?.pct, u.week, '@lg:flex')}
     </span>
   );
 }

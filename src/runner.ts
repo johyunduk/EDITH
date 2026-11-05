@@ -845,7 +845,8 @@ const queue = (id: number, a: Action) => queued.set(id, [...queued.get(id) ?? []
 // until — 거꾸로, 그 브랜치에 다 들어 있으면 막는다(이미 한 준비 단추)
 // row — 배포 화면이 레포 줄마다 놓는다: 누르면 그 줄 워크트리(런이 남긴 edith-repos.json 의 path)만 EDITH_ACTION_REPO 로 — 명령이 그 레포만 다룬다. 런 화면에서 누르면 레포 전부
 // on: "prep" · "cleanup" — 배포 화면 훅(deployHook — 배포 조치 뽑기 · 정리 때 엔진 몫의 일). on: "settings" — 설정 › 엔진 설정 표(src/engineSettings.ts)
-export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup' | 'settings'; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string; row?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
+// on: "output" — 산출물 보기 창 머리줄 단추(src/outputActs.ts). match — 그 단추를 붙일 산출물 경로(정규식)
+export type RunAction = { label: string; command: string; ask?: string; on?: 'results' | 'picks' | 'request' | 'prep' | 'cleanup' | 'settings' | 'output'; match?: string; hint?: string; danger?: boolean; when?: 'done'; reach?: string; copy?: boolean; flow?: string; ready?: string; until?: string; row?: boolean };   // hint — 단추에 마우스를 올리면 보이는 설명, danger — 지우는 단추(빨강 · 맨 끝)
 // reach — 배포 화면에서 이 단추를 놓을 단계: commit · push · via(먼저 합칠 브랜치) · base(레포마다 기본 브랜치 칸) · 브랜치(edith-repos.json 의 also · base 와 같은 이름 — 예: origin/dev)
 // copy — 명령의 출력을 사람이 복사해 직접 돌릴 글로 돌려준다(결과 화면 확인 창 · 런 화면 단추 기록에 복사 단추). 이 명령은 아무것도 바꾸지 않아야 한다 — 바꾸는 일은 사람이 그 글로
 // 런 설정 사본(run/)에 단추가 있으면 그것, 없으면 엔진 사본의 것
@@ -853,11 +854,12 @@ function allActions(r: Run): RunAction[] {
   const own = join(dirOf(r.id), 'run', 'actions.json');
   return parseActions(() => readFileSync(existsSync(own) ? own : join(dirOf(r.id), 'engine', r.engine, 'actions.json'), 'utf8'));
 }
+const okRegex = (t: unknown) => { if (typeof t !== 'string' || !t || t.length > 200) return false; try { new RegExp(t); return true; } catch { return false; } };
 function parseActions(text: () => string): RunAction[] {
   try {
     const a = JSON.parse(text()) as RunAction[];
     return Array.isArray(a) ? a.filter(x => typeof x?.label === 'string' && typeof x.command === 'string' && (x.ask === undefined || typeof x.ask === 'string')
-      && (x.on === undefined || ['results', 'picks', 'request', 'prep', 'cleanup', 'settings'].includes(x.on)) && (x.when === undefined || x.when === 'done')
+      && (x.on === undefined || ['results', 'picks', 'request', 'prep', 'cleanup', 'settings', 'output'].includes(x.on)) && (x.match === undefined || okRegex(x.match)) && (x.when === undefined || x.when === 'done')
       && (x.reach === undefined || (typeof x.reach === 'string' && /^[\w][\w./-]{0,120}$/.test(x.reach))) && (x.copy === undefined || typeof x.copy === 'boolean') && (x.row === undefined || typeof x.row === 'boolean') && (x.flow === undefined || typeof x.flow === 'string') && [x.ready, x.until].every(t => t === undefined || (typeof t === 'string' && /^[\w{][\w{}./-]{0,120}$/.test(t)))).slice(0, 16) : [];
   } catch { return []; }
 }
@@ -928,6 +930,12 @@ export function deployHook(on: 'prep' | 'cleanup') {
   try { names = readdirSync(WORKSHOP, { withFileTypes: true }).filter(d => d.isDirectory() && NAME.test(d.name)).map(d => d.name).sort(); } catch { return undefined; }
   for (const n of names) { const a = pickAction(n, on); if (a) return { dir: actionsHome(n), action: a }; }
   return undefined;
+}
+// 산출물 단추 — 그 런 엔진의 공방 폴더(사본이 아니라 — 지난 런의 산출물에도 새 단추가 붙게) actions.json 의 on: "output" 중 match 가 그 산출물 경로에 맞는 첫 것
+export function outputHook(engine: string, path: string) {
+  if (!NAME.test(engine)) return undefined;
+  const dir = actionsHome(engine), a = parseActions(() => readFileSync(join(dir, 'actions.json'), 'utf8')).find(x => x.on === 'output' && x.match && new RegExp(x.match).test(path));
+  return a ? { dir, action: a } : undefined;
 }
 // 훅을 그 엔진 폴더의 셸로 — 값은 환경 변수로만 넘긴다(명령 글에 붙이지 않는다). 끝 코드와 표준 출력(1MB 까지)을 돌려주고, 출력 · 오류는 log 파일에 다.
 // input 은 표준 입력으로(엔진 설정 저장 — 비밀 값이 프로세스 목록 · log 에 남지 않게)

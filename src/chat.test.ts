@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkAlive, claudeLine, follow, isProgram, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
+import { checkAlive, claudeLine, compactsIn, follow, isProgram, newerSame, older, rolloutsIn, taskLine, windows } from './chat.ts';
 import { agentSince, hasShells, isLimitScreen, liveWindow, noteAgents } from './herdr.ts';
 
 test('이전 대화 — 4MB 보다 긴 줄을 사이에 두고도 순서·바이트 위치를 지켜 거꾸로 모은다', () => {
@@ -70,6 +70,24 @@ test('compact 요약 — 자동이든 /compact 든 말풍선으로 보이지 않
   claudeLine(items, byId, JSON.stringify({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { content: 'This session is being continued from a previous conversation…' } }));
   claudeLine(items, byId, JSON.stringify({ type: 'user', message: { content: '이어서 해 줘' } }));
   assert.deepEqual(items.map(i => i.text), ['/compact', '이어서 해 줘']);
+});
+
+test('compact 횟수 — 전체를 세고 늘어난 만큼만 더 읽는다, 대화에 같은 글이 나온 줄과 요약 말풍선 줄은 안 센다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'edith-compact-')), file = join(dir, 's.jsonl');
+  const line = (o: object) => `${JSON.stringify(o)}\n`;
+  const boundary = (t: string, trigger: string) => line({ type: 'system', subtype: 'compact_boundary', timestamp: t, compactMetadata: { trigger, preTokens: 412473, postTokens: 26930 } });
+  try {
+    writeFileSync(file, boundary('2026-11-04T09:48:03Z', 'auto')
+      + line({ type: 'user', isCompactSummary: true, timestamp: '2026-11-04T09:48:03Z', message: { content: 'This session is being continued…' } })
+      + line({ type: 'user', timestamp: '2026-11-04T09:49:00Z', message: { content: '"compact_boundary" 와 "type":"compacted" 를 세 줘' } })
+      + '{"type":"system","subtype":"compact_boundary"\n');
+    assert.deepEqual(compactsIn(file), [{ t: Date.parse('2026-11-04T09:48:03Z'), trigger: 'auto', before: 412473, after: 26930 }]);
+    appendFileSync(file, boundary('2026-11-05T03:26:32Z', 'manual'));
+    assert.deepEqual(compactsIn(file).map(c => c.trigger), ['auto', 'manual']);
+    // 파일이 줄면(새로 쓰임) 처음부터
+    writeFileSync(file, line({ type: 'compacted', timestamp: '2026-11-03T07:50:48Z', payload: { message: '' } }));
+    assert.deepEqual(compactsIn(file), [{ t: Date.parse('2026-11-03T07:50:48Z'), trigger: undefined, before: undefined, after: undefined }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('막힌 도구 — 권한·auto 모드·커밋 지킴이에 막힌 결과만 blocked, 명령 실패·사람이 거절한 것은 아니다', () => {

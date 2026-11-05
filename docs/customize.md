@@ -37,7 +37,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/update.ts` | `edith update` 의 받기 — 줄끝만 바뀐 파일 되돌리기, `git pull --ff-only --autostash`, 겹치면 Claude 로 합치고 타입 검사 · 시험 · 화면 빌드로 확인(못 하면 stash 에 두고 받은 코드로) |
 | `src/server.ts` | HTTP 서버 — 보안 검사(Host·열쇠·출처 — `refuse`), `/api/*` 길 나누기, `web/dist` 주기, SSE(`/api/events`), 다시 켜기(`/api/restart`) |
 | `src/herdr.ts` | herdr — 스냅샷, 이벤트 구독, 터미널 흐름(보기·입력), 프롬프트·키, 나누기·옮기기·닫기, 셸 기록, 상태줄 사용량 |
-| `src/chat.ts` | Claude·Codex 세션 기록(JSONL) → 대화 항목, 기록 파일 찾기, Codex 사용량, 백그라운드 작업 |
+| `src/chat.ts` | Claude·Codex 세션 기록(JSONL) → 대화 항목, 기록 파일 찾기, Codex 사용량, 백그라운드 작업, compact 횟수(`compacts` — 사용량 API 에 얹는다) |
 | `src/complete.ts` | 입력칸 자동 완성(`/` 명령·스킬, `@` 파일), Claude 식 글을 Codex 식으로 바꾸기 |
 | `src/diff.ts` · `src/summary.ts` | git 변경(커밋 안 한 것·브랜치·커밋), 파일별 AI 요약(`claude -p`) |
 | `src/skills.ts` · `src/skillsMove.ts` | 스킬·명령 목록과 서로 부르는 관계, 스킬 옮기기(묶음 파일 내보내기·가져오기) |
@@ -51,6 +51,7 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/engineSettings.ts` · `web/src/EngineSettings.tsx` | 설정 › 「엔진 설정」 — 공방 맨 위 폴더 `actions.json` 의 `on: "settings"` 명령마다 표 하나(`settingsPages` — id `<폴더>.<차례>`). 읽기 · 저장은 그 명령을 그 폴더에서(`runHook` — 저장 값은 표준 입력으로만), 엔진이 낸 표는 `parseTable` 이 모양을 맞추고 비밀 칸 값은 참거짓으로만 둔다. 주소 `#/settings/engine/<id>` |
 | `src/analysis.ts` · `src/timeline.ts` · `src/refs.ts` · `src/requests.ts` | 런 분석(노드마다 시간 · 사람 대기 · 토큰 · 노드 안쪽 도구 시간 · 대화 수 · 읽은 파일 — `events.jsonl` 과 Claude 세션 기록, 헛도는 검사(시도마다 코드 지문 `fp` — `runner.ts` `codeFp`), 레포 판단(엔진 기록 `repo-pick` 줄 ↔ `edith-repos.json` · 커밋 수), 흐름(벽시계 일 · 사람 · 빈 시간) · 갈래 병목, 엔진 기록 `edith-records.jsonl` — Codex `usage` 줄, 다시 돈 시간, 같은 엔진 런 비교) · 공방 「적용」 전 검사(스킬이 「없으면」 멈춘다고 적은 작업 문서 파일을 앞 노드가 만드는지 — `previewSteps` 의 `warnings`) · 런 타임라인(`events.jsonl` 을 노드 시도로 묶고 시도마다 결과를 붙여 일어난 차례대로 — 런 화면 기본 보기) · 받은 요청(`requests/<id>.json` → 사람이 열기 · 거절, 답 `<id>.answer.json`, `edith request <id>`) |
 | `src/today.ts` · `web/src/Today.tsx` | 「오늘」 화면 — 마지막으로 일한 평일부터 어제까지 한 일(`~/.claude/history.jsonl` 의 내 말 — 런이 보낸 글 · `paste-cache` 의 붙여넣기까지 보고 거른다, 그 폴더 레포의 내 커밋, 그 기간 움직인 런), 작업마다 한 줄 · 하다 만 일(`claude -p` 하루 한 번 → `today/<날짜>.json`, `src/summary.ts` 의 `claudeJson`), 체크 · 직접 추가 · 이어 받기(`today/<날짜>.todo.json` — 없으면 앞 날 것에서 `carry`), 할 일 중 대기 · 요청 · 배포는 화면이 승인 대기 · 받은 요청 · 배포 할 일 API 를 그대로 읽는다 |
+| `src/outputActs.ts` · `web/src/OutputAct.tsx` · `web/src/outputAct.ts` | 산출물 단추 — 런 엔진의 공방 폴더(사본 아님) `actions.json` 의 `on: "output"` 중 `match` 가 산출물 경로에 맞는 것(`outputHook`)을 산출물 보기 창 머리줄 단추로. 누르면 같은 창 안 띠(`formOf` — 명령이 낸 `Form`: 고르기 칩 · 빠른 고르기 · 묶음별 줄 · 어림), 「시작」 은 뒤에서 도는 일(`startJob` — 산출물마다 하나, 진행은 출력의 `{"progress"}` 줄, 멈추기는 묶음째 `stopJob`), 끝나면 산출물 글을 다시 읽는다. 기록 `~/.local/share/edith/output-acts/<런>-<차례>.log` |
 | `src/settings.ts` | 설정 화면의 플러그인 켜짐(`claude plugin configure <플러그인>@edith`) — 켜고 끌 플러그인은 `PLUGINS` |
 | `src/machines.ts` | 다른 기기의 EDITH — `machines.json`, SSH 터널, 그 기기의 열쇠 붙은 주소 |
 | `src/config.ts` · `src/sh.ts` | 경로(설정·데이터 폴더), 프로세스 실행 도우미 |
@@ -129,6 +130,22 @@ if (req.method === 'POST' && path === '/api/note') {
 - **저장** — `EDITH_SETTINGS=save` 로 부르고 **표준 입력**에 `{"op": "set", "id": <줄 id>, "values"}` · `{"op": "add", "add": <add 차례>, "values"}` · `{"op": "remove", "id"}` 를 줍니다(set 은 바꾼 칸만). 반영한 뒤 표준 출력에 새 표를 냅니다. 받지 않을 값이면 `{"error": "까닭"}` 을 내고 끝 코드 1 — 화면에 그 까닭이 보입니다.
 - **비밀 칸**(`type: "secret"`) — 읽기에서는 값 대신 설정됐는지(`true` · `false`)만 냅니다(글을 내도 EDITH 가 참거짓으로 바꾼다). 화면은 사람이 새로 넣은 값만 보내고, 그 값은 표준 입력으로만 가니 프로세스 목록 · 기록(`~/.local/share/edith/settings/<id>.log` — 표준 출력)에 남지 않습니다. 명령도 그 값을 출력하지 않습니다.
 - 30초 안에 끝나야 합니다. 명령은 그 엔진 폴더에서 돌고, `EDITH_ENGINE`(그 폴더) · `EDITH_WORKSHOP` 을 받습니다.
+
+### 산출물 단추 — `on: "output"`
+
+엔진이 남긴 산출물(예: 사람이 따라 해 볼 확인 문서)에 「그걸 기계로 해 보기」 같은 단추를 달려면, 그 런 엔진의 공방 폴더 `actions.json` 에 하나 둡니다. 지난 런의 산출물에도 붙습니다(런 사본이 아니라 공방 것을 읽는다).
+
+```json
+{ "label": "따라 해 보기", "on": "output", "match": "check-guide\\.html$", "command": "node \"$EDITH_ENGINE/tools/replay.ts\"", "hint": "문서를 브라우저로 따라 하고 결과를 문서에 그린다" }
+```
+
+- 산출물 보기 창 머리줄에 「▶ 따라 해 보기」 가 생기고, 누르면 창 안 머리줄 아래에 띠가 펼쳐집니다(창을 하나 더 띄우지 않는다).
+- **띠 내용** — `EDITH_OUTPUT_MODE=form` 으로 부르고(30초 안), 표준 출력에 JSON:
+  `{"pick"?: {"label"?, "items": [{"id", "label"}], "quick"?: [{"label", "ids"}], "selected": [id]}, "rows": [{"group"?, "label", "sub"?, "for"?: [id], "when"?: {"key", "value"}, "key"?, "value"?, "options"?: [{"value", "label"}], "placeholder"?, "text"?, "src"?, "tone"?: ok | warn, "hint"?}], "note"?, "each"?: {"sec"?, "usd"?}, "start"?}`.
+  `pick` 은 여러 개 고르는 칩(빠른 고르기는 칩을 한 번에 켜는 지름길), `rows` 는 묶음(`group`)마다 한 줄 — `key` 가 있으면 사람이 넣는 칸, 없으면 `text` 를 보이기만. `options` 가 있는 칸은 글 대신 그중 하나를 누르는 단추 묶음입니다(값은 고른 `value`, 줄 이름이 묶음 이름과 같으면 줄 이름은 감춘다). `for` 를 적은 줄은 그 id 를 하나라도 골랐을 때만, `when` 을 적은 줄은 그 칸 값이 `value` 일 때만 보입니다(예: 「어디서」 를 로컬로 고르면 로컬 줄만). `each` 는 하나에 걸리는 시간(초) · 비용(달러) — 화면이 고른 수를 곱해 어림을 보입니다.
+- **시작** — `EDITH_OUTPUT_MODE=run` 으로 부르고 **표준 입력**에 `{"ids": [고른 id], "values": {key: 글}}`(보이는 칸만)을 줍니다. 1시간까지 뒤에서 돌고, 같은 산출물에서는 하나만 돕니다. 표준 출력 줄 중 `{"progress": "5번 · 2/3단계", "ratio"?: 0~1}` 은 진행 줄이 되고, 다른 줄의 마지막은 실패 때 까닭으로 보입니다. 「■ 멈추기」 는 명령과 그 아래 프로세스까지 끕니다. 끝나면 화면이 산출물 글을 다시 읽습니다 — 결과를 그 문서에 다시 그리면 바로 보입니다.
+- 두 모드 모두 그 엔진의 공방 폴더에서 돌고 `EDITH_OUTPUT_FILE`(그 산출물 파일 — 서버가 런 폴더 안인지 다시 확인한 것) · `EDITH_RUN` · `EDITH_WORK` · `EDITH_ENGINE` · `EDITH_WORKSHOP` 을 받습니다. 산출물 HTML 은 계속 스크립트 없는 틀에서 보입니다 — 단추는 EDITH 머리줄에만 있습니다.
+- EDITH 를 다시 켜면 돌던 일을 잊습니다(출력이 끊겨 명령도 보통 같이 멈춘다).
 
 ### 알림 바꾸기
 
