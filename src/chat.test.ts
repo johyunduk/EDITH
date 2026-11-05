@@ -64,6 +64,14 @@ test('다른 Claude 세션과 주고받은 말 — 받은 것은 보낸 이와 �
   assert.deepEqual(items.map(i => [i.kind, i.text, i.from]), [['peer', '안녕', 'peer-a'], ['tool', 'SendMessage → peer-a · 받았어', undefined], ['tool', 'SendMessage → peer-c · 봐 줘', undefined]]);
 });
 
+test('compact 요약 — 자동이든 /compact 든 말풍선으로 보이지 않고, 친 /compact 명령은 남는다', () => {
+  const items: Parameters<typeof claudeLine>[0] = [], byId = new Map();
+  claudeLine(items, byId, JSON.stringify({ type: 'user', message: { content: '<command-name>/compact</command-name>' } }));
+  claudeLine(items, byId, JSON.stringify({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { content: 'This session is being continued from a previous conversation…' } }));
+  claudeLine(items, byId, JSON.stringify({ type: 'user', message: { content: '이어서 해 줘' } }));
+  assert.deepEqual(items.map(i => i.text), ['/compact', '이어서 해 줘']);
+});
+
 test('막힌 도구 — 권한·auto 모드·커밋 지킴이에 막힌 결과만 blocked, 명령 실패·사람이 거절한 것은 아니다', () => {
   const items: Parameters<typeof claudeLine>[0] = [], byId = new Map();
   const results = [

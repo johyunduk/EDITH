@@ -32,12 +32,13 @@ const resultText = (c: unknown): string => typeof c === 'string' ? c
 
 // Claude 기록 한 줄 → 화면 항목. 도구 결과는 앞의 도구 호출 항목에 붙인다(byId).
 export function claudeLine(items: Item[], byId: Map<string, Item>, line: string) {
-  let o: { type?: string; isMeta?: boolean; timestamp?: string; message?: { content?: string | Block[] }; origin?: { kind?: string; name?: string; from?: string; body?: unknown } };
+  let o: { type?: string; isMeta?: boolean; isCompactSummary?: boolean; timestamp?: string; message?: { content?: string | Block[] }; origin?: { kind?: string; name?: string; from?: string; body?: unknown } };
   try { o = JSON.parse(line); } catch { return; }
   const t = Date.parse(o.timestamp ?? '') || 0, c = o.message?.content;
   // 다른 Claude 세션이 보낸 말 — 기록엔 안내문으로 감싼 isMeta 줄로 남고, origin 에 보낸 세션 이름과 본문이 있다
   if (o.type === 'user' && o.origin?.kind === 'peer' && typeof o.origin.body === 'string') { items.push({ t, kind: 'peer', text: o.origin.body, from: o.origin.name, id: o.origin.from }); return; }
-  if (o.type === 'user' && !o.isMeta) {
+  // compact 요약은 사람 말이 아니라 Claude 에게 주는 이어 가기 글이다 — 말풍선으로 보이지 않는다
+  if (o.type === 'user' && !o.isMeta && !o.isCompactSummary) {
     if (typeof c === 'string') { local(items, t, c); return; }
     for (const b of c ?? []) {
       if (b.type === 'text' && b.text && !b.text.startsWith('<')) items.push({ t, kind: 'user', text: b.text });
