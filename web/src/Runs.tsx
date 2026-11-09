@@ -15,7 +15,7 @@ import { Attach, upload } from './Attach.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
 import { RunFlow } from './RunFlow.tsx';
 import { RunTimeline, type Entry } from './RunTimeline.tsx';
-import { claudeChip, dropShared, dur, notionUrl, pastDays, phases, type ClaudeUsed } from './runFlow.ts';
+import { claudeChip, dropShared, dur, notionUrl, pastDays, phases, runNo, type ClaudeUsed } from './runFlow.ts';
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
 import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
@@ -129,7 +129,7 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
               <span className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground"><Icon className="size-3">{CLOCK}</Icon>{DAYS[s.schedule.days]} {s.schedule.at}{s.error && <span className="ml-auto text-destructive">못 시작함</span>}</span>
               <span className="block truncate text-[0.8125rem] font-semibold">{s.name}</span>
               <span className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground tabular-nums">다음 {nextText(s.next)}
-                {s.runs.length > 0 && <span className="ml-1 flex items-center gap-0.5" aria-label={`최근 ${Math.min(5, s.runs.length)}번`}>· 최근{s.runs.slice(0, 5).reverse().map(r => <span key={r.id} title={`#${r.id} ${RUN_LABEL[r.state]}`} className={`ml-0.5 size-1.5 rounded-full ${DOT[r.state]}`} />)}</span>}
+                {s.runs.length > 0 && <span className="ml-1 flex items-center gap-0.5" aria-label={`최근 ${Math.min(5, s.runs.length)}번`}>· 최근{s.runs.slice(0, 5).reverse().map(r => <span key={r.id} title={`${runNo(r.id)} ${RUN_LABEL[r.state]}`} className={`ml-0.5 size-1.5 rounded-full ${DOT[r.state]}`} />)}</span>}
               </span>
             </a>
           ))}
@@ -141,7 +141,7 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
           {live.map(r => (
             <a key={r.id} href={`#/runs/${r.id}`} title={r.reason} className={row(r)}>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[0.6875rem] text-muted-foreground tabular-nums">#{r.id} {r.name} · {when(r.created)} · {r.done}/{r.total}</span>
+                <span className="block truncate text-[0.6875rem] text-muted-foreground tabular-nums">{runNo(r.id)} {r.name} · {when(r.created)} · {r.done}/{r.total}</span>
                 <span className="line-clamp-2 text-[0.8125rem] font-medium">{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.agenda && <span className="mr-1 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</span>
               </span>
               {pill(r)}
@@ -163,7 +163,7 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
               {rs.map(r => (
                 <a key={r.id} href={`#/runs/${r.id}`} title={r.reason} className={row(r)}>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[0.6875rem] text-muted-foreground tabular-nums">#{r.id} · {new Date(r.created).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                    <span className="block text-[0.6875rem] text-muted-foreground tabular-nums">{runNo(r.id)} · {new Date(r.created).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
                     <span className={`line-clamp-2 text-[0.8125rem] ${r.state === 'dropped' ? 'text-muted-foreground' : ''}`}>{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.title ?? r.name}</span>
                   </span>
                   {pill(r)}
@@ -217,7 +217,7 @@ function ScheduleDetail({ id }: { id: string }) {
             <li key={r.id} className="relative">
               <span className={`absolute -left-[1.3rem] top-3 size-2.5 rounded-full ring-2 ring-background ${DOT[r.state]}`} />
               <a href={`#/runs/${r.id}`} className="block rounded-md border bg-card px-3 py-2 hover:bg-muted/50">
-                <span className="flex items-center gap-2 text-[0.8125rem] font-semibold tabular-nums">#{r.id} · {when(r.created)}<span className={`rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span></span>
+                <span className="flex items-center gap-2 text-[0.8125rem] font-semibold tabular-nums">{runNo(r.id)} · {when(r.created)}<span className={`rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span></span>
                 {(r.title ?? r.reason) && <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">{r.title ?? r.reason}</span>}
               </a>
             </li>
@@ -300,7 +300,7 @@ type Pick = { label: string; note?: string; input: string; title?: string; tag?:
 function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   const qc = useQueryClient();
   const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { id: string; name: string; nodes: number; kind: 'chain' | 'engine' | 'run'; broken: boolean; engine?: string }[] }>('/api/workshop') });
-  const [open, setOpen] = useState(false), [test, setTest] = useState(false), [engine, setEngine] = useState(''), [input, setInput] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [branch, setBranch] = useState(''), [unattended, setUnattended] = useState(false);
+  const [open, setOpen] = useState(false), [test, setTest] = useState(false), [engine, setEngine] = useState(''), [input, setInput] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [branch, setBranch] = useState(''), [unattended, setUnattended] = useState(false), [testRun, setTestRun] = useState(false);
   // 고른 것의 작업 폴더 설정 — 늘 같은 폴더 · 새 워크트리면 폴더를 묻지 않는다
   type Def = { engine: { workdir?: Workdir; kind?: string; engine?: string; input?: string; unattended?: boolean } | null; picks?: string };
   const eq = useQuery({ queryKey: ['workshop', engine], queryFn: () => get<Def>(`/api/workshop/${engine}`), enabled: !!engine });
@@ -350,7 +350,7 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
     const seen = new Set<string>();
     return d.workspaces.flatMap(w => {
       const dir = w.worktree?.checkout_path ?? d.panes.find(p => p.workspace === w.workspace_id)?.cwd;
-      if (!dir || seen.has(dir) || w.label.startsWith('▶') || w.label.startsWith('런·')) return [];   // 런 워크스페이스(옛 「▶」 · 새 「런·」)
+      if (!dir || seen.has(dir) || w.label.startsWith('▶') || w.label.startsWith('런·') || w.label.startsWith('시험·')) return [];   // 런 워크스페이스(옛 「▶」 · 새 「런·」 · 시험 런 「시험·」)
       seen.add(dir);
       return [{ label: w.label, dir }];
     });
@@ -359,9 +359,9 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
     setBusy(true);
     try {
       const pick = !req && picked?.input === input ? { pick: { title: picked.title ?? picked.label, tag: picked.tag } } : {};
-      const r = await post<{ id: number }>('/api/runs', { engine, cwd: cwd.trim(), input, branch: branch.trim(), unattended, ...(req ? { request: req.id } : {}), ...pick });
+      const r = await post<{ id: number }>('/api/runs', { engine, cwd: cwd.trim(), input, branch: branch.trim(), unattended, test: testRun, ...(req ? { request: req.id } : {}), ...pick });
       if (wd.kind === 'ask') try { localStorage.setItem('edith.runs.cwd', cwd.trim()); } catch { /* 저장 안 됨 */ }
-      setBranch(''); setUnattended(false); setPicked(null);
+      setBranch(''); setUnattended(false); setTestRun(false); setPicked(null);
       await qc.invalidateQueries({ queryKey: ['runs'] });
       setOpen(false); setInput(''); setErr(''); done();
       void qc.invalidateQueries({ queryKey: ['requests'] });
@@ -405,6 +405,11 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
           <label className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={unattended} onChange={e => setUnattended(e.target.checked)} className="mt-0.5" />
             <span><span className="font-medium text-foreground">무인 — 사람 없이 끝까지</span> · 확인 필요가 되면 2번까지 다시 돌리고, 그래도 안 되면 건너뛰고 이어 간다. 권한 승인 화면은 그대로 기다린다</span>
+          </label>
+          {/* 시험 런 — 번호를 따로 센다(시험 #1 · 워크스페이스 「시험·」). 엔진도 run.json · $EDITH_TEST 로 안다 */}
+          <label className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={testRun} onChange={e => setTestRun(e.target.checked)} className="mt-0.5" />
+            <span><span className="font-medium text-foreground">시험 런</span> · 번호를 따로 센다(「시험 #1」). 진짜 런 번호는 그대로 이어진다</span>
           </label>
           {err && <p className="text-xs break-words text-destructive">{err}</p>}
           <Button type="submit" size="sm" className="h-7 w-full text-xs" disabled={busy || !engine || (wd.kind === 'ask' && !cwd.trim()) || (wd.kind === 'worktree' && !branch.trim())}>{busy ? '시작하는 중…' : '런 시작'}</Button>
@@ -484,7 +489,7 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
   return (
     <div className="space-y-3 p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div className="min-w-0"><div className="text-xs text-muted-foreground tabular-nums">#{r.id} {r.name}</div>
+        <div className="min-w-0"><div className="text-xs text-muted-foreground tabular-nums">{runNo(r.id)} {r.name}</div>
           <h1 className="text-lg font-bold">{r.tag && <span className="mr-2 font-mono text-base text-primary">{r.tag}</span>}{r.agenda && <span className="mr-2 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</h1></div>
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>
         {r.unattended && <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground" title="확인 필요를 사람에게 넘기지 않고 다시 돌리거나 건너뛴다">무인</span>}
@@ -930,7 +935,7 @@ function Compare({ a, cut }: { a: Stats; cut: (n: string) => string }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
-        <thead className="border-b text-muted-foreground"><tr><th className="px-2 py-1.5 text-left">단계</th>{a.compare.map(x => <th key={x.id} className={`${cell} ${x.id === a.id ? 'text-foreground' : ''}`}><a href={`#/runs/${x.id}`} className="hover:underline">#{x.id}</a></th>)}</tr></thead>
+        <thead className="border-b text-muted-foreground"><tr><th className="px-2 py-1.5 text-left">단계</th>{a.compare.map(x => <th key={x.id} className={`${cell} ${x.id === a.id ? 'text-foreground' : ''}`}><a href={`#/runs/${x.id}`} className="hover:underline">{runNo(x.id)}</a></th>)}</tr></thead>
         <tbody>
           {names.map(n => (
             <tr key={n} className="border-b">

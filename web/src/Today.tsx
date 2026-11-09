@@ -10,6 +10,7 @@ import { get, post, useHerdr } from './api.ts';
 import { toast } from './copy.ts';
 import { paneText } from './herdrUi.tsx';
 import { Bracketed, Empty, GRID_BG, mix } from './ui.tsx';
+import { runNo } from './runFlow.ts';
 
 type Work = { name: string; path: string; branch?: string; asks: number; commits: { id: string; msg: string }[]; line: string };
 type Brief = { from: string | null; last: string | null; works: Work[]; runs: { id: number; name: string; state: string }[] };
@@ -82,9 +83,9 @@ export function TodayPage() {
   const shown = runs.length ? 5 : 6, more = Math.max(0, works.length - shown);
   const rows = [
     ...works.slice(0, shown).map(w => ({ key: w.path, name: w.name, where: w.branch ?? w.path, line: ai.data?.did[w.path] ?? w.line, meta: w.commits.length ? `커밋 ${w.commits.length}` : `대화 ${w.asks}` })),
-    ...runs.length ? [{ key: 'runs', name: '런', where: runs.map(r => `#${r.id}`).join(' · '), line: runs.map(r => `${r.name}(${RUN_STATE[r.state] ?? r.state})`).join(' · '), meta: `런 ${runs.length}` }] : [],
+    ...runs.length ? [{ key: 'runs', name: '런', where: runs.map(r => runNo(r.id)).join(' · '), line: runs.map(r => `${r.name}(${RUN_STATE[r.state] ?? r.state})`).join(' · '), meta: `런 ${runs.length}` }] : [],
   ];
-  const log = [...works.flatMap(w => w.commits.map(c => ({ id: c.id, repo: w.name, msg: c.msg }))), ...runs.map(r => ({ id: `#${r.id}`, repo: '런', msg: `${r.name} · ${RUN_STATE[r.state] ?? r.state}` }))];
+  const log = [...works.flatMap(w => w.commits.map(c => ({ id: c.id, repo: w.name, msg: c.msg }))), ...runs.map(r => ({ id: runNo(r.id), repo: '런', msg: `${r.name} · ${RUN_STATE[r.state] ?? r.state}` }))];
   const commits = works.reduce((s, w) => s + w.commits.length, 0), deploy = left.reduce((s, x) => s + x.n, 0);
 
   const add = (e: FormEvent) => {

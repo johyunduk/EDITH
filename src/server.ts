@@ -218,13 +218,13 @@ export function serve(port: number) {
       if (path === '/api/settings/engine/table' && req.method === 'GET') return await readSettings(url.searchParams.get('id')).then(t => reply(res, 200, t), fail);
       if (path === '/api/settings/engine/save' && req.method === 'POST') return await saveSettings((await body(req) ?? {}) as Record<string, unknown>).then(t => reply(res, 200, t), fail);
       if (path === '/api/runs' && req.method === 'POST') {
-        const b = await body(req) as { engine?: unknown; cwd?: unknown; input?: unknown; branch?: unknown; unattended?: unknown; request?: unknown; pick?: unknown };
+        const b = await body(req) as { engine?: unknown; cwd?: unknown; input?: unknown; branch?: unknown; unattended?: unknown; test?: unknown; request?: unknown; pick?: unknown };
         // 요청에서 연 런이면 시작한 뒤 그 요청에 런 번호로 답한다
         const rq = typeof b.request === 'string' && b.request ? b.request : null;
         const asked = rq ? readRequest(rq) : null;
         if (rq && (!asked || !listRequests().some(x => x.id === rq))) return reply(res, 400, '없거나 이미 답한 요청이다');
         // 고르기 목록에서 고른 채로 시작하면 그 제목 · 꼬리표를 요청처럼 남긴다
-        return await startRun(b.engine, b.cwd, b.input, b.branch, port, b.unattended, asked ?? pickRequest(b.engine, b.input, b.pick)).then(r => {
+        return await startRun(b.engine, b.cwd, b.input, b.branch, port, b.unattended, asked ?? pickRequest(b.engine, b.input, b.pick), undefined, b.test).then(r => {
           if (asked) {
             answerRequest(asked.id, { state: 'started', run: r.id });
             requestHook(asked.engine, { EDITH_REQUEST_FILE: join(REQUESTS, `${asked.id}.json`), EDITH_REQUEST_STATE: 'started', EDITH_REQUEST_RUN: String(r.id), EDITH_REQUEST_REASON: '' }, join(REQUESTS, `${asked.id}.hook.log`));

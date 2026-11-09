@@ -38,6 +38,7 @@ export type Run = {
   id: number; engine: string; name: string; cwd: string; input: string; created: number; branch?: string;   // branch = 새 워크트리로 돌 때 그 브랜치
   def?: string;   // 공방 런(kind run)으로 시작했으면 그 폴더 — 런 설정 사본은 run/, engine 은 그 런이 돌린 엔진
   unattended?: boolean;   // 무인 — 사람을 기다리지 않는다(unattend). 엔진은 run.json · $EDITH_UNATTENDED 로 안다
+  test?: boolean;   // 시험 런 — 번호를 따로 센다(runNo). 엔진은 run.json · $EDITH_TEST 로 안다
   scheduled?: { at: string };   // 스케줄이 시작한 런(src/schedule.ts) — 그 엔진 스케줄의 시각. 런 화면 「스케줄」 탭이 이것으로 모은다
   state: 'queued' | 'running' | 'check' | 'stopped' | 'done' | 'dropped'; reason?: string;   // queued = 동시 런 한도에 걸려 줄 서 있다, dropped = 버림(끝 — 기록만)
   owner?: { pid: number; port: number }; pane?: string;
@@ -388,6 +389,11 @@ export function codeFp(r: { id: number; cwd?: string }) {
   return dirs.length ? h.digest('hex').slice(0, 12) : undefined;
 }
 const ids = () => { try { return readdirSync(RUNS).filter(f => /^\d+$/.test(f)).map(Number).sort((a, b) => b - a); } catch { return []; } };
+// 시험 런은 TEST_BASE 위 번호(10001 → 「시험 #1」) — 폴더 이름이 숫자 그대로라 주소 · API 는 같고, 진짜 런 번호는 빈 데 없이 이어진다. web/src/runFlow.ts 와 같게
+// ponytail: 진짜 런이 10000 번을 넘으면 시험 번호와 겹친다 — 그때 TEST_BASE 를 올린다
+export const TEST_BASE = 10000;
+export const runNo = (id: number) => id > TEST_BASE ? `시험 #${id - TEST_BASE}` : `#${id}`;
+export const nextId = (test: boolean, all = ids()) => (all.find(n => test ? n > TEST_BASE : n <= TEST_BASE) ?? (test ? TEST_BASE : 0)) + 1;
 // 런 이름표 — 티켓(받은 요청 · 고르기의 tag)과 짧은 제목(엔진 요약 → 요청 제목 → 입력 첫 줄, 주소뿐이면 없음). 앞의 이모지 · 기호는 뗀다
 const clean = (v: unknown, n: number) => typeof v === 'string' && v.trim() ? v.trim().replace(/^[^\p{L}\p{N}[(]+/u, '').slice(0, n) || undefined : undefined;
 export function runLabel(req: { tag?: unknown; title?: unknown } | null, summary: string | undefined, input: string) {
@@ -406,7 +412,7 @@ export function listRuns() {
     if (!r) return [];
     const live = r.steps.filter(s => !s.fixOnly);
     return [{ id, name: r.name, engine: r.engine, ...(r.def ? { def: r.def } : {}), ...(r.scheduled ? { scheduled: r.scheduled } : {}), state: r.state, reason: r.reason, created: r.created, total: live.length, done: live.filter(s => ok(r, s.key)).length, ...labelOf(r) }];
-  });
+  }).sort((a, b) => b.created - a.created);   // 시험 런은 번호가 커서 번호 순이면 늘 위로 — 시작한 때 순(최근 먼저)
 }
 // 화면에 줄 것 — run 과 노드마다 보낸 글 · 명령 출력 끝(실행 폴더 안에서 서버가 정한 경로만)
 // 노드 상태 기록 — 깨진 줄은 뺀다(옛 런은 없다)
@@ -471,8 +477,8 @@ const folderOf = (v: unknown, what: string) => {
   return f;
 };
 // request — 받은 요청에서 연 런이면 그 요청(요청자 · 방 · meta)을 작업 문서 edith-request.json 에 두고 시작한다(노드가 요청 쪽에 알릴 때 쓴다)
-// what — 공방 런(kind run — 그 런이 정한 엔진을 그 설정으로) 또는 엔진 · 체인(시험 — 그 엔진 설정으로). scheduled — 스케줄이 시작할 때만
-export async function startRun(what: unknown, cwd: unknown, input: unknown, branch: unknown, port: number, unattended?: unknown, request?: object, scheduled?: { at: string }) {
+// what — 공방 런(kind run — 그 런이 정한 엔진을 그 설정으로) 또는 엔진 · 체인(시험 — 그 엔진 설정으로). scheduled — 스케줄이 시작할 때만. test — 새 런 칸 「시험 런」
+export async function startRun(what: unknown, cwd: unknown, input: unknown, branch: unknown, port: number, unattended?: unknown, request?: object, scheduled?: { at: string }, test?: unknown) {
   const read = (id: unknown) => {
     if (typeof id !== 'string' || !NAME.test(id) || !existsSync(join(WORKSHOP, id, 'engine.json'))) throw new Error('공방에 없다');
     const e = check(JSON.parse(readFileSync(join(WORKSHOP, id, 'engine.json'), 'utf8')));
@@ -488,7 +494,7 @@ export async function startRun(what: unknown, cwd: unknown, input: unknown, bran
   const repo = wd.kind === 'worktree' ? folderOf(wd.repo, '공방 설정의 레포 폴더') : '';
   if (wd.kind === 'worktree' && (typeof branch !== 'string' || !BRANCH.test(branch.trim()))) throw new Error('브랜치 이름을 넣는다(영문 · 숫자 · 한글 · . _ / -, - 로 시작하지 않게)');
   if (input !== undefined && (typeof input !== 'string' || input.length > 4000)) throw new Error('입력은 4000자까지');
-  const id = (ids()[0] ?? 0) + 1, dir = dirOf(id);
+  const id = nextId(test === true), dir = dirOf(id);
   mkdirSync(join(dir, 'work'), { recursive: true, mode: 0o700 });
   copyEngines(engine, join(dir, 'engine'));
   if (run) cpSync(join(WORKSHOP, what as string), join(dir, 'run'), { recursive: true });   // 런 설정 · 단추도 시작할 때의 사본으로
@@ -506,7 +512,7 @@ export async function startRun(what: unknown, cwd: unknown, input: unknown, bran
   }
   const r: Run = {
     id, engine, ...(run ? { def: what as string } : {}), name: run?.name ?? top.name, cwd: folder, input: (input as string | undefined)?.trim() ?? '', created: Date.now(), state: 'running', owner: { pid: process.pid, port },
-    ...(br ? { branch: br } : {}), ...(pane ? { pane } : {}), ...(unattended === true ? { unattended: true } : {}), ...(scheduled ? { scheduled } : {}),
+    ...(br ? { branch: br } : {}), ...(pane ? { pane } : {}), ...(unattended === true ? { unattended: true } : {}), ...(scheduled ? { scheduled } : {}), ...(test === true ? { test: true } : {}),
     steps: steps as Step[], nodes: Object.fromEntries((steps as Step[]).map(s => [s.key, { state: 'wait', attempt: 0, fails: 0 } as NodeRun])),
   };
   if (busy() >= runLimit()) { r.state = 'queued'; r.reason = WAIT; }
@@ -530,16 +536,14 @@ export function setRunLimit(n: unknown) {
 }
 const busy = () => ids().filter(i => { const s = loadRun(i)?.state; return s === 'running' || s === 'check'; }).length;
 let ownPort = 0;
-// 자리가 난 만큼 줄의 런을 시작한다(번호 작은 것 = 먼저 온 것부터)
+// 자리가 난 만큼 줄의 런을 시작한다(먼저 온 것부터 — 시험 런 번호가 따로라 번호 대신 시작한 때 순)
 export function startQueued() {
   let free = runLimit() - busy();
-  for (const id of [...ids()].reverse()) {
+  for (const r of ids().flatMap(i => loadRun(i) ?? []).filter(x => x.state === 'queued').sort((a, b) => a.created - b.created)) {
     if (free <= 0) break;
-    const r = loadRun(id);
-    if (r?.state !== 'queued') continue;
     r.state = 'running'; r.reason = undefined; r.owner = { pid: process.pid, port: ownPort || r.owner?.port || 0 };
     saveRun(r);
-    drive(id);
+    drive(r.id);
     free--;
   }
 }
@@ -649,14 +653,14 @@ export function drive(id: number) {
         const held = checks(r);
         if (moving(r)) await tick(r);
         unattend(r);
-        if (checks(r) > held) notify(`런 #${id} ${r.name} — 확인 필요`, r.reason);
+        if (checks(r) > held) notify(`런 ${runNo(id)} ${r.name} — 확인 필요`, r.reason);
         saveRun(r);
         if (!moving(r)) break;
         await nap(id, 2000);
       }
     } catch (e) {
       const r = loadRun(id);
-      if (r) { r.state = 'check'; r.reason = `런을 돌리다 오류 — ${firstLine(e)}`; saveRun(r); notify(`런 #${id} ${r.name} — 확인 필요`, r.reason); }
+      if (r) { r.state = 'check'; r.reason = `런을 돌리다 오류 — ${firstLine(e)}`; saveRun(r); notify(`런 ${runNo(id)} ${r.name} — 확인 필요`, r.reason); }
     } finally {
       driving.delete(id);
       startQueued();
@@ -732,7 +736,7 @@ const ageOf = (f: string) => { try { return Date.now() - statSync(f).mtimeMs; } 
 async function watch(r: Run, s: Step) {
   const n = r.nodes[s.key], pane = slot(r, s.track).pane, p = (await snapshot()).panes.find(x => x.id === pane);
   if (!pane || !p || p.agent !== 'claude') return hold(r, s, '런 pane 이 없거나 Claude 가 꺼졌다 — pane 을 보고 「이어서」');
-  if (p.status === 'blocked') { if (n.state !== 'blocked') notify(`런 #${r.id} ${r.name} — 답을 기다린다`, where(s)); n.state = 'blocked'; n.idle = 0; return; }
+  if (p.status === 'blocked') { if (n.state !== 'blocked') notify(`런 ${runNo(r.id)} ${r.name} — 답을 기다린다`, where(s)); n.state = 'blocked'; n.idle = 0; return; }
   n.state = 'running';
   const res = join(attemptDir(r.id, s.key, n.attempt), 'result.json');
   if (p.status !== 'idle' && p.status !== 'done') {
@@ -758,7 +762,7 @@ async function watch(r: Run, s: Step) {
     await statusline(pane).catch(() => null);
     n.wake = limitReset() ?? Date.now() + 30 * 60_000;
     n.reason = `사용량 한도 — ${new Date(n.wake).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 에 이어 간다`;
-    return notify(`런 #${r.id} ${r.name} — 사용량 한도`, n.reason);
+    return notify(`런 ${runNo(r.id)} ${r.name} — 사용량 한도`, n.reason);
   }
   n.idle = (n.idle ?? 0) + 1;
   // 백그라운드 셸이 돌면(Codex 리뷰 기다리기 같은) 셸이 끝날 때 Claude 가 스스로 이어 가니 300틱(10분 넘게)까지 그냥 기다린다 — 띄워 둔 서버처럼 안 끝나는 셸이면 그 뒤에
@@ -777,8 +781,8 @@ function notify(title: string, body = '') {
     .on('error', () => undefined);
 }
 
-// 런 워크스페이스 이름 — 「런·이름 #번호[ · 갈래·브랜치]」. 첫 「·」 앞이 사이드바 묶음(web/src/wsGroups.ts)이라 런이 「런」 한 묶음에 모인다(옛 런은 「▶ 이름 #번호」)
-export const runSpace = (name: string, id: number, more?: string) => `런·${name} #${id}${more ? ` · ${more}` : ''}`;
+// 런 워크스페이스 이름 — 「런·이름 #번호[ · 갈래·브랜치]」(시험 런은 「시험·이름 #시험 번호」). 첫 「·」 앞이 사이드바 묶음(web/src/wsGroups.ts)이라 런이 「런」 · 「시험」 한 묶음에 모인다(옛 런은 「▶ 이름 #번호」)
+export const runSpace = (name: string, id: number, more?: string) => `${id > TEST_BASE ? '시험' : '런'}·${name} #${id > TEST_BASE ? id - TEST_BASE : id}${more ? ` · ${more}` : ''}`;
 
 // 런 pane — 본 줄은 「런·이름 #번호」 워크스페이스를 작업 폴더에서 만들고, 갈래는 본 줄 pane 옆을 나눠
 // (본 줄 pane 이 아직 없으면 — 명령 노드로 시작해 바로 갈라진 런 — 본 줄 워크스페이스를 먼저 열어 둔다. 갈래 워크스페이스를 따로 열면 합치는 본 줄 노드가 하나를 더 연다)
@@ -824,7 +828,7 @@ function runCommand(r: Run, s: Step, at: string, why: string[]) {
   child.on('close', code => { procs.delete(k); exits.set(k, code ?? 1); wake(r.id); });
   r.nodes[s.key].state = 'running';
 }
-const runEnv = (r: Run, engine: string) => ({ EDITH_RUN: dirOf(r.id), EDITH_WORK: join(dirOf(r.id), 'work'), EDITH_ENGINE: join(dirOf(r.id), 'engine', engine), EDITH_INPUT: r.input, EDITH_UNATTENDED: r.unattended ? '1' : '' });
+const runEnv = (r: Run, engine: string) => ({ EDITH_RUN: dirOf(r.id), EDITH_WORK: join(dirOf(r.id), 'work'), EDITH_ENGINE: join(dirOf(r.id), 'engine', engine), EDITH_INPUT: r.input, EDITH_UNATTENDED: r.unattended ? '1' : '', EDITH_TEST: r.test ? '1' : '' });
 function shell(command: string, cwd: string, env: Record<string, string>, log: ReturnType<typeof createWriteStream>) {
   const [sh, args] = process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', command]] : [process.env.SHELL || '/bin/sh', ['-c', command]];
   const child = spawn(sh, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });

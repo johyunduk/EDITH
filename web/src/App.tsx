@@ -16,6 +16,7 @@ import { DeployPage } from './Deploy.tsx';
 import { TodayPage } from './Today.tsx';
 import { Icon, TERMINAL } from './ui.tsx';
 import { APP_NAME, applyTheme, readTheme } from './theme.ts';
+import { runNo } from './runFlow.ts';
 
 // 육각형 로고(lucide hexagon + 안쪽 꼭짓점 선)·스킬 탭 아이콘(lucide layout-grid)·설정 탭 아이콘(lucide settings)
 const HEX = <><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></>;
@@ -55,7 +56,7 @@ export default function App() {
   const herdr = useHerdr(), view = useView().data, remote = view?.remote ? view.host : null;
   // 탭 제목 — herdr 는 보고 있는 pane 의 「세션 이름 | 워크스페이스 이름」(탭이 좁으면 뒤가 잘리니 세션 이름이 앞), 나머지(pane 을 안 열었을 때도)는 「EDITH | 메뉴」, 런 하나를 열었으면 「EDITH | 런 #12」
   const pane = r.view === 'herdr' ? herdr.data?.panes.find(p => p.id === r.id) : undefined;
-  const menu = r.view === 'runs' && /^\d+$/.test(r.id ?? '') ? `${MENU.runs} #${r.id}` : MENU[r.view];
+  const menu = r.view === 'runs' && /^\d+$/.test(r.id ?? '') ? `${MENU.runs} ${runNo(Number(r.id))}` : MENU[r.view];
   const place = herdr.data?.workspaces.find(w => w.workspace_id === pane?.workspace)?.label;
   const title = [pane?.title, place].filter(Boolean).join(' | ') || `${APP_NAME} | ${menu}`;
   useBlockedAlert(title, herdr.data, remote);

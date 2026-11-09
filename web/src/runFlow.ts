@@ -4,6 +4,10 @@
 // React 없이 — src/runFlow.test.ts 가 확인한다.
 import type { FlowStep } from './stepFlow.ts';
 
+// 런 번호 — 시험 런은 TEST_BASE 위(10001 → 「시험 #1」). src/runner.ts 의 runNo 와 같게
+const TEST_BASE = 10000;
+export const runNo = (id: number) => id > TEST_BASE ? `시험 #${id - TEST_BASE}` : `#${id}`;
+
 export type Phase = { id: string; name: string; kind: 'chain' | 'engine' | 'node'; track?: string; keys: string[]; groups: { name: string; keys: string[] }[] };
 export type Col = { kind: 'box'; phase: Phase } | { kind: 'lanes'; rows: { track: string; phases: Phase[] }[] };
 export type Status = 'live' | 'done' | 'part' | 'wait';
@@ -92,6 +96,6 @@ type PastRun = { id: number; name: string; state: string; created: number; tag?:
 export function pastDays<T extends PastRun>(past: T[], q: string, only: 'all' | 'done' | 'dropped', now = new Date()): [string, T[]][] {
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const day = (t: number) => { const d = new Date(t), s = `${d.getMonth() + 1}.${d.getDate()}`; return d.toDateString() === now.toDateString() ? `오늘 ${s}` : s; };
-  return past.filter(r => (only === 'all' || r.state === only) && words.every(w => [`#${r.id}`, r.tag, r.title, r.agenda, r.name].join(' ').toLowerCase().includes(w)))
+  return past.filter(r => (only === 'all' || r.state === only) && words.every(w => [runNo(r.id), r.tag, r.title, r.agenda, r.name].join(' ').toLowerCase().includes(w)))
     .reduce<[string, T[]][]>((a, r) => { const k = day(r.created), last = a.at(-1); if (last?.[0] === k) last[1].push(r); else a.push([k, [r]]); return a; }, []);
 }

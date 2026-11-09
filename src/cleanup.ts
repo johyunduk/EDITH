@@ -13,7 +13,7 @@ import { ANY, change, commit, DEPLOY_FILE, git, loadStore, mainRepo, note, out, 
 import { closeWorkspace, spaces } from './herdr.ts';
 import { each } from './reach.ts';
 import { readRefs } from './repos.ts';
-import { deployHook, listRuns, loadRun, RUNS, runHook, type Run, type RunAction } from './runner.ts';
+import { deployHook, listRuns, loadRun, RUNS, runHook, runNo, type Run, type RunAction } from './runner.ts';
 import { lastLine } from './timeline.ts';
 import { refsIn, removeUploads, runRefPaths, transcriptDir } from './uploads.ts';
 
@@ -89,7 +89,7 @@ async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string,
   const cands = [{ what: '원본', branch: x.branch, into: envs.at(-1)!.ref }, ...issues.map(i => ({ what: '이슈', branch: i, into: own })),
     { what: `${envs[0].name} 머지`, branch: `merge/${tail}`, into: envs[0].ref }, ...envs.slice(1).map(e => ({ what: `${e.name} 머지`, branch: `merge-${e.name}/${tail}`, into: e.ref }))];
   const stash = (await out(x.repo, ['stash', 'list', '--format=%gs']))?.split('\n') ?? [];
-  const lines: Line[] = active.map(n => ({ what: '런', ref: `#${n}`, ok: false, check: `런 #${n} 이 아직 끝나지 않았다 — 끝나거나 버린 뒤` })), targets: Target[] = [];
+  const lines: Line[] = active.map(n => ({ what: '런', ref: runNo(n), ok: false, check: `런 ${runNo(n)} 이 아직 끝나지 않았다 — 끝나거나 버린 뒤` })), targets: Target[] = [];
   for (const c of cands) {
     const local = !!(await commit(x.repo, `refs/heads/${c.branch}`)), wt = await worktreeOf(x.repo, c.branch);
     if (!local && !wt) continue;
@@ -106,8 +106,8 @@ async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string,
   const runSpaces: CleanPlan['runSpaces'] = [];
   for (const e of ended) {
     const { mine, kept } = runSpacesOf(sp, e.panes);
-    for (const m of mine) { runSpaces.push({ id: m.id, label: m.label }); lines.push({ what: '런', ref: `#${e.id}`, parts: `워크스페이스 「${m.label}」`, ok: true, check: '런이 끝났다 — 닫는다' }); }
-    for (const k of kept) lines.push({ what: '런', ref: `#${e.id}`, parts: `워크스페이스 「${k.label}」`, ok: true, check: k.busy ? '일하는 중이라 남긴다' : '런 밖 pane 이 있어 남긴다' });
+    for (const m of mine) { runSpaces.push({ id: m.id, label: m.label }); lines.push({ what: '런', ref: runNo(e.id), parts: `워크스페이스 「${m.label}」`, ok: true, check: '런이 끝났다 — 닫는다' }); }
+    for (const k of kept) lines.push({ what: '런', ref: runNo(e.id), parts: `워크스페이스 「${k.label}」`, ok: true, check: k.busy ? '일하는 중이라 남긴다' : '런 밖 pane 이 있어 남긴다' });
   }
   const p: CleanPlan = { id: x.id, repo: x.repo, name: basename(x.repo), branch: x.branch, ...(x.tag ? { tag: x.tag } : {}), ...(x.agenda ? { agenda: x.agenda } : {}), ...(x.done ? { done: x.done } : {}), runs, lines, hook: [], targets, runSpaces, ok: false };
   if (hook && targets.length) {

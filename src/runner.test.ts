@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, closingTalk, flatten, nap, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runSpace, settle, skip, skipRest, unattend, wake, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, closingTalk, flatten, nap, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runNo, runSpace, nextId, settle, skip, skipRest, unattend, wake, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
 import { groupOf, shortName } from '../web/src/wsGroups.ts';
 
@@ -46,6 +46,15 @@ test('runSpace — 런 워크스페이스는 「런·이름 #번호[ · 갈래]�
   assert.equal(runSpace('공장', 15), '런·공장 #15');
   assert.equal(runSpace('공장', 15, 'fe'), '런·공장 #15 · fe');
   assert.deepEqual([groupOf(runSpace('공장', 15, 'feature/x')), shortName(runSpace('공장', 15, 'feature/x'))], ['런', '공장 #15 · feature/x']);
+});
+test('시험 런 — 번호를 따로 센다(10001 = 시험 #1), 진짜 런 번호는 빈 데 없이 이어진다', () => {
+  assert.equal(nextId(false, [10002, 10001, 40, 39]), 41);
+  assert.equal(nextId(true, [10002, 10001, 40, 39]), 10003);
+  assert.equal(nextId(true, [40, 39]), 10001);
+  assert.equal(nextId(false, []), 1);
+  assert.deepEqual([runNo(40), runNo(10001)], ['#40', '시험 #1']);
+  assert.equal(runSpace('공장', 10002, 'fe'), '시험·공장 #2 · fe');
+  assert.equal(groupOf(runSpace('공장', 10002)), '시험');
 });
 
 test('runLabel — 티켓은 요청 tag, 제목은 요약 → 요청 제목(앞 이모지 뗌) → 입력 첫 줄(주소뿐이면 없음)', () => {

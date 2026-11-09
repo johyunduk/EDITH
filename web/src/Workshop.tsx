@@ -23,6 +23,7 @@ import { EngineMap, ROLE } from './EngineMap.tsx';
 import type { FlowStep } from './stepFlow.ts';
 import { skillBrief, skillDetail } from './skillDesc.ts';
 import { DAYS, nextText, type Sched, type Schedule } from './schedule.ts';
+import { runNo } from './runFlow.ts';
 
 type SkillRef = { from: 'engine' | 'installed'; id: string };
 type WNode = { id: string; title: string; skill: SkillRef | null; command?: string; engine?: string; x: number; y: number };
@@ -232,7 +233,7 @@ function RunDef({ id, root, engines, claude, onAsk }: { id: string; root: string
         <ul className="mx-4 mb-4 divide-y rounded-lg border bg-card">
           {mine.length ? mine.map(r => (
             <li key={r.id}><a href={`#/runs/${r.id}`} className="flex items-baseline gap-2 px-3 py-2 hover:bg-muted/60">
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">#{r.id}</span>
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{runNo(r.id)}</span>
               <span className="min-w-0 flex-1 truncate text-sm">{r.tag && <span className="mr-1 font-mono text-xs text-primary">{r.tag}</span>}{r.agenda && <span className="mr-1 text-muted-foreground">[{r.agenda}]</span>}{r.title ?? r.name}</span>
               <span className="shrink-0 text-xs text-muted-foreground">{RUN_STATE[r.state] ?? r.state}</span>
             </a></li>
@@ -946,7 +947,7 @@ function ScheduleSetting({ id, s, fixed, onChange }: { id: string; s?: Schedule;
       {s && <input type="time" required value={s.at} onChange={e => { if (e.target.value) onChange({ ...s, at: e.target.value }, 600); }} aria-label="시각"
         className="h-7 rounded-md border bg-background px-1.5 font-mono text-xs outline-none focus:ring-2 focus:ring-ring/50" />}
       {s && <span>무인으로 돈다 · 다음 <b className="font-semibold text-foreground">{info ? nextText(info.next) : '…'}</b>
-        {last && <> · 지난 <a href={`#/runs/${last.id}`} className="text-primary hover:underline">#{last.id}</a> {new Date(last.created).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</>}</span>}
+        {last && <> · 지난 <a href={`#/runs/${last.id}`} className="text-primary hover:underline">{runNo(last.id)}</a> {new Date(last.created).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</>}</span>}
       {s && <a href={`#/runs/schedule/${id}`} className="text-primary hover:underline">스케줄 런 ›</a>}
       {info?.error && <span className="text-destructive">{info.error}</span>}
       {!fixed && <span className={s ? 'text-destructive' : ''}>{s ? '작업 폴더가 「늘 같은 폴더」 가 아니라 시작하지 못한다' : '작업 폴더를 「늘 같은 폴더」 로 두면 켤 수 있다'}</span>}

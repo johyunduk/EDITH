@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Bracketed, Empty, GRID_BG, Icon, mix } from './ui.tsx';
 import { copyText, toast } from './copy.ts';
 import { byTurn } from './deployOrder.ts';
+import { runNo } from './runFlow.ts';
 import { DiffView } from './Diff.tsx';
 
 type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
@@ -23,7 +24,7 @@ type Act = { label: string; at: number; code: number | null; note?: string; repo
 // path — 이 항목에 해당하는 그 런 워크트리, docs — 엔진이 배포 화면에도 걸라고 한 산출물(i 는 그 런 산출물 차례 — #/runs/<번호>/out/<i> 로 바로 연다)
 type RunLink = { id: number; title: string; tag?: string; link?: string; state: string; now?: string; created: number; actions: Action[]; issue?: RepoReach; path?: string; acting?: Act; last?: Act;
   docs?: { label: string; i: number }[] };
-const docLinks = (r: RunLink, cls: string) => (r.docs ?? []).map(d => <a key={`${r.id}-${d.i}`} href={`#/runs/${r.id}/out/${d.i}`} title={`런 #${r.id} 산출물`} className={cls}>{d.label} ›</a>);
+const docLinks = (r: RunLink, cls: string) => (r.docs ?? []).map(d => <a key={`${r.id}-${d.i}`} href={`#/runs/${r.id}/out/${d.i}`} title={`런 ${runNo(r.id)} 산출물`} className={cls}>{d.label} ›</a>);
 // 런 단추가 도는지 · 마지막 결과 — 카드 깊숙한 단계 칸이 읽는다(DeployPage 가 1.5초마다 /api/runs/<번호>/acted 로 채운다)
 // running — 그 런에서 도는 단추들(레포 줄 단추는 레포마다 따로 돈다), done — 끝난 기록(최근 것부터)
 const ActCtx = createContext<{ running: (run: number) => Act[]; done: (run: number) => Act[]; now: number }>({ running: () => [], done: () => [], now: 0 });
@@ -235,8 +236,8 @@ export function DeployPage() {
   const needle = find.trim().toLowerCase();
   const hit = (xs: string[]) => !needle || xs.some(s => s.toLowerCase().includes(needle));
   const pass = (f: ReturnType<typeof flags>) => filter === 'all' || f[filter];
-  const shown = byTurn(live.filter(g => pass(flags(g)) && hit([g.tag, ...tickets(g), ...g.items.flatMap(x => [x.branch, repoName(x.repo), x.tag ?? '', x.ticket ?? '', ...x.notes, ...(x.runs ?? []).flatMap(r => [`#${r.id}`, r.title])])])), stepsOf, v.envs, g => g.date);
-  const extra = v.extra.filter(e => pass(looseFlags(e)) && hit([`#${e.run.id}`, e.run.title, e.run.tag ?? '', ...e.repos.flatMap(x => [x.name, x.branch ?? ''])]));
+  const shown = byTurn(live.filter(g => pass(flags(g)) && hit([g.tag, ...tickets(g), ...g.items.flatMap(x => [x.branch, repoName(x.repo), x.tag ?? '', x.ticket ?? '', ...x.notes, ...(x.runs ?? []).flatMap(r => [runNo(r.id), r.title])])])), stepsOf, v.envs, g => g.date);
+  const extra = v.extra.filter(e => pass(looseFlags(e)) && hit([runNo(e.run.id), e.run.title, e.run.tag ?? '', ...e.repos.flatMap(x => [x.name, x.branch ?? ''])]));
   const count = (f: Filter) => f === 'all' ? live.length + v.extra.length : live.filter(g => flags(g)[f]).length + v.extra.filter(e => looseFlags(e)[f]).length;
   const heads = byDate ? [...new Set(shown.map(g => g.date ?? ''))].sort((a, b) => !a ? 1 : !b ? -1 : a.localeCompare(b)) : [null];
   const fetched = v.repos.map(r => r.fetched).filter((t): t is number => !!t);
@@ -434,9 +435,9 @@ const flagsClean = (g: Group, v: Board) => g.items.every(x => !x.state?.empty &&
 function LooseCard({ e, onPick, onFiles }: { e: Board['extra'][number]; onPick: (p: Pick) => void; onFiles: (x: { title: string; list: string[] }) => void }) {
   const used = new Set<number>();
   return (
-    <Bracketed label={`런 #${e.run.id}`}>
+    <Bracketed label={`런 ${runNo(e.run.id)}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <a href={`#/runs/${e.run.id}`} className="font-mono text-xs text-primary hover:underline">#{e.run.id}</a>
+        <a href={`#/runs/${e.run.id}`} className="font-mono text-xs text-primary hover:underline">{runNo(e.run.id)}</a>
         {docLinks(e.run, 'text-xs font-semibold text-primary hover:underline')}
         <span className="text-base font-bold">{e.run.title}</span>
         {e.run.tag && <span className="rounded border px-1.5 font-mono text-[0.6875rem] text-primary">{e.run.tag}</span>}
@@ -462,7 +463,7 @@ function Row({ name, branch, label, runs, error, sub, onDiff, children }: { name
         <div className="truncate text-sm font-semibold" title={name}>{name}</div>
         <div className="truncate font-mono text-[0.6875rem] text-muted-foreground" title={branch}>{branch}</div>
         {label && <div className="truncate text-xs font-semibold text-primary" title={label}>{label}</div>}
-        {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} title={r.title} className="mr-2 text-xs font-semibold text-primary hover:underline">런 #{r.id} ›</a>)}
+        {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} title={r.title} className="mr-2 text-xs font-semibold text-primary hover:underline">런 {runNo(r.id)} ›</a>)}
         {runs.flatMap(r => docLinks(r, 'mr-2 text-xs font-semibold text-primary hover:underline'))}
         {onDiff && <button type="button" onClick={onDiff} title="이 브랜치가 운영에 더할 코드 — 워크트리 체크아웃과 상관없이 커밋으로 본다" className="text-xs font-semibold text-primary hover:underline">변경 ›</button>}
       </div>
@@ -623,7 +624,7 @@ function Panel({ g, v, all, send, onClose }: { g: Group; v: Board; all: Group[];
 
         <section className="space-y-2"><h3 className="text-xs font-semibold text-muted-foreground">메모</h3>{g.items.map(x => <Notes key={x.id} x={x} many={g.items.length > 1} send={send} />)}</section>
         {runs.length > 0 && <section className="space-y-1"><h3 className="text-xs font-semibold text-muted-foreground">런</h3>
-          {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} className="flex gap-2 text-sm hover:underline"><span className="font-mono text-primary">#{r.id}</span><span className="min-w-0 flex-1 truncate">{r.title}</span><span className="text-xs text-muted-foreground">{r.state === 'done' ? '끝' : r.now ?? r.state}</span></a>)}</section>}
+          {runs.map(r => <a key={r.id} href={`#/runs/${r.id}`} className="flex gap-2 text-sm hover:underline"><span className="font-mono text-primary">{runNo(r.id)}</span><span className="min-w-0 flex-1 truncate">{r.title}</span><span className="text-xs text-muted-foreground">{r.state === 'done' ? '끝' : r.now ?? r.state}</span></a>)}</section>}
         <section className="space-y-1"><h3 className="text-xs font-semibold text-muted-foreground">기록</h3>
           {log.length ? <ul className="space-y-1 text-xs">{log.map((l, i) => <li key={i}><span className="font-mono text-muted-foreground">{at(l.t)}</span> · {g.items.length > 1 ? `${l.repo} ` : ''}{l.text}</li>)}</ul> : <Empty>기록이 없다.</Empty>}</section>
       </div>
@@ -990,7 +991,7 @@ function ActionDialog({ pick, onClose, onStarted }: { pick: Pick; onClose: () =>
     } catch (e) { toast(`돌리지 못했다 — ${(e as Error).message}`, 6000); setBusy(false); }
   };
   return (
-    <Sheet title={`「${a.label}」 을 돌릴까요?`} sub={`런 #${run.id} · ${run.title}`} onClose={onClose}>
+    <Sheet title={`「${a.label}」 을 돌릴까요?`} sub={`런 ${runNo(run.id)} · ${run.title}`} onClose={onClose}>
       <div className="space-y-4">
         {a.flow && <p className="font-mono text-xs leading-5 font-semibold whitespace-pre-line text-primary">{a.flow}</p>}
         {a.hint && <p className="text-sm whitespace-pre-line">{a.hint}</p>}
@@ -1018,7 +1019,7 @@ function CopyDialog({ pick, onClose }: { pick: Pick; onClose: () => void }) {
     setBusy(false);
   };
   return (
-    <Sheet title={`「${a.label}」`} sub={`런 #${run.id} · ${run.title}`} onClose={onClose}>
+    <Sheet title={`「${a.label}」`} sub={`런 ${runNo(run.id)} · ${run.title}`} onClose={onClose}>
       <div className="space-y-4">
         {a.flow && <p className="font-mono text-xs leading-5 font-semibold whitespace-pre-line text-primary">{a.flow}</p>}
         {a.hint && <p className="text-sm whitespace-pre-line">{a.hint}</p>}
