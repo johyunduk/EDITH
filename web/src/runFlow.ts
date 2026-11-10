@@ -6,7 +6,8 @@ import type { FlowStep } from './stepFlow.ts';
 
 // 런 번호 — 시험 런은 TEST_BASE 위(10001 → 「시험 #1」). src/runner.ts 의 runNo 와 같게
 const TEST_BASE = 10000;
-export const runNo = (id: number) => id > TEST_BASE ? `시험 #${id - TEST_BASE}` : `#${id}`;
+export const isTest = (id: number) => id > TEST_BASE;
+export const runNo = (id: number) => isTest(id) ? `시험 #${id - TEST_BASE}` : `#${id}`;
 
 export type Phase = { id: string; name: string; kind: 'chain' | 'engine' | 'node'; track?: string; keys: string[]; groups: { name: string; keys: string[] }[] };
 export type Col = { kind: 'box'; phase: Phase } | { kind: 'lanes'; rows: { track: string; phases: Phase[] }[] };

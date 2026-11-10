@@ -15,7 +15,7 @@ import { Attach, upload } from './Attach.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
 import { RunFlow } from './RunFlow.tsx';
 import { RunTimeline, type Entry } from './RunTimeline.tsx';
-import { claudeChip, dropShared, dur, notionUrl, pastDays, phases, runNo, type ClaudeUsed } from './runFlow.ts';
+import { claudeChip, dropShared, dur, isTest, notionUrl, pastDays, phases, runNo, type ClaudeUsed } from './runFlow.ts';
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
 import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
@@ -100,14 +100,19 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
 
 // 런 목록 — 「진행 중」(대기 · 도는 중 · 확인 필요 · 멈춤) · 「스케줄」(스케줄이 걸린 엔진) · 「지난 런」(끝 · 버림) 세 탭. 지난 런은 찾기 · 상태 칩 · 만든 날 묶음.
 // 고른 탭은 이 브라우저에 기억한다. 보는 런이 지난 런이면(주소로 열었거나 보던 런이 끝났거나) 그 탭으로, 스케줄을 보고 있으면 스케줄 탭으로 넘어가 어디 있는지 보이게
+// 진행 중 · 지난 런은 「실제 런 · 시험 런」 중 하나만 보인다(시험 런 = 10001 위 번호, 옛 시험 런 #38 등은 실제 쪽). 보는 런이 다른 쪽이면 그쪽으로 넘어간다
 type Tab = 'live' | 'sched' | 'past';
 function RunList({ items, current, sched }: { items: Item[]; current?: number; sched?: string }) {
   const [tab, setTabState] = useState<Tab>(() => { try { const t = localStorage.getItem('edith.runs.tab'); return t === 'past' || t === 'sched' ? t : 'live'; } catch { return 'live'; } });
   const setTab = (t: Tab) => { setTabState(t); try { localStorage.setItem('edith.runs.tab', t); } catch { /* 저장 안 됨 */ } };
+  const [test, setTestState] = useState(() => { try { return localStorage.getItem('edith.runs.kind') === 'test'; } catch { return false; } });
+  const setTest = (v: boolean) => { setTestState(v); try { localStorage.setItem('edith.runs.kind', v ? 'test' : 'real'); } catch { /* 저장 안 됨 */ } };
   const scheds = useQuery({ queryKey: ['schedule'], queryFn: () => get<Sched[]>('/api/schedule'), refetchInterval: 10_000 }).data ?? [];
   useEffect(() => { if (sched) setTab('sched'); }, [sched]);
+  useEffect(() => { if (current !== undefined) setTest(isTest(current)); }, [current]);
   const [q, setQ] = useState(''), [only, setOnly] = useState<'all' | 'done' | 'dropped'>('all');
-  const live = items.filter(r => !ended(r.state)), past = items.filter(r => ended(r.state));
+  const kind = items.filter(r => isTest(r.id) === test), live = kind.filter(r => !ended(r.state)), past = kind.filter(r => ended(r.state));
+  const liveOf = (t: boolean) => items.filter(r => isTest(r.id) === t && !ended(r.state)).length;
   const cur = items.find(r => r.id === current), curPast = !!cur && ended(cur.state);
   useEffect(() => { if (curPast) setTab('past'); }, [current, curPast]);
   const days = pastDays(past, q, only);
@@ -122,6 +127,12 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
         <button type="button" role="tab" aria-selected={tab === 'sched'} onClick={() => setTab('sched')} className={tabCls(tab === 'sched')}>스케줄 {scheds.length}</button>
         <button type="button" role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')} className={tabCls(tab === 'past')}>지난 런 {past.length}</button>
       </div>
+      {tab !== 'sched' && (
+        <div role="group" aria-label="런 종류" className="mb-1.5 flex gap-1.5">
+          {([[false, '실제 런'], [true, '시험 런']] as const).map(([t, label]) =>
+            <button key={label} type="button" aria-pressed={test === t} onClick={() => setTest(t)} className={chip(test === t)}>{label}{liveOf(t) > 0 && ` · 진행 ${liveOf(t)}`}</button>)}
+        </div>
+      )}
       {tab === 'sched' ? (
         <div role="tabpanel" aria-label="스케줄" className="space-y-1">
           {scheds.map(s => (
@@ -840,7 +851,8 @@ function OutputSheet({ id, i, label, onClose }: { id: number; i: number; label?:
       {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
         : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
           // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
-          : /\.(html?|svg)$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={one.data.text} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
+          // base — srcdoc 은 EDITH 주소를 기준으로 삼아 목차 #앵커가 EDITH 로 튀어 「연결을 거부」 로 뜬다. doctype 뒤에 넣어 표준 모드 유지
+          : /\.(html?|svg)$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={one.data.text.replace(/^(\s*<!doctype[^>]*>)?/i, '$1<base href="about:srcdoc">')} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
           : <pre className="code-panel whitespace-pre-wrap">{one.data.text}</pre>)}
     </Sheet>
   );
