@@ -89,6 +89,9 @@ async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string,
   const cands = [{ what: '원본', branch: x.branch, into: envs.at(-1)!.ref }, ...issues.map(i => ({ what: '이슈', branch: i, into: own })),
     { what: `${envs[0].name} 머지`, branch: `merge/${tail}`, into: envs[0].ref }, ...envs.slice(1).map(e => ({ what: `${e.name} 머지`, branch: `merge-${e.name}/${tail}`, into: e.ref }))];
   const stash = (await out(x.repo, ['stash', 'list', '--format=%gs']))?.split('\n') ?? [];
+  // 운영에서 되돌렸으면 원본은 들어간 게 아니다 — 내용 확인(contentIn)은 브랜치가 운영의 조상이면 늘 통과해서 배포 화면 운영 칸 판정(reachOf)을 같이 본다
+  const prod = (await stateOf(x, [envs.at(-1)!])).envs[0];
+  const back = prod?.state === 'reverted' ? `${label(prod.ref)} 에서 되돌려졌다${prod.k! < prod.n! ? ` — ${prod.n}개 중 ${prod.k}개` : ''}${prod.by ? ` · ${prod.by}` : ''}` : '';
   const lines: Line[] = active.map(n => ({ what: '런', ref: runNo(n), ok: false, check: `런 ${runNo(n)} 이 아직 끝나지 않았다 — 끝나거나 버린 뒤` })), targets: Target[] = [];
   for (const c of cands) {
     const local = !!(await commit(x.repo, `refs/heads/${c.branch}`)), wt = await worktreeOf(x.repo, c.branch);
@@ -96,13 +99,15 @@ async function planOne(x: Item, s: Store, sp: Space[], hook: Hook, file: string,
     const { mine, mixed } = wt ? spacesOf(sp, wt) : { mine: [], mixed: [] };
     const has = local ? await contentIn(x.repo, c.into, c.branch) : true, dirty = wt ? (await out(wt, ['status', '--porcelain']))?.split('\n').filter(Boolean).length ?? 0 : 0;
     const bad = wt === x.repo ? '레포 본 체크아웃에 꺼내져 있다 — 다른 브랜치로 바꾼 뒤'
-      : has === null ? `${c.into} 가 없다` : !has ? `${label(c.into)} 에 아직 없는 변경이 있다`
+      : c.what === '원본' && back ? back : has === null ? `${c.into} 가 없다` : !has ? `${label(c.into)} 에 아직 없는 변경이 있다`
       : dirty ? `커밋 안 한 파일 ${dirty}` : stash.some(l => l.startsWith(`WIP on ${c.branch}:`) || l.startsWith(`On ${c.branch}:`)) ? 'stash 가 남아 있다'
       : mine.find(m => m.busy) ? `워크스페이스 「${mine.find(m => m.busy)!.label}」 에서 일하는 중` : mixed[0] ? `워크스페이스 「${mixed[0].label}」 의 pane 일부가 이 워크트리에 있다 — 옮기거나 닫은 뒤` : '';
     targets.push({ what: c.what, branch: c.branch, local, ...(wt ? { worktree: wt } : {}), spaces: mine.map(m => ({ id: m.id, label: m.label })) });
     lines.push({ what: c.what, ref: c.branch, parts: [wt ? `워크트리 ${basename(wt)}` : '', ...mine.map(m => `워크스페이스 「${m.label}」`), local ? '로컬 브랜치' : ''].filter(Boolean).join(' · '),
       ok: !bad, check: bad || `코드 ${label(c.into)} 에 있음` });
   }
+  // 원본이 이 맥에 없어도(이미 치움) 되돌린 항목은 보관만으로도 넘기지 않는다
+  if (back && !targets.some(t => t.what === '원본')) lines.push({ what: '원본', ref: x.branch, ok: false, check: back });
   const runSpaces: CleanPlan['runSpaces'] = [];
   for (const e of ended) {
     const { mine, kept } = runSpacesOf(sp, e.panes);

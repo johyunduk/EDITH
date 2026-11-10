@@ -1,6 +1,7 @@
 // 코드가 어디까지 — 런 · 배포 항목의 코드가 어느 브랜치까지 들어갔나(배포 화면). 볼 브랜치는 엔진이 edith-repos.json 에 정한 것(also 들 → base 차례 — 예: origin/dev · origin/stage → origin/master).
 // 해시로만 보면 스쿼시 · 체리픽 · 다시 만든 머지로 들어간 것을 「없다」 고 하니, 레포 · 브랜치마다 앞에서부터 본다(걸리면 멈춘다):
 //   1. in      — 지금 HEAD 가 그 브랜치의 조상(커밋 그대로). 언제 = 그 브랜치에서 HEAD 를 처음 합친 머지(없으면 fast-forward — HEAD 시각)
+//      reverted — 조상이지만 뒤에서 되돌렸다(revert 커밋 · 손으로 원래대로). 바꾼 파일 중 되돌려진 것(k/n) · 되돌린 커밋(by) — 들어감이 아니다
 //   2. content — 딴 커밋(start)부터 HEAD 까지의 변경을 그 브랜치 트리에 거꾸로 적용해 본다(임시 인덱스 — 작업 트리 · 레포 인덱스는 안 건드린다). 다 된다
 //      partial — 바꾼 파일 중 몇 개만 된다(k/n · 안 된 파일)
 //   3. subject — 이 런의 커밋 제목이 그 브랜치 메시지에 있다(들어간 뒤 고쳐진 듯 — 사람이 확인)
@@ -12,7 +13,7 @@ import { sh } from './sh.ts';
 import { inside, readRefs, repoStatus } from './repos.ts';
 import { listRuns, loadRun, readActions, RUNS, type Run } from './runner.ts';
 
-export type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
+export type Reach = { ref: string; state: 'in' | 'reverted' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string; by?: string };
 
 const git = (cwd: string, args: string[], env?: NodeJS.ProcessEnv, input?: string | Buffer) =>
   sh('git', ['-C', cwd, ...args], { ok: true, timeoutMs: 20_000, ...(env ? { env } : {}), ...(input !== undefined ? { input } : {}) });
@@ -37,8 +38,36 @@ async function applies(path: string, start: string, head: string, ref: string, f
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
+// 되돌림 — 조상은 되돌린 뒤에도 조상이라, 그 브랜치 코드에서 이 변경을 빼 본다: HEAD 를 바탕으로 그 브랜치와 start(바꾸기 전)를 3-way 로 합쳐
+// 빼도 그대로인 파일 = 뺄 게 없었다 = 되돌려짐. 바뀌거나 충돌한 파일은 아직 있다(뒤에 같은 줄을 고침 · 이 변경이 만든 파일을 뒤에 고침 = 고침/지움 충돌).
+// 바꾼 파일이 그 브랜치에서 HEAD 와 같으면 merge-tree 없이 끝(대부분). --merge-base 가 없는 git(2.40 전)이면 보지 않는다(들어감으로)
+async function revertedIn(path: string, start: string, head: string, ref: string): Promise<Reach | null> {
+  const names = async (args: string[]) => ((await out(path, args)) ?? '').split('\0').filter(Boolean);
+  // at 에서 이 변경이 빠진 파일(fs 중) — 못 보면 null
+  const gone = async (at: string, fs: string[]) => {
+    const m = await git(path, ['merge-tree', '--write-tree', '--no-messages', '--name-only', '-z', `--merge-base=${head}`, at, start]);
+    if (m.code !== 0 && m.code !== 1) return null;
+    const [tree, ...conflicted] = m.stdout.split('\0').filter(Boolean), still = new Set([...conflicted, ...await names(['diff', '--name-only', '-z', at, tree, '--', ...fs])]);
+    return fs.filter(f => !still.has(f));
+  };
+  const files = await names(['diff', '--name-only', '-z', start, head]);
+  const changed = files.length ? await names(['diff', '--name-only', '-z', head, ref, '--', ...files]) : [];
+  const back = changed.length ? await gone(ref, changed) : null;
+  if (!back?.length) return null;
+  // 되돌린 커밋 — 들어간 뒤(HEAD 의 자손) 그 파일을 고친 커밋을 오래된 것부터 대 보고 처음으로 변경이 빠진 것.
+  // 마지막으로 고친 커밋을 쓰면 되돌림 뒤에 같은 파일 딴 곳을 고친 다른 안건 커밋이 나온다
+  // shortcut: 앞 30개만 대 본다 — 못 찾으면 커밋 없이 되돌려진 파일만 보인다
+  const cands = ((await out(path, ['log', '--ancestry-path', '--reverse', '--format=%H', `${head}..${ref}`, '--', ...back.slice(0, 50)])) ?? '').split('\n').filter(Boolean).slice(0, 30);
+  let c: string | undefined;
+  for (const x of cands) if ((await gone(x, back))?.length) { c = x; break; }
+  const [t, ...by] = c ? (await out(path, ['log', '-1', '--format=%ct %h %s', c]))?.split(' ') ?? [] : [];
+  return { ref, state: 'reverted', k: back.length, n: files.length, missing: back.slice(0, 50), ...(secs(t) ? { at: secs(t), by: by.join(' ').slice(0, 160) } : {}) };
+}
+
 async function compute(path: string, start: string, head: string, ref: string): Promise<Reach> {
   if ((await git(path, ['merge-base', '--is-ancestor', head, ref])).code === 0) {
+    const back = await revertedIn(path, start, head, ref);
+    if (back) return back;
     const m = (await out(path, ['log', '--ancestry-path', '--merges', '--reverse', '--format=%ct', `${head}..${ref}`]))?.split('\n')[0];
     return m ? { ref, state: 'in', at: secs(m), how: 'merge' } : { ref, state: 'in', at: secs(await out(path, ['log', '-1', '--format=%ct', head])), how: 'ff' };
   }

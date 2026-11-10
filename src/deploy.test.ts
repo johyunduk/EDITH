@@ -389,3 +389,20 @@ test('런 입력의 첫 http(s) 주소 — 카드 티켓 링크', () => {
   assert.equal(inputLink('javascript:alert(1) 없음'), undefined);
   assert.equal(inputLink('#16 다시'), undefined);
 });
+
+test('되돌린 환경 — 그 칸은 되돌려짐, 다시 올리기 · 다음 환경 올리기 · 머지 준비는 까닭을 대고 막는다', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature' }] }), r.file);
+    const id = loadStore(r.file).items[0].id;
+    await promote({ id, env: 'stage' }, r.file);
+    // 누가 origin 의 stage 에서 그 머지를 되돌렸다 — 브랜치 끝은 그대로 stage 의 조상
+    g('fetch', '-q', 'origin'); g('checkout', '-qB', 'stage', 'origin/stage'); g('revert', '--no-edit', '-m', '1', 'HEAD'); g('push', '-q', 'origin', 'stage'); g('checkout', '-q', 'master'); g('fetch', '-q', 'origin');
+    const st = (await deployView(r.file)).items[0].state!;
+    assert.deepEqual(st.envs.map(e => e.state), ['in', 'reverted', 'none']);
+    assert.match(st.envs[1].by!, /Revert "Merge branch 'feature' into stage"/);
+    await assert.rejects(promote({ id, env: 'stage' }, r.file), /stage 에서 되돌려졌다.*다시 합쳐도 안 바뀐다/);
+    await assert.rejects(promote({ id, env: 'prod' }, r.file), /stage 에서 되돌려졌다/);
+    await assert.rejects(prepareMerge({ id, env: 'prod' }, r.file, async () => { throw new Error('Claude 를 부르면 안 된다'); }), /stage 에서 되돌려졌다/);
+  } finally { r.done(); }
+});

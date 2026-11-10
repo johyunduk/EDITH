@@ -101,6 +101,9 @@ export const git = (repo: string, args: string[], timeoutMs = 20_000) => sh('git
 export const out = async (repo: string, args: string[]) => { const r = await git(repo, args); return r.code === 0 ? r.stdout.trim() : null; };
 export const commit = (repo: string, ref: string) => out(repo, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
 export const reached = (r?: Reach) => r?.state === 'in' || r?.state === 'content';
+// 되돌린 칸 — 브랜치는 이미 그 환경의 조상이라 다시 합쳐도 빈 머지만 나간다. 되돌림을 되돌리는 커밋이 브랜치에 있어야 다시 나간다
+const backOf = (name: string, env: string, r: Reach) =>
+  `${name} — ${env} 에서 되돌려졌다${r.by ? `(${r.by})` : ''} — 다시 합쳐도 안 바뀐다. 다시 내보내려면 브랜치에 그 되돌림을 되돌리는 커밋(git revert)부터`;
 
 // 브랜치 끝 — 이 맥의 브랜치, 없으면 origin 의 것(워크트리를 지운 뒤에도 원격에 남은 브랜치)
 async function tipOf(x: Item) {
@@ -432,8 +435,9 @@ async function planOne(x: Item, s: Store, i: number, after?: { c: string; name: 
   if (st.dirty) return { x, name, bad: `${name} — 워크트리에 커밋 안 한 변경 ${st.dirty}개` };
   if (st.behind) return { x, name, bad: `${name} — origin/${x.branch} 에 이 맥에 없는 커밋 ${st.behind}개 — 받은 뒤 다시` };
   if (st.envs[1]?.state === 'missing') return { x, name, skip: `${name} — ${env.ref} 가 없는 레포라 건너뜀` };
+  if (st.envs[1]?.state === 'reverted') return { x, name, bad: backOf(name, env.name, st.envs[1]) };
   if (reached(st.envs[1])) return { x, name, skip: `${name} — 이미 ${env.name} 에 있다` };
-  if (!reached(st.envs[0])) return { x, name, bad: `${name} — 아직 ${prev.name} 에 다 들어가지 않았다` };
+  if (!reached(st.envs[0])) return { x, name, bad: st.envs[0]?.state === 'reverted' ? backOf(name, prev.name, st.envs[0]) : `${name} — 아직 ${prev.name} 에 다 들어가지 않았다` };
   let into = (await commit(x.repo, env.ref))!, conflicts = await conflictsOf(x.repo, into, st.tip!);
   if (conflicts === null) return { x, name, bad: `${name} — ${env.ref} 와 합쳐 보지 못했다` };
   let c: string | null | undefined;
@@ -536,7 +540,8 @@ export async function prepareMerge(b: { id?: unknown; env?: unknown }, file = DE
   const st = await stateOf(x, [prev, env], s.envs.at(-1)!.ref);
   if (st.error) throw new Error(`${name} — ${st.error}`);
   if (st.behind) throw new Error(`${name} — origin/${x.branch} 에 이 맥에 없는 커밋 ${st.behind}개 — 받은 뒤 다시`);
-  if (!reached(st.envs[0])) throw new Error(`${name} — 아직 ${prev.name} 에 다 들어가지 않았다`);
+  if (!reached(st.envs[0])) throw new Error(st.envs[0]?.state === 'reverted' ? backOf(name, prev.name, st.envs[0]) : `${name} — 아직 ${prev.name} 에 다 들어가지 않았다`);
+  if (st.envs[1]?.state === 'reverted') throw new Error(backOf(name, env.name, st.envs[1]));
   if (reached(st.envs[1])) throw new Error(`${name} — 이미 ${env.name} 에 있다`);
   if (await prepared(x, env, st.tip!)) return { ok: true, text: `이미 준비됐다 — ${mb} 에 다 들어 있다. 「${env.name} 에 올리기」` };
   const held = await mergeTree(x.repo, mb), wt = held ?? join(st.worktree ? dirname(st.worktree) : join(DATA_DIR, 'merges', basename(x.repo)), `${x.branch.split('/').pop()}-${env.name}-merge`);

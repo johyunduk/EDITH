@@ -15,7 +15,7 @@ import { byTurn } from './deployOrder.ts';
 import { runNo } from './runFlow.ts';
 import { DiffView } from './Diff.tsx';
 
-type Reach = { ref: string; state: 'in' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string };
+type Reach = { ref: string; state: 'in' | 'reverted' | 'content' | 'partial' | 'subject' | 'none' | 'missing'; at?: number; how?: 'merge' | 'ff'; k?: number; n?: number; missing?: string[]; subject?: string; by?: string };
 type EnvState = Reach & { name: string; conflicts?: number; files?: string[]; prep?: { branch: string; ready: boolean; merging?: string } };   // prep — 그 환경 머지 브랜치(서버 deployBoard)
 type ItemState = { tip?: string; remote?: boolean; pushed?: boolean; worktree?: string; dirty?: number; behind?: number; stale?: boolean; empty?: boolean; envs: EnvState[]; error?: string };   // empty — 등록 뒤 커밋 없음
 type Action = { n: number; label: string; reach: string; command: string; hint?: string; ask?: string; danger?: boolean; copy?: boolean; flow?: string; row?: boolean; wait?: string };   // row — 레포 줄마다(그 줄 레포만), wait — 아직 누를 때가 아니면 그 까닭(서버 markWait)
@@ -53,7 +53,7 @@ const reached = (r?: Reach) => r?.state === 'in' || r?.state === 'content';
 function partners(x: Item, i: number, groups: Group[]) {
   return groups.filter(g => !g.deferred).flatMap(g => g.items.filter(y => y.id !== x.id && y.repo === x.repo && !y.done).flatMap(y => {
     const e = y.state?.envs[i];
-    return i > 0 && e && e.state !== 'missing' && !reached(e) ? [{ y, g, ok: reached(y.state!.envs[i - 1]) }] : [];
+    return i > 0 && e && e.state !== 'missing' && e.state !== 'reverted' && !reached(e) ? [{ y, g, ok: reached(y.state!.envs[i - 1]) }] : [];
   }));
 }
 const TICKET = /\b[A-Z][A-Z0-9]+-\d+\b/g;
@@ -92,9 +92,9 @@ function groupsOf(items: Item[]): Group[] {
 }
 
 // ── 단계 — 처음 안 끝난 칸이 「지금 차례」(빛나는 고리). 런이 그 브랜치에서 도는 동안은 맨 앞 「작업」 칸이 하는 중이라 차례를 매기지 않는다 ──
-type SState = 'done' | 'partial' | 'check' | 'next' | 'todo' | 'work';
+type SState = 'done' | 'reverted' | 'partial' | 'check' | 'next' | 'todo' | 'work';
 type Step = { key: string; name: string; state: SState; reach?: Reach; note?: string; act?: boolean; conflicts?: number; ready?: boolean; env?: string; last?: boolean; todo?: string };   // todo — 그 환경 남은 배포 조치
-const envState = (e: Reach): SState => reached(e) ? 'done' : e.state === 'partial' ? 'partial' : e.state === 'subject' ? 'check' : 'todo';
+const envState = (e: Reach): SState => reached(e) ? 'done' : e.state === 'reverted' ? 'reverted' : e.state === 'partial' ? 'partial' : e.state === 'subject' ? 'check' : 'todo';
 function mark(all: Step[]) {
   if (all.some(s => s.state === 'work')) return all;
   const i = all.findIndex(s => s.state !== 'done');
@@ -137,7 +137,8 @@ function looseSteps(x: RepoReach, r: RunLink): Step[] {
   ]);
 }
 // 런 단추가 그 칸에 맞나 — reach "base" 는 레포마다 이름이 다른 기본 브랜치(마지막) 칸
-const fits = (a: Action, s: Step) => s.act === true && (a.reach === s.key || (a.reach === 'base' && !!s.last));
+// 되돌린 칸에는 런 단추를 안 놓는다 — 다시 합쳐도 안 바뀐다
+const fits = (a: Action, s: Step) => s.act === true && s.state !== 'reverted' && (a.reach === s.key || (a.reach === 'base' && !!s.last));
 // 단추의 브랜치 흐름 — actions.json "flow"(줄마다 하나)의 {branch}(원본) · {issue}(이슈 브랜치) · {tail}(원본 끝 토막)을 그 줄 브랜치로 채운다
 const withFlow = (a: Action, branch: string, issue?: string): Action =>
   a.flow ? { ...a, flow: a.flow.replace(/\{(branch|issue|tail)\}/g, (_, k: string) => k === 'issue' ? issue ?? branch : k === 'tail' ? branch.split('/').pop() ?? branch : branch) } : a;
@@ -229,10 +230,10 @@ export function DeployPage() {
   const stepsOf = (g: Group) => [...g.items.flatMap(x => itemSteps(x, v.envs)), ...g.items.flatMap(x => (x.runs ?? []).filter(r => r.issue).flatMap(issueSteps))];
   const flags = (g: Group) => {
     const ss = stepsOf(g), last = v.envs.at(-1)!;
-    return { next: ss.some(s => s.state === 'next'), work: g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done')), check: ss.some(s => s.state === 'partial' || s.state === 'check') || g.items.some(x => (x.runs ?? []).some(r => r.now?.includes('사람 확인'))),
+    return { next: ss.some(s => s.state === 'next'), work: g.items.some(x => (x.runs ?? []).some(r => r.state !== 'done')), check: ss.some(s => s.state === 'partial' || s.state === 'check' || s.state === 'reverted') || g.items.some(x => (x.runs ?? []).some(r => r.now?.includes('사람 확인'))),
       clean: flagsClean(g, v) };
   };
-  const looseFlags = (e: Board['extra'][number]) => { const ss = e.repos.flatMap(x => looseSteps(x, e.run)); return { next: ss.some(s => s.state === 'next'), work: e.run.state !== 'done', check: ss.some(s => s.state === 'partial' || s.state === 'check'), clean: false }; };
+  const looseFlags = (e: Board['extra'][number]) => { const ss = e.repos.flatMap(x => looseSteps(x, e.run)); return { next: ss.some(s => s.state === 'next'), work: e.run.state !== 'done', check: ss.some(s => s.state === 'partial' || s.state === 'check' || s.state === 'reverted'), clean: false }; };
   const needle = find.trim().toLowerCase();
   const hit = (xs: string[]) => !needle || xs.some(s => s.toLowerCase().includes(needle));
   const pass = (f: ReturnType<typeof flags>) => filter === 'all' || f[filter];
@@ -347,7 +348,7 @@ function Card({ g, v, all, send, onPanel, onPick, onPush, onFiles, onClean }: { 
   // 가운데 환경(stage) 단추 — 레포 줄마다(사용자 결정 2026-10-26). 충돌이 있으면 「stage 머지 준비」(머지 브랜치에서 Claude 가 푼다) → 「stage 에 올리기」(푼 머지 커밋을 올린다)
   const promote = (x: Item) => (s: Step) => {
     const i = v.envs.findIndex(e => e.name === s.env), e = x.state?.envs[i];
-    if (!s.act || i <= 0 || !e) return null;
+    if (!s.act || i <= 0 || !e || s.state === 'reverted') return null;   // 되돌린 칸 — 다시 올려도 빈 머지뿐(서버도 막는다)
     const prod = i === v.envs.length - 1;   // 운영 — 누르면 파이프라인이 바로 돈다(확인 창이 서버 strictCheck 를 보인다)
     const env = s.env!, ref = v.envs[i].ref, clash = e.conflicts ?? 0, p = e.prep, ready = !!p?.ready, glow = { boxShadow: `0 4px 12px ${mix(30)}` }, pair = partners(x, i, all).filter(q => q.ok);
     return (
@@ -474,7 +475,7 @@ function Row({ name, branch, label, runs, error, sub, onDiff, children }: { name
 
 // 단계 선 — 칸마다 노드 · 이름 · 한 줄, 지금 차례 칸에 단추. 칸 사이 선은 다음 칸 상태 색(끝남 실선 · 하는 중 하늘 · 아니면 점선)
 function Track({ steps, acts, extra, onPick, name, onFiles }: { steps: Step[]; acts: (s: Step) => Pick[]; extra?: (s: Step) => ReactNode; onPick: (p: Pick) => void; name: string; onFiles: (x: { title: string; list: string[] }) => void }) {
-  const line = (s?: Step) => !s ? '' : s.state === 'done' ? 'border-primary border-solid' : s.state === 'work' ? 'border-sky-500 border-solid' : s.state === 'partial' ? 'border-amber-500 border-solid' : s.state === 'check' ? 'border-blue-500 border-solid' : 'border-border border-dashed';
+  const line = (s?: Step) => !s ? '' : s.state === 'done' ? 'border-primary border-solid' : s.state === 'reverted' ? 'border-rose-500 border-solid' : s.state === 'work' ? 'border-sky-500 border-solid' : s.state === 'partial' ? 'border-amber-500 border-solid' : s.state === 'check' ? 'border-blue-500 border-solid' : 'border-border border-dashed';
   if (!steps.length) return <span className="text-sm text-muted-foreground">상태를 읽는 중…</span>;
   return (
     <ol aria-label="단계" className="grid min-w-0 flex-[999_1_32rem]" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
@@ -485,7 +486,7 @@ function Track({ steps, acts, extra, onPick, name, onFiles }: { steps: Step[]; a
             {i < steps.length - 1 && <span className={`absolute top-1/2 right-0 left-1/2 border-t-2 ${line(steps[i + 1])}`} />}
             <Node s={s} />
           </div>
-          <span className={`font-mono text-[0.6875rem] tracking-[0.14em] uppercase ${s.state === 'next' ? 'font-bold text-primary' : s.state === 'work' ? 'font-bold text-sky-700 dark:text-sky-300' : s.state === 'partial' ? 'font-bold text-amber-700 dark:text-amber-400' : s.state === 'check' ? 'font-bold text-blue-700 dark:text-blue-400' : s.state === 'todo' ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>{s.name}</span>
+          <span className={`font-mono text-[0.6875rem] tracking-[0.14em] uppercase ${s.state === 'next' ? 'font-bold text-primary' : s.state === 'work' ? 'font-bold text-sky-700 dark:text-sky-300' : s.state === 'reverted' ? 'font-bold text-rose-700 dark:text-rose-400' : s.state === 'partial' ? 'font-bold text-amber-700 dark:text-amber-400' : s.state === 'check' ? 'font-bold text-blue-700 dark:text-blue-400' : s.state === 'todo' ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>{s.name}</span>
           <Note s={s} name={name} onFiles={onFiles} />
           {s.todo && <span className="rounded-full bg-amber-500/12 px-2 text-[0.6875rem] leading-5 font-semibold text-amber-800 dark:text-amber-300">{s.todo}</span>}
           {acts(s).map(p => <RunButton key={`${p.run.id}:${p.action.n}`} p={p} onPick={onPick} />)}
@@ -515,11 +516,13 @@ function RunButton({ p, onPick, small }: { p: Pick; onPick: (p: Pick) => void; s
 }
 
 const CHECK = <svg aria-hidden="true" viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4.5 4.5L19 7" /></svg>;
+const UNDO = <svg aria-hidden="true" viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>;   // lucide rotate-ccw — 되돌려짐
 function Node({ s }: { s: Step }) {
-  const say = { done: '끝남', partial: '일부', check: '확인 필요', next: '지금 차례', todo: '아직', work: '런이 하는 중' }[s.state];
+  const say = { done: '끝남', reverted: '되돌려짐', partial: '일부', check: '확인 필요', next: '지금 차례', todo: '아직', work: '런이 하는 중' }[s.state];
   const base = 'relative grid place-items-center rounded-full';
   if (s.state === 'done') return <span role="img" aria-label={`${s.name} ${say}`} className={`${base} size-5 bg-primary text-primary-foreground`}>{CHECK}</span>;
   if (s.state === 'work') return <span role="img" aria-label={`${s.name} ${say}`} className={`${base} size-5 animate-pulse border-2 border-sky-500 bg-card motion-reduce:animate-none`} style={{ boxShadow: '0 0 0 4px rgb(14 165 233 / 0.2)' }} />;
+  if (s.state === 'reverted') return <span role="img" aria-label={`${s.name} ${say}`} className={`${base} size-5 border-2 border-rose-500 bg-card text-rose-600 dark:text-rose-400`} style={{ boxShadow: '0 0 0 5px rgb(244 63 94 / 0.18)' }}>{UNDO}</span>;
   if (s.state === 'partial') return <span role="img" aria-label={`${s.name} ${say}`} className={`${base} size-5 border-2 border-amber-500`} style={{ background: 'linear-gradient(90deg, rgb(245 158 11) 50%, var(--card) 50%)' }} />;
   if (s.state === 'check') return <span role="img" aria-label={`${s.name} ${say}`} className={`${base} size-5 border-2 border-blue-500 bg-card text-[0.6875rem] font-bold text-blue-600`}>?</span>;
   if (s.state === 'next') return <span role="img" aria-label={`${s.name} ${say}`} className={`${base} size-5 border-2 border-primary bg-card`} style={{ boxShadow: `0 0 0 5px ${mix(18)}, 0 0 14px ${mix(45)}` }} />;
@@ -532,6 +535,14 @@ function Note({ s, name, onFiles }: { s: Step; name: string; onFiles: (x: { titl
   if (!e) return s.note ? <span className={`${cls} ${s.state === 'next' ? '' : 'text-muted-foreground'}`}>{s.note}</span> : null;
   if (e.state === 'in') return <span className={`${cls} text-muted-foreground`}>{s.key === 'via' ? '합침' : e.how === 'ff' ? 'fast-forward' : '머지'} · {at(e.at)}</span>;
   if (e.state === 'content') return <span className={`${cls} text-muted-foreground`} title="커밋 해시는 없지만 변경이 다 들어 있다(스쿼시 · 체리픽 · 다시 만든 머지)">내용 일치 · {at(e.at)}</span>;
+  if (e.state === 'reverted') {
+    // 되돌린 커밋 창 — 「빠진 파일」 과 같은 창에 커밋 한 줄 · 되돌려진 파일
+    const files = () => onFiles({ title: `${e.by ? '되돌린 커밋' : '되돌려진 파일'} — ${name}`, list: [...(e.by ? [`${at(e.at)} · ${e.by}`] : []), ...(e.missing ?? []).map(f => `↺ ${f}`)] });
+    return <>
+      <span className={`${cls} text-rose-800 dark:text-rose-300`} title="브랜치 커밋은 그대로 들어 있지만 뒤에서 되돌렸다 — 다시 올려도 안 바뀐다. 다시 내보내려면 브랜치에 그 되돌림을 되돌리는 커밋(git revert)부터">{e.k! < e.n! ? `${e.n}개 중 ${e.k}개 되돌려짐` : `되돌려짐${e.at ? ` · ${at(e.at)}` : ''}`}</span>
+      <button type="button" className={`${cls} text-rose-800 underline-offset-2 hover:underline dark:text-rose-300`} onClick={files}>{e.by ? '되돌린 커밋' : '되돌려진 파일'} ›</button>
+    </>;
+  }
   if (e.state === 'partial') return <span className={`${cls} text-amber-800 dark:text-amber-300`}>{e.n}개 중 {e.k}개 · <button type="button" className="underline-offset-2 hover:underline" onClick={() => onFiles({ title: `빠진 파일 — ${name}`, list: e.missing ?? [] })}>빠진 파일</button></span>;
   if (e.state === 'subject') return <span className={`${cls} text-blue-800 dark:text-blue-300`} title={`같은 제목 커밋 「${e.subject}」 이 있는데 변경이 그대로는 맞지 않는다 — 들어간 뒤 고쳐졌을 수 있다`}>제목만 같음 · {at(e.at)}</span>;
   if (s.conflicts) return s.ready ? <span className={`${cls} text-muted-foreground`}>충돌 {s.conflicts}곳 · 풀어 둠</span> : <span className={`${cls} text-amber-800 dark:text-amber-300`}>충돌 {s.conflicts}곳</span>;

@@ -195,3 +195,19 @@ test('고치기 — 훅이 단추(fix)를 단 걸린 줄만, 그 줄을 fix 모�
     assert.equal(cleanState(id).fixes?.[`${id}\na.notes`]?.text, '도우미에게 맡겼다');
   } finally { r.done(); }
 });
+
+test('운영에서 되돌린 원본 — 브랜치가 운영의 조상이어도 정리하지 않는다(원본이 이 맥에 없어도)', async () => {
+  const r = repo(), g = (...a: string[]) => execFileSync('git', ['-C', r.r, ...a], { encoding: 'utf8' }).trim();
+  try {
+    await importItems(JSON.stringify({ items: [{ repo: r.r, branch: 'feature', tag: '기능', start: g('rev-parse', 'feature~1') }] }), r.file);
+    const [feat] = loadStore(r.file).items.map(x => x.id), ws = async (): Promise<Space[]> => [];
+    g('revert', '--no-edit', '-m', '1', g('log', '-1', '--format=%H', '--grep=feature → master', 'master')); g('push', '-q', 'origin', 'master', 'feature');
+    let [p] = await cleanPlan({ ids: [feat] }, r.file, ws, null);
+    assert.equal(p.ok, false);
+    assert.match(p.lines.find(l => l.what === '원본')!.check, /^master 에서 되돌려졌다 · [0-9a-f]+ Revert "feature → master"$/);
+    // 워크트리 · 로컬 브랜치를 이미 치웠어도(origin 에만) 보관만으로 넘기지 않는다
+    g('worktree', 'remove', r.wt); g('branch', '-D', 'feature');
+    [p] = await cleanPlan({ ids: [feat] }, r.file, ws, null);
+    assert.deepEqual([p.ok, p.lines.filter(l => !l.ok).map(l => [l.what, l.ref])], [false, [['원본', 'feature']]]);
+  } finally { r.done(); }
+});
