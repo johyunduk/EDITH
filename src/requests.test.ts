@@ -42,3 +42,17 @@ test('요청 meta — 객체 4KB 까지만 런으로 넘기고, 거절 사유는
     assert.equal(requestStatus('m1', root)?.reason, '이번 주는 안 한다');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('추가 요청 — 붙일 런은 양의 정수만, 첨부 이름은 글만 20개까지, 붙이면 목록에서 빠진다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'edith-req-'));
+  try {
+    writeFileSync(join(root, 'amend-1.json'), JSON.stringify({ engine: 'dev', input: '모션 그래픽 적용하기', run: 46, files: ['a.md', 3, ' ', 'b.html'] }));
+    writeFileSync(join(root, 'amend-2.json'), JSON.stringify({ engine: 'dev', run: '46', files: 'a.md' }));
+    writeFileSync(join(root, 'amend-3.json'), JSON.stringify({ engine: 'dev', run: -1, files: Array.from({ length: 30 }, (_, i) => `f${i}`) }));
+    assert.deepEqual(['amend-1', 'amend-2', 'amend-3'].map(id => [readRequest(id, root)?.run, readRequest(id, root)?.files?.length]), [[46, 2], [undefined, undefined], [undefined, 20]]);
+    assert.deepEqual(readRequest('amend-1', root)?.files, ['a.md', 'b.html']);
+    answerRequest('amend-1', { state: 'attached', run: 46 }, root);
+    assert.deepEqual(listRequests(root).map(r => r.id).sort(), ['amend-2', 'amend-3']);
+    assert.equal(requestStatus('amend-1', root)?.state, 'attached');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -3,8 +3,9 @@
 // EDITH 는 답을 <id>.answer.json 에 쓴다 — 요청 쪽은 그 파일이나 `edith request <id>`(읽기만)로 진행을 본다. 열쇠는 오가지 않는다.
 // 요청 꼴: {"engine": "<공방 폴더>", "input": "<런 입력>", "from"?: "<요청자>", "room"?: "<방>", "cwd"?: "<작업 폴더>", "branch"?: "<새 워크트리 브랜치>", "unattended"?: true(무인 런 — 칸에 체크만 해 두고, 시작은 사람이),
 //  "title"?: "<카드에 보일 제목 — 없으면 입력 첫 줄>", "tag"?: "<짧은 꼬리표 — 예: 티켓 번호>", "parent"?: {"tag"?, "title"?}(이 요청이 속한 더 큰 일 — 예: 이슈의 상위 안건, 카드에 한 줄),
-//  "meta"?: {<요청 쪽이 런까지 넘길 것 — 4KB 까지 · EDITH 는 보지 않고 런 작업 문서 edith-request.json 에 그대로 둔다>}}
-// 답할 때(열어서 시작 · 거절) 엔진에 on: "request" 명령이 있으면 돈다(src/runner.ts requestHook) — 요청 쪽에 알리는 것은 엔진 몫
+//  "meta"?: {<요청 쪽이 런까지 넘길 것 — 4KB 까지 · EDITH 는 보지 않고 런 작업 문서 edith-request.json 에 그대로 둔다>},
+//  "run"?: <런 번호>(새 런이 아니라 도는 이 런에 붙일 추가 요청 — 화면은 호박색 「추가 요청」 상자에 「런에 붙이기」 · 「거절」), "files"?: ["<첨부 이름>"](카드에 보이기만)}
+// 답할 때(열어서 시작 · 거절 · 런에 붙이기) 엔진에 on: "request" 명령이 있으면 돈다(src/runner.ts requestHook) — 요청 쪽에 알리는 것 · 런에 실제로 붙이는 것은 엔진 몫
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR } from './config.ts';
@@ -12,8 +13,8 @@ import { listRuns } from './runner.ts';
 
 export const REQUESTS = join(DATA_DIR, 'requests');
 export const REQ_ID = /^[A-Za-z0-9_-]{1,64}$/;
-export type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; meta?: Record<string, unknown>; at: number };
-type Answer = { state: 'started' | 'rejected'; run?: number; reason?: string; at: number };
+export type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; meta?: Record<string, unknown>; run?: number; files?: string[]; at: number };
+type Answer = { state: 'started' | 'rejected' | 'attached'; run?: number; reason?: string; at: number };
 
 const str = (v: unknown, n: number) => typeof v === 'string' && v.trim() ? v.slice(0, n) : undefined;
 function readJson(f: string) { try { return JSON.parse(readFileSync(f, 'utf8')) as Record<string, unknown>; } catch { return null; } }
@@ -23,8 +24,10 @@ export function readRequest(id: string, root = REQUESTS): Req | null {
   if (!o || typeof o.engine !== 'string') return null;
   const meta = o.meta && typeof o.meta === 'object' && !Array.isArray(o.meta) && JSON.stringify(o.meta).length <= 4096 ? o.meta as Record<string, unknown> : undefined;
   const p = (o.parent ?? {}) as Record<string, unknown>, parent = { tag: str(p.tag, 60), title: str(p.title, 200) };
+  const files = Array.isArray(o.files) ? o.files.flatMap(x => str(x, 200) ?? []).slice(0, 20) : [];
   return { id, engine: o.engine.slice(0, 64), input: str(o.input, 4000) ?? '', title: str(o.title, 200), tag: str(o.tag, 60), from: str(o.from, 200), room: str(o.room, 200), cwd: str(o.cwd, 1000), branch: str(o.branch, 200),
-    ...(o.unattended === true ? { unattended: true } : {}), ...(parent.tag || parent.title ? { parent } : {}), ...(meta ? { meta } : {}), at: statSync(f).mtimeMs };
+    ...(o.unattended === true ? { unattended: true } : {}), ...(parent.tag || parent.title ? { parent } : {}), ...(meta ? { meta } : {}),
+    ...(Number.isInteger(o.run) && (o.run as number) > 0 ? { run: o.run as number } : {}), ...(files.length ? { files } : {}), at: statSync(f).mtimeMs };
 }
 const answerOf = (id: string, root: string) => readJson(join(root, `${id}.answer.json`)) as Answer | null;
 // 아직 답하지 않은 요청 — 오래된 것부터

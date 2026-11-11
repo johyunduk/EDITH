@@ -14,11 +14,11 @@ import { runNo } from './runFlow.ts';
 
 type Work = { name: string; path: string; branch?: string; asks: number; commits: { id: string; msg: string }[]; line: string };
 type Brief = { from: string | null; last: string | null; works: Work[]; runs: { id: number; name: string; state: string }[] };
-type Req = { id: string; engine: string; input: string; title?: string; from?: string };
+type Req = { id: string; engine: string; input: string; title?: string; from?: string; run?: number };
 type Deploy = { items: { tag?: string; ticket?: string; agenda?: string; branch: string; done?: string; deferred?: boolean; tasks: { done: boolean }[] }[] };
 type Ai = { made: number; did: Record<string, string>; todos: { path: string; text: string }[] };
 type TodoState = { date: string; items: { id: string; text: string; since: string }[]; checks: string[] };
-type Todo = { id: string; text: string; tag: '대기' | '배포' | '요청' | '하다 만' | '이어 옴' | '직접'; note?: string; act?: { label: string; href: string } };
+type Todo = { id: string; text: string; tag: '대기' | '배포' | '요청' | '노크' | '하다 만' | '이어 옴' | '직접'; note?: string; act?: { label: string; href: string } };
 
 const OLD = 4;   // 이만큼 일째를 넘으면(사흘 넘게 이어 오면) 「오래된 것」 으로 접는다
 const RUN_STATE: Record<string, string> = { done: '끝', check: '확인 필요', running: '도는 중', stopped: '멈춤', queued: '대기 줄' };
@@ -72,7 +72,9 @@ export function TodayPage() {
   const todos: Todo[] = [
     ...blocked.map(p => ({ id: `pane:${p.id}`, text: `${herdr?.workspaces.find(w => w.workspace_id === p.workspace)?.label ?? ''} · ${paneText(p)} — 승인을 기다린다`, tag: '대기' as const, act: { label: '열기', href: `#/herdr/${p.id}` } })),
     ...left.map(({ tag, n }) => ({ id: `dep:${tag}`, text: `${tag} — 배포 조치 ${n}개 남음`, tag: '배포' as const, act: { label: '배포', href: '#/deploy' } })),
-    ...reqs.map(r => ({ id: `req:${r.id}`, text: `요청 ${r.title || r.input.split('\n')[0] || r.engine} — 런으로 시작하거나 거절`, tag: '요청' as const, ...(r.from ? { note: r.from } : {}), act: { label: '열기', href: '#/runs' } })),
+    ...reqs.map(r => r.run
+      ? { id: `req:${r.id}`, text: `추가 요청 런 #${r.run} — ${r.title || r.input.split('\n')[0]} — 런에 붙이거나 거절`, tag: '노크' as const, ...(r.from ? { note: r.from } : {}), act: { label: '보기', href: '#/runs' } }
+      : { id: `req:${r.id}`, text: `요청 ${r.title || r.input.split('\n')[0] || r.engine} — 런으로 시작하거나 거절`, tag: '요청' as const, ...(r.from ? { note: r.from } : {}), act: { label: '열기', href: '#/runs' } }),
     ...(ai.data?.todos ?? []).filter(t => !items.some(i => i.text === t.text)).map(t => ({ id: `ai:${t.text}`, text: t.text, tag: '하다 만' as const, note: works.find(w => w.path === t.path)?.name })),
     ...items.filter(i => i.days > 1 && i.days <= OLD).map(i => ({ id: i.id, text: i.text, tag: '이어 옴' as const, note: `${i.days}일째` })),
     ...items.filter(i => i.days === 1).map(i => ({ id: i.id, text: i.text, tag: '직접' as const })),
@@ -168,8 +170,8 @@ export function TodayPage() {
                       <span className={`line-clamp-2 min-w-0 text-sm ${d ? 'text-muted-foreground line-through' : now ? 'font-semibold' : ''}`}>{t.text}</span>
                     </button>
                     {t.note && <span className="shrink-0 text-[0.78rem] whitespace-nowrap text-muted-foreground">{t.note}</span>}
-                    <span className="shrink-0 rounded border px-1.5 font-mono text-[0.6875rem] leading-5 whitespace-nowrap text-primary">{t.tag}</span>
-                    <span className="w-11 shrink-0 text-right">{t.act && <a href={t.act.href} className="text-[0.8125rem] font-semibold whitespace-nowrap text-primary hover:underline">{t.act.label} ›</a>}</span>
+                    <span className={`shrink-0 rounded border px-1.5 font-mono text-[0.6875rem] leading-5 whitespace-nowrap ${t.tag === '노크' ? 'border-amber-500/50 text-amber-700 dark:text-amber-400' : 'text-primary'}`}>{t.tag}</span>
+                    <span className="w-11 shrink-0 text-right">{t.act && <a href={t.act.href} className={`text-[0.8125rem] font-semibold whitespace-nowrap hover:underline ${t.tag === '노크' ? 'text-amber-700 dark:text-amber-400' : 'text-primary'}`}>{t.act.label} ›</a>}</span>
                   </li>
                 );
               })}

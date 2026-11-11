@@ -284,6 +284,18 @@ export function serve(port: number) {
           return reply(res, 200, { ok: true });
         } catch (e) { return fail(e); }
       }
+      // 추가 요청을 그 런에 붙이기 — EDITH 는 답(attached)만 쓰고, 런에 실제로 넣는 것은 엔진의 요청 훅(EDITH_REQUEST_STATE=attached)
+      const rat = path.match(/^\/api\/requests\/([^/]+)\/attach$/);
+      if (rat && REQ_ID.test(rat[1]) && req.method === 'POST') {
+        try {
+          const asked = readRequest(rat[1]), run = asked?.run ? loadRun(asked.run) : null;
+          if (!asked?.run) throw new Error('붙일 런이 없는 요청이다');
+          if (!run || run.state === 'done' || run.state === 'stopped') throw new Error(`런 #${asked.run} 이 없거나 끝났다 — 붙일 수 없다(거절하고 새 런으로)`);
+          answerRequest(rat[1], { state: 'attached', run: asked.run });
+          requestHook(asked.engine, { EDITH_REQUEST_FILE: join(REQUESTS, `${asked.id}.json`), EDITH_REQUEST_STATE: 'attached', EDITH_REQUEST_RUN: String(asked.run), EDITH_REQUEST_REASON: '' }, join(REQUESTS, `${asked.id}.hook.log`));
+          return reply(res, 200, { ok: true });
+        } catch (e) { return fail(e); }
+      }
       // 런 단추 기록(최근 5개, code null 이면 도는 중) — 배포 화면이 단추를 누른 뒤 끝났는지만 가볍게 본다
       const rac = path.match(/^\/api\/runs\/(\d{1,6})\/acted$/);
       if (rac && req.method === 'GET') return reply(res, 200, acted(Number(rac[1])).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) })));   // repo — 레포 줄 단추(화면이 레포마다 막는다)

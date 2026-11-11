@@ -44,7 +44,7 @@ type Summary = {
 };
 type Workdir = { kind: 'ask' } | { kind: 'fixed'; dir: string } | { kind: 'worktree'; repo: string; base?: string };
 type Item = { id: number; name: string; engine: string; state: RunState; reason?: string; created: number; total: number; done: number; tag?: string; title?: string; agenda?: string; scheduled?: { at: string } };
-type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; at: number };
+type Req = { id: string; engine: string; input: string; title?: string; tag?: string; from?: string; room?: string; cwd?: string; branch?: string; unattended?: boolean; parent?: { tag?: string; title?: string }; run?: number; files?: string[]; at: number };
 
 const RUN_LABEL: Record<RunState, string> = { queued: '대기', running: '도는 중', check: '확인 필요', stopped: '멈춤', done: '끝', dropped: '버림' };
 const RUN_TONE: Record<RunState, string> = {
@@ -250,15 +250,27 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
   // 엔진 이름(id 대신) — 새 런 칸과 같은 목록
   const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { id: string; name: string }[] }>('/api/workshop') });
   if (!q.data?.length) return null;
+  // 추가 요청(run 이 있는 요청) — 새 런이 아니라 도는 런에 붙인다. 옛 울트론 노크 색(호박)으로 따로 묶는다(마크 2026-11-11 시안 1)
+  const asks = q.data.filter(r => !r.run), amends = q.data.filter(r => r.run);
   const nameOf = (id: string) => engines.data?.engines.find(e => e.id === id)?.name ?? id;
-  const reject = (r: Req) => post(`/api/requests/${r.id}/reject`, { reason: why }).then(() => { setNo(null); setWhy(''); return qc.invalidateQueries({ queryKey: ['requests'] }); }, (e: Error) => toast(`하지 못했다 — ${e.message}`, 5000));
-  return (
-    <div className="mb-2 space-y-1 rounded-lg border border-sky-500/40 bg-sky-500/5 p-1.5">
+  const done = () => { setNo(null); setWhy(''); return qc.invalidateQueries({ queryKey: ['requests'] }); };
+  const reject = (r: Req) => post(`/api/requests/${r.id}/reject`, { reason: why }).then(done, (e: Error) => toast(`하지 못했다 — ${e.message}`, 5000));
+  const attach = (r: Req) => post(`/api/requests/${r.id}/attach`, {}).then(() => { toast(`런 #${r.run} 에 붙였다 — 지금 단계를 마치고 반영한다`, 4000); return done(); }, (e: Error) => toast(`붙이지 못했다 — ${e.message}`, 6000));
+  const rejectForm = (r: Req) => (
+    <form onSubmit={e => { e.preventDefault(); void reject(r); }} className="mt-1 flex gap-1">
+      <input autoFocus value={why} onChange={e => setWhy(e.target.value)} placeholder="거절 사유(요청 쪽에 간다 · 비워도 된다)" aria-label="거절 사유"
+        className="min-w-0 flex-1 rounded-md border bg-background px-2 py-0.5 text-xs outline-none focus:ring-2 focus:ring-ring/50" />
+      <Button type="submit" size="sm" variant="outline" className="h-6 text-xs text-destructive">거절</Button>
+      <Button type="button" size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { setNo(null); setWhy(''); }}>취소</Button>
+    </form>
+  );
+  return (<>
+    {asks.length > 0 && <div className="mb-2 space-y-1 rounded-lg border border-sky-500/40 bg-sky-500/5 p-1.5">
       <button type="button" onClick={() => setFold(!fold)} aria-expanded={!fold} title={fold ? '받은 요청 펴기' : '받은 요청 접기'}
         className="flex w-full items-center gap-1 rounded px-1 text-left text-[0.6875rem] font-semibold text-sky-700 hover:bg-sky-500/10 dark:text-sky-400">
-        <span aria-hidden className="w-2.5">{fold ? '▸' : '▾'}</span>받은 요청 {q.data.length}
+        <span aria-hidden className="w-2.5">{fold ? '▸' : '▾'}</span>받은 요청 {asks.length}
       </button>
-      {!fold && q.data.map(r => {
+      {!fold && asks.map(r => {
         // 제목 — 요청이 준 것, 없으면 입력 첫 줄(주소뿐이면 주소 대신 「노션」 단추로)
         const link = notionUrl(r.input), first = r.input.split('\n')[0].trim(), head = r.title ?? (link && !/\s/.test(first) && notionUrl(first) === link ? '' : first);
         return (
@@ -285,14 +297,7 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
               </a>
             )}
           </p>
-          {no === r.id ? (
-            <form onSubmit={e => { e.preventDefault(); void reject(r); }} className="mt-1 flex gap-1">
-              <input autoFocus value={why} onChange={e => setWhy(e.target.value)} placeholder="거절 사유(요청 쪽에 간다 · 비워도 된다)" aria-label="거절 사유"
-                className="min-w-0 flex-1 rounded-md border bg-background px-2 py-0.5 text-xs outline-none focus:ring-2 focus:ring-ring/50" />
-              <Button type="submit" size="sm" variant="outline" className="h-6 text-xs text-destructive">거절</Button>
-              <Button type="button" size="sm" variant="ghost" className="h-6 text-xs" onClick={() => { setNo(null); setWhy(''); }}>취소</Button>
-            </form>
-          ) : (
+          {no === r.id ? rejectForm(r) : (
             <div className="mt-1 flex gap-1">
               <Button size="sm" className="h-6 flex-1 text-xs" onClick={() => onOpen(r)}>열기</Button>
               <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => { setNo(r.id); setWhy(''); }}>거절</Button>
@@ -301,8 +306,34 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
         </div>
         );
       })}
-    </div>
-  );
+    </div>}
+    {amends.length > 0 && <div className="mb-2 space-y-1 rounded-lg border border-amber-500/45 bg-amber-500/5 p-1.5">
+      <p className="px-1 text-[0.6875rem] font-semibold text-amber-700 dark:text-amber-400">Knock, knock · 추가 요청 {amends.length}</p>
+      {amends.map(r => {
+        // 제목 — 요청이 준 것(앞 멘션을 뗀 첫 줄), 본문은 그 다음 줄부터
+        const lines = r.input.split('\n').map(l => l.trim()).filter(Boolean), head = r.title ?? lines[0], rest = lines.slice(1).join(' ');
+        return (
+        <div key={r.id} className="space-y-1.5 rounded-md bg-card px-2.5 py-2 text-xs">
+          <p className="flex items-center gap-1.5">
+            {r.tag && <span className="min-w-0 truncate rounded bg-muted px-1.5 py-px text-[0.6875rem] font-medium text-muted-foreground" title={r.tag}>{r.tag}</span>}
+            <span className="shrink-0 rounded bg-amber-100 px-1.5 py-px text-[0.6875rem] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">런 #{r.run} 에 붙음</span>
+            <span className="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground tabular-nums" title={r.id}>{when(r.at)}</span>
+          </p>
+          {head && <p className="line-clamp-2 text-[0.8125rem] font-semibold leading-snug" title={r.input}>{head}</p>}
+          {rest && <p className="line-clamp-3 leading-snug text-muted-foreground">{rest}</p>}
+          {r.files?.map(f => <p key={f} className="truncate rounded border px-1.5 py-0.5 text-[0.6875rem]" title={f}>{f}</p>)}
+          <p className="truncate text-muted-foreground">{r.from ?? '요청자 모름'}{r.room ? ` · ${r.room}` : ''} — 붙이면 지금 단계를 마치고 반영한다</p>
+          {no === r.id ? rejectForm(r) : (
+            <div className="mt-1 flex gap-1">
+              <Button size="sm" className="h-6 flex-1 bg-amber-700 text-xs text-white hover:bg-amber-800" onClick={() => void attach(r)}>런에 붙이기</Button>
+              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => { setNo(r.id); setWhy(''); }}>거절</Button>
+            </div>
+          )}
+        </div>
+        );
+      })}
+    </div>}
+  </>);
 }
 
 type Pick = { label: string; note?: string; input: string; title?: string; tag?: string };
