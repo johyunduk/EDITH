@@ -1,9 +1,9 @@
 // 런 흐름 — 런 화면 「캔버스」. 큰 단계(맨 위 엔진의 체인 · 엔진)를 다 펼친 상자로 왼쪽→오른쪽, 갈래는 줄로 위아래(자리 — runFlow.ts).
-// 노드 줄은 상태 점 · 제목 · 걸린 시간 · 결과 첫 줄, 사람 대기 · 막힘은 꼬리표. 선은 지나온 길(초록) · 지금 가는 길(흐르는 점선) · 갈 길(회색 점선).
+// 노드 줄은 상태 점 · 제목 · 걸린 시간 · 결과 첫 줄, 막힘 · 몇 번째 시도는 꼬리표(사람 대기는 안 보인다 — 걸린 시간에서 뺀다). 선은 지나온 길(초록) · 지금 가는 길(흐르는 점선) · 갈 길(회색 점선).
 // 시간 · 꼬리표는 서버 타임라인(src/timeline.ts)에서. 노드를 누르면 onPick, 열 때와 도는 상자가 바뀔 때 그 상자를 가운데로 옮긴다.
 // 공방 캔버스와 같은 손놀림 — 휠로 확대 · 축소(커서 자리 기준), 왼쪽 단추로 끌어 옮긴다(노드 줄을 잡고 끌어도 — 끌었으면 그 클릭은 버린다).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { columns, dur, merge, phases, short, statusOf, type Phase, type Status } from './runFlow.ts';
+import { columns, dur, merge, phases, short, statusOf, waitOf, type Phase, type Status } from './runFlow.ts';
 import type { FlowStep } from './stepFlow.ts';
 import type { NodeState } from './StepFlow.tsx';
 
@@ -29,24 +29,23 @@ export function RunFlow({ steps, nodes, timeline, sel, onPick }: {
   steps: FlowStep[]; nodes: Record<string, Node>; timeline: Entry[]; sel: string | null; onPick: (key: string) => void;
 }) {
   const by = new Map(steps.map(s => [s.key, s])), cols = columns(phases(steps));
-  // 노드마다 — 지금 시도의 일한 시간 · 도는 중이면 시작한 때, 모든 시도의 사람 대기 · 확인 필요였던 수
-  const info = new Map<string, { work: number; human: number; warn: number; start?: number }>();
+  // 노드마다 — 지금 시도의 일한 시간 · 도는 중이면 시작한 때, 모든 시도의 확인 필요였던 수
+  const info = new Map<string, { work: number; warn: number; start?: number }>();
   for (const e of timeline) {
     if (e.kind !== 'node') continue;
-    const k = e.keys[0], o = info.get(k) ?? { work: 0, human: 0, warn: 0 };
+    const k = e.keys[0], o = info.get(k) ?? { work: 0, warn: 0 };
     if (e.attempt === nodes[k]?.attempt) { o.work = e.work ?? 0; if (e.tone === 'now') o.start = e.t; }
-    o.human += e.human ?? 0;
     if (e.tone === 'warn') o.warn++;
     info.set(k, o);
   }
   const status = (p: Phase) => statusOf(p.keys.map(k => nodes[k].state));
   const colStatus = (c: (typeof cols)[number]) => c.kind === 'box' ? status(c.phase) : merge(c.rows.flatMap(r => r.phases.map(status)));
-  // 큰 단계가 걸린 때 — 처음 시작부터 마지막 끝(도는 중이면 지금)까지
+  // 큰 단계가 걸린 때 — 처음 시작부터 마지막 끝(도는 중이면 지금)까지, 사람을 기다린 시간은 뺀다
   const span = (p: Phase) => {
     const own = new Set(p.keys), es = timeline.filter(e => e.keys.some(k => own.has(k)));
     if (!es.length) return '';
     const end = status(p) === 'live' ? Date.now() : Math.max(...es.map(e => e.t + (e.work ?? 0) + (e.human ?? 0)));
-    return dur(end - Math.min(...es.map(e => e.t)));
+    return dur(Math.max(0, end - Math.min(...es.map(e => e.t)) - es.reduce((a, e) => a + waitOf(e, by.get(e.keys[0])), 0)));
   };
 
   const live = cols.flatMap(c => c.kind === 'box' ? [c.phase] : c.rows.flatMap(r => r.phases)).find(p => status(p) === 'live')?.id;
@@ -73,7 +72,7 @@ export function RunFlow({ steps, nodes, timeline, sel, onPick }: {
   const row = (k: string) => {
     const s = by.get(k)!, n = nodes[k], o = info.get(k), cmd = s.kind === 'command', on = n.state === 'running' || n.state === 'sending';
     if (s.fixOnly && n.state === 'wait' && !n.attempt) return null;   // 고치는 노드는 불린 뒤에만
-    const tags = [o?.warn ? `막힘 ${o.warn}` : '', o && o.human >= 60_000 ? `사람 ${Math.round(o.human / 60_000)}분` : '', !o?.warn && n.attempt > 1 ? `${n.attempt}번째` : '',
+    const tags = [o?.warn ? `막힘 ${o.warn}` : '', !o?.warn && n.attempt > 1 ? `${n.attempt}번째` : '',
       n.state === 'check' ? '확인 필요' : ''].filter(Boolean);
     const time = on && o?.start ? dur(Date.now() - o.start) : !cmd && o?.work ? dur(o.work) : '';
     const line = cmd ? undefined : n.state === 'check' ? short(n.reason ?? n.summary) : n.line ?? short(n.summary);

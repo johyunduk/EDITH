@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { get } from './api.ts';
 import { Empty } from './ui.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
-import { chainView, claudeChip, dur, short, type ClaudeUsed } from './runFlow.ts';
+import { chainView, claudeChip, dur, short, waitOf, type ClaudeUsed } from './runFlow.ts';
 import type { FlowStep } from './stepFlow.ts';
 
 export type Entry = {
@@ -69,7 +69,7 @@ export function RunTimeline({ r, sel, pick, detail }: { r: RunLike; sel: string 
     }
     return [...out.values()].filter(g => g.es.length);
   };
-  const human = (es: Entry[]) => es.reduce((a, e) => a + (e.human ?? 0), 0), warns = (es: Entry[]) => es.filter(e => e.tone === 'warn' || e.tone === 'fail').length;
+  const waited = (es: Entry[]) => es.reduce((a, e) => a + waitOf(e, by.get(e.keys[0])), 0), warns = (es: Entry[]) => es.filter(e => e.tone === 'warn' || e.tone === 'fail').length;
   const past = groups(v.done.slice(0, -1)), lastDone = groups(v.done.slice(-1))[0];
   const lines = past.flatMap(g => g.es).sort((a, b) => a.t - b.t), lastLine = lines.at(-1);
   const next = v.ahead.slice(0, 2), rest = v.ahead.slice(2);
@@ -85,7 +85,6 @@ export function RunTimeline({ r, sel, pick, detail }: { r: RunLike; sel: string 
     if (e.tone === 'warn' && e.how) out.push([n?.attempt === e.attempt && n.state === e.how ? NODE[e.how][0] : `${NODE[e.how][0]}였음`, AMBER]);
     if (e.tone === 'fail') out.push(['실패 → 고치는 노드', 'bg-rose-500/15 text-rose-700 dark:text-rose-300']);
     if ((e.attempt ?? 0) > 1) out.push([`${e.attempt}번째 시도`, 'bg-muted text-muted-foreground']);
-    if (e.human) out.push([`사람 ${dur(e.human)}`, 'bg-muted text-muted-foreground']);
     return out;
   };
   // 카드에 보일 한 줄 — 「한줄」, 없으면 요약 첫 문장. 덱 맨 위 줄은 줄 종류마다
@@ -144,7 +143,7 @@ export function RunTimeline({ r, sel, pick, detail }: { r: RunLike; sel: string 
     // 대표 결과 — 끝난 스킬 노드 중 마지막(1분 넘게 일한 것 먼저 — 할 일 없이 넘어간 노드를 피한다)
     const done1 = [...g.es].reverse().filter(e => e.kind === 'node' && e.tone === 'done' && !e.fixOnly && head(e));
     const lastNode = done1.find(e => (e.work ?? 0) >= 60_000) ?? done1[0], track = steps.every(s => s.track && s.track === steps[0].track) ? steps[0]?.track : undefined;
-    const h = human(g.es), w = warns(g.es), on = open.has(g.id), end = Math.max(...g.es.map(e => e.t + (e.work ?? 0) + (e.human ?? 0)));
+    const h = waited(g.es), w = warns(g.es), on = open.has(g.id), end = Math.max(...g.es.map(e => e.t + (e.work ?? 0) + (e.human ?? 0)));
     return (
       <li key={g.id} className="list-none animate-fan" style={{ animationDelay: `${gi * 40}ms` }}>
         <div className="flex gap-2.5">
@@ -156,8 +155,7 @@ export function RunTimeline({ r, sel, pick, detail }: { r: RunLike; sel: string 
                 <span className={`text-sm font-semibold ${skipped ? 'text-muted-foreground' : ''}`}>{g.name}</span>
                 <span className="text-xs text-muted-foreground">{skipped ? '건너뜀' : skills ? `노드 ${skills}` : `명령 ${steps.length}`}</span>
                 {w > 0 && <span className={`${CHIP} ${AMBER}`}>막힘 · 실패 {w}</span>}
-                {h >= 60_000 && <span className={`${CHIP} bg-muted text-muted-foreground`}>사람 {dur(h)}</span>}
-                <span className="ml-auto text-xs text-muted-foreground tabular-nums">{skipped ? '' : dur(end - g.es[0].t)}</span>
+                <span className="ml-auto text-xs text-muted-foreground tabular-nums">{skipped ? '' : dur(Math.max(0, end - g.es[0].t - h))}</span>
                 <span className={`text-xs text-muted-foreground transition-transform ${on ? 'rotate-90' : ''}`} aria-hidden>›</span>
               </span>
               {lastNode && <span className="mt-1 block truncate text-sm text-foreground/85"><span className="text-muted-foreground">{lastNode.titles[0]} — </span>{head(lastNode)}</span>}
@@ -189,7 +187,6 @@ export function RunTimeline({ r, sel, pick, detail }: { r: RunLike; sel: string 
                       <span className="text-sm font-semibold">지난 체인 {past.length}개</span>
                       <span className="text-xs text-muted-foreground">{hm(lines[0].t)} – {hm(lastLine!.t)}</span>
                       {warns(lines) > 0 && <span className={`${CHIP} ${AMBER}`}>막힘 · 실패 {warns(lines)}</span>}
-                      {human(lines) >= 60_000 && <span className={`${CHIP} bg-muted text-muted-foreground`}>사람 {dur(human(lines))}</span>}
                       <span className="ml-auto text-xs font-semibold text-accent-foreground">덱 펼치기 ▾</span>
                     </span>
                     <span className="mt-1 block truncate text-sm text-foreground/85">{past.map(g => g.name).join(' · ')}</span>

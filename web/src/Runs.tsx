@@ -886,9 +886,10 @@ function Stage({ r, p, name, items, ask, open, folded, flip }: {
   const label = <>{p.track && !name.toLowerCase().includes(p.track.toLowerCase()) && <span className="mr-1.5 font-mono text-xs opacity-75">{p.track}</span>}{name}</>;
   if (idleOf(r, p)) return <p className="px-3 text-sm text-muted-foreground/70">건너뜀 · {label}</p>;
   if (s === 'wait' && !items.length) return <p className="px-3 text-sm text-muted-foreground">○ 남음 · {label}</p>;
-  // 걸린 시간 — 이 단계 노드 기록마다 일 + 사람 시간을 더한 것(처음 · 끝 사이로 재면 되돌림으로 다음 날 다시 돈 사이까지 든다), 도는 노드는 지금까지
-  const es = (r.timeline ?? []).filter(e => e.kind === 'node' && all.includes(e.keys[0]));
-  const took = es.reduce((a, e) => a + (e.tone === 'now' ? Date.now() - e.t : e.work ?? 0) + (e.human ?? 0), 0), warn = now.some(x => r.nodes[x.key].state === 'blocked' || r.nodes[x.key].state === 'check');
+  // 걸린 시간 — 이 단계 노드 기록마다 일한 시간을 더한 것(처음 · 끝 사이로 재면 되돌림으로 다음 날 다시 돈 사이까지 든다), 도는 노드는 지금까지.
+  // 사람을 기다린 시간(답 기다림 · 사람을 기다리는 명령 노드)은 뺀다
+  const es = (r.timeline ?? []).filter(e => e.kind === 'node' && all.includes(e.keys[0]) && !r.steps.find(x => x.key === e.keys[0])?.humanWait);
+  const took = es.reduce((a, e) => a + (e.tone === 'now' ? Date.now() - e.t - (e.human ?? 0) : e.work ?? 0), 0), warn = now.some(x => r.nodes[x.key].state === 'blocked' || r.nodes[x.key].state === 'check');
   const cards = items.filter(([o]) => o.board), gs = groupOutputs(items.filter(([o]) => !o.board));
   const rest = gs.flatMap(g => g.items), folds = gs.flatMap(g => g.folds), n = rest.length + folds.reduce((a, f) => a + f.items.length, 0);
   const head = s === 'done' ? <span className="text-emerald-700 dark:text-emerald-400">✓ 끝</span>
@@ -1065,23 +1066,24 @@ function NodeDetail({ r, s, busy, armed, arm, act, bare }: {
   );
 }
 
-// 흐름 — 벽시계로 일 · 사람 · 멈춤 · 빈 시간(갈래가 겹쳐 돈 시간은 한 번), 긴 사람 · 빈 구간과 무엇을 기다렸는지
-const FLOW = { work: ['일', 'bg-sky-500'], human: ['사람 대기', 'bg-amber-500'], stop: ['멈춤', 'bg-muted-foreground/60'], idle: ['빈 시간', 'bg-muted-foreground/25'] } as const;
+// 흐름 — 벽시계로 일 · 멈춤 · 빈 시간(갈래가 겹쳐 돈 시간은 한 번), 긴 빈 구간과 무엇을 기다렸는지. 사람 대기는 서버가 따로 세지만 여기선 뺀다
+const FLOW = { work: ['일', 'bg-sky-500'], stop: ['멈춤', 'bg-muted-foreground/60'], idle: ['빈 시간', 'bg-muted-foreground/25'] } as const;
 function Flow({ a }: { a: Stats }) {
-  const f = a.flow!, all = f.work + f.human + f.stop + f.idle || 1, name = (k: string) => a.nodes.find(x => x.key === k)?.title ?? k;
+  const f = a.flow!, all = f.work + f.stop + f.idle || 1, name = (k: string) => a.nodes.find(x => x.key === k)?.title ?? k;
+  const spans = f.spans.filter(s => s.kind !== 'human');
   return (
     <div className="space-y-2">
       <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
-        {(['work', 'human', 'stop', 'idle'] as const).map(k => f[k] > 0 && <span key={k} title={`${FLOW[k][0]} ${dur(f[k])}`} className={FLOW[k][1]} style={{ width: `${f[k] / all * 100}%` }} />)}
+        {(['work', 'stop', 'idle'] as const).map(k => f[k] > 0 && <span key={k} title={`${FLOW[k][0]} ${dur(f[k])}`} className={FLOW[k][1]} style={{ width: `${f[k] / all * 100}%` }} />)}
       </div>
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {(['work', 'human', 'stop', 'idle'] as const).map(k => f[k] > 0 && <span key={k} className="flex items-center gap-1.5"><span className={`size-2 rounded-full ${FLOW[k][1]}`} />{FLOW[k][0]} <b className="tabular-nums">{dur(f[k])}</b> <span className="text-muted-foreground tabular-nums">{Math.round(f[k] / all * 100)}%</span></span>)}
+        {(['work', 'stop', 'idle'] as const).map(k => f[k] > 0 && <span key={k} className="flex items-center gap-1.5"><span className={`size-2 rounded-full ${FLOW[k][1]}`} />{FLOW[k][0]} <b className="tabular-nums">{dur(f[k])}</b> <span className="text-muted-foreground tabular-nums">{Math.round(f[k] / all * 100)}%</span></span>)}
       </p>
-      {f.spans.length > 0 && (
+      {spans.length > 0 && (
         <ul className="space-y-0.5 text-xs">
-          {f.spans.map(s => (
+          {spans.map(s => (
             <li key={s.from} className="flex gap-2"><span className="w-24 shrink-0 text-muted-foreground tabular-nums">{hhmm(s.from)}–{hhmm(s.to)}</span>
-              <span className={`w-16 shrink-0 font-semibold ${s.kind === 'human' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>{FLOW[s.kind][0]}</span>
+              <span className="w-16 shrink-0 font-semibold text-muted-foreground">{FLOW[s.kind as 'stop' | 'idle'][0]}</span>
               <span className="w-20 shrink-0 tabular-nums">{dur(s.to - s.from)}</span>
               <span className="min-w-0 truncate text-muted-foreground">{s.keys.map(name).join(' · ') || '도는 노드 없음'}</span></li>
           ))}
@@ -1091,19 +1093,19 @@ function Flow({ a }: { a: Stats }) {
   );
 }
 
-// 갈래 — 갈래마다 시작 · 끝 · 일한 · 사람 시간과 합침에서 기다린 시간. 가장 늦게 끝난 갈래가 병목(전부 건너뛴 갈래는 빼고)
+// 갈래 — 갈래마다 시작 · 끝 · 일한 시간과 합침에서 기다린 시간. 가장 늦게 끝난 갈래가 병목(전부 건너뛴 갈래는 빼고)
 function Lanes({ a }: { a: Stats }) {
   const ran = a.lanes.filter(l => !l.skipped), late = Math.max(...ran.map(l => l.last ?? 0)), cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
-        <thead className="border-b text-muted-foreground"><tr><th className="px-2 py-1.5 text-left">갈래</th><th className={cell}>시작</th><th className={cell}>끝</th><th className={cell}>일한 시간</th><th className={cell}>사람 대기</th><th className={cell}>합침에서 기다림</th></tr></thead>
+        <thead className="border-b text-muted-foreground"><tr><th className="px-2 py-1.5 text-left">갈래</th><th className={cell}>시작</th><th className={cell}>끝</th><th className={cell}>일한 시간</th><th className={cell}>합침에서 기다림</th></tr></thead>
         <tbody>
           {a.lanes.map(l => (
             <tr key={l.track} className="border-b last:border-0">
               <td className="px-2 py-1.5 font-mono">{l.track}{l.skipped && <span className="ml-1.5 font-sans text-muted-foreground">건너뜀</span>}{!l.skipped && l.last === late && ran.length > 1 && <span className="ml-1.5 rounded bg-amber-500/15 px-1.5 font-sans text-[0.625rem] font-bold text-amber-800 dark:text-amber-300">병목</span>}</td>
               <td className={cell}>{l.first ? hhmm(l.first) : ''}</td><td className={cell}>{l.last ? hhmm(l.last) : ''}</td>
-              <td className={cell}>{dur(l.work)}</td><td className={cell}>{l.human ? dur(l.human) : ''}</td>
+              <td className={cell}>{dur(l.work)}</td>
               <td className={`${cell} ${l.waited ? 'font-semibold text-amber-700 dark:text-amber-400' : ''}`}>{l.waited ? dur(l.waited) : l.waited === 0 ? '—' : ''}</td>
             </tr>
           ))}
@@ -1113,7 +1115,7 @@ function Lanes({ a }: { a: Stats }) {
   );
 }
 
-// 같은 엔진 런 비교 — 최근 6개를 나란히, 큰 단계마다 걸린 시간(그 단계 노드가 돈 벽시계 시간) · 전체(사람 대기 뺌) · 사람 대기. 이 런은 굵게
+// 같은 엔진 런 비교 — 최근 6개를 나란히, 큰 단계마다 걸린 시간(그 단계 노드가 돈 벽시계 시간) · 전체(사람 대기 뺌). 이 런은 굵게
 function Compare({ a, cut }: { a: Stats; cut: (n: string) => string }) {
   const names = [...new Set(a.compare.flatMap(x => x.phases.map(p => p.name)))], cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
   return (
@@ -1127,8 +1129,7 @@ function Compare({ a, cut }: { a: Stats; cut: (n: string) => string }) {
               {a.compare.map(x => { const p = x.phases.find(y => y.name === n); return <td key={x.id} className={`${cell} ${x.id === a.id ? 'font-semibold' : ''}`}>{p ? dur(p.ms) : ''}</td>; })}
             </tr>
           ))}
-          <tr className="border-b"><td className="px-2 py-1.5 font-semibold" title="사람 대기를 뺀 런 시간">전체</td>{a.compare.map(x => <td key={x.id} className={`${cell} font-semibold`}>{dur(x.elapsed)}</td>)}</tr>
-          <tr><td className="px-2 py-1.5 text-amber-700 dark:text-amber-400">사람 대기</td>{a.compare.map(x => <td key={x.id} className={`${cell} text-amber-700 dark:text-amber-400`}>{x.human ? dur(x.human) : ''}</td>)}</tr>
+          <tr><td className="px-2 py-1.5 font-semibold" title="사람 대기를 뺀 런 시간">전체</td>{a.compare.map(x => <td key={x.id} className={`${cell} font-semibold`}>{dur(x.elapsed)}</td>)}</tr>
         </tbody>
       </table>
     </div>
@@ -1228,27 +1229,26 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
   if (!q.data) return <Empty>{q.error ? `분석을 읽지 못했다 — ${String(q.error)}` : '분석하는 중…'}</Empty>;
   const a = q.data, rows = a.nodes.filter(x => x.attempts > 0), sum = (f: (x: StatNode) => number) => a.nodes.reduce((t, x) => t + f(x), 0);
   const ps = byPhase(a), cut = dropShared(ps.map(p => p.name)), max = Math.max(1, ...ps.map(p => p.ms), ...a.nodes.map(x => x.time?.work ?? 0));
-  const human = sum(x => x.time?.human ?? 0), codexOut = Object.values(a.codex.nodes).reduce((s, x) => s + x.out, 0);
+  const codexOut = Object.values(a.codex.nodes).reduce((s, x) => s + x.out, 0);
   const claudeP = Object.values(a.codex.claude ?? {}).reduce((s, x) => s + x.cost, 0);
   const tiles: [string, string, string][] = [
-    // 걸린 시간은 사람 대기를 뺀 것(서버 elapsed) — 사람 대기 칸의 비율은 벽시계(+ 흐름의 사람 대기) 기준
+    // 걸린 시간은 사람 대기를 뺀 것(서버 elapsed) — 사람 대기는 서버가 기록만 하고 화면엔 안 보인다
     ['걸린 시간', dur(a.elapsed), a.flow ? `사람 대기 뺌 · 일 ${dur(a.flow.work)} · 빈 시간 ${dur(a.flow.idle)}` : `노드가 일한 시간 합 ${dur(sum(x => x.time?.work ?? 0))}`],
-    ['사람 대기', dur(human), human ? `런의 ${Math.round(human / (a.elapsed + (a.flow?.human ?? 0) || 1) * 100)}%` : '사람을 기다리지 않았다'],
     ['다시 돈 시간', dur(a.redo.again + a.redo.fixing), `되돌림 ${a.rewinds.length}번 · 고치는 노드 ${dur(a.redo.fixing)}`],
     ['Claude 입력 토큰', big(sum(x => x.tokens ? inTok(x.tokens) : 0)),
       `출력 ${big(sum(x => x.tokens?.output ?? 0))}${claudeP ? ` · 명령 노드 claude -p $${claudeP.toFixed(2)}` : ''}${codexOut ? ` · Codex 출력 ${big(codexOut)}` : ''}${a.codex.weekly ? ` · Codex 주간 ${a.codex.weekly[0]}→${a.codex.weekly[1]}%` : ''}`],
   ];
   const cols = [...new Set(a.records.flatMap(o => Object.keys(o)))].slice(0, 8), cell = 'px-2 py-1.5 text-right tabular-nums whitespace-nowrap';
   const toggle = (n: string) => setOpen(o => { const s = new Set(o); if (!s.delete(n)) s.add(n); return s; });
-  const tags = (x: StatNode) => [x.state !== 'done' && NODE[x.state as NodeState][0], x.attempts > 1 && `시도 ${x.attempts}`, x.fails > 0 && `고침 ${x.fails}`, x.time?.human && `사람 ${dur(x.time.human)}`].filter(Boolean).join(' · ');
+  const tags = (x: StatNode) => [x.state !== 'done' && NODE[x.state as NodeState][0], x.attempts > 1 && `시도 ${x.attempts}`, x.fails > 0 && `고침 ${x.fails}`].filter(Boolean).join(' · ');
   return (
     <div className="space-y-3">
       {!a.timed && <p className="text-xs text-muted-foreground">이 런은 시간 기록(events.jsonl)이 생기기 전에 돌아 시간이 비어 있다.</p>}
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
         {tiles.map(([k, v, sub]) => (
           <div key={k} className="rounded-xl border bg-card px-3 py-2">
             <p className="text-xs text-muted-foreground">{k}</p>
-            <p className={`text-lg font-bold tabular-nums ${k === '사람 대기' && human ? 'text-amber-700 dark:text-amber-400' : ''}`}>{v}</p>
+            <p className="text-lg font-bold tabular-nums">{v}</p>
             <p className="text-[0.6875rem] leading-snug text-muted-foreground">{sub}</p>
           </div>
         ))}
@@ -1294,7 +1294,7 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
                           <span className={`w-[10.75rem] shrink-0 truncate ${x.attempts ? '' : 'text-muted-foreground'}`} title={`${x.place} › ${x.title}`}>{x.title}</span>
                           <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-sky-500/60" style={{ width: `${(x.time?.work ?? 0) / max * 100}%` }} /></span>
                           <span className="w-24 shrink-0 text-right tabular-nums">{x.time?.work ? dur(x.time.work) : ''}</span>
-                          <span className={`w-28 shrink-0 truncate text-right ${x.fails || x.time?.human ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>{tags(x)}</span>
+                          <span className={`w-28 shrink-0 truncate text-right ${x.fails ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>{tags(x)}</span>
                         </button>
                         {sel === x.key && <div className="px-3 py-2">{detail()}</div>}
                       </li>
@@ -1309,7 +1309,7 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
 
       <div className="space-y-2">
         <p className="text-xs font-semibold text-muted-foreground">자세히</p>
-        {a.flow && <Fold title="흐름" hint="런 시간이 일 · 사람 대기 · 빈 시간으로 어떻게 나뉘었나, 긴 대기 구간"><Flow a={a} /></Fold>}
+        {a.flow && <Fold title="흐름" hint="런 시간이 일 · 멈춤 · 빈 시간으로 어떻게 나뉘었나, 긴 빈 구간"><Flow a={a} /></Fold>}
         {a.lanes.length > 0 && <Fold title="갈래" hint={`갈래마다 시작 · 끝, 먼저 끝난 갈래가 합치는 노드${a.lanes[0].join ? `(${a.nodes.find(x => x.key === a.lanes[0].join)?.title ?? a.lanes[0].join})` : ''} 앞에서 기다린 시간`}><Lanes a={a} /></Fold>}
         {insideTop(a).length > 0 && <Fold title="노드 안쪽" hint="오래 걸린 노드에서 Claude 가 생각한 시간과 도구가 돈 시간, 대화 수 · 읽은 글"><Inside a={a} /></Fold>}
         {a.repoPick && <Fold title="레포 판단" hint="엔진이 고른 레포(확실 · 확인)와 런이 실제로 쓰고 커밋한 레포"><RepoPick p={a.repoPick} /></Fold>}
@@ -1320,7 +1320,7 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
             <table className="w-full text-xs">
               <thead className="border-b text-muted-foreground">
                 <tr className="whitespace-nowrap"><th className="px-2 py-1.5 text-left">노드</th><th className="px-2 py-1.5 text-left">결과</th><th className={cell}>시도</th><th className={cell}>고침</th><th className={cell}>되돌려 옴</th>
-                  <th className={cell}>일한 시간</th><th className={cell}>사람 대기</th><th className={cell}>입력 토큰</th><th className={cell}>출력</th><th className={cell}>Codex 출력</th><th className="px-2 py-1.5 text-left">모델</th><th className="px-2 py-1.5 text-left">Claude 설정 · 이유</th></tr>
+                  <th className={cell}>일한 시간</th><th className={cell}>입력 토큰</th><th className={cell}>출력</th><th className={cell}>Codex 출력</th><th className="px-2 py-1.5 text-left">모델</th><th className="px-2 py-1.5 text-left">Claude 설정 · 이유</th></tr>
               </thead>
               <tbody>
                 {rows.map(x => (
@@ -1329,7 +1329,6 @@ function Analysis({ id, sel, pick, detail }: { id: number; sel: string | null; p
                     <td className="px-2 py-1.5 whitespace-nowrap">{NODE[x.state as NodeState][0]}</td>
                     <td className={cell}>{x.attempts}</td><td className={cell}>{x.fails || ''}</td><td className={cell}>{x.rewound || ''}</td>
                     <td className={cell}>{x.time ? dur(x.time.work) : ''}</td>
-                    <td className={`${cell} ${x.time?.human ? 'text-amber-700 dark:text-amber-400' : ''}`}>{x.time?.human ? dur(x.time.human) : ''}</td>
                     <td className={cell} title={x.tokens ? `새 입력 ${x.tokens.input} · 캐시 쓰기 ${x.tokens.cacheWrite} · 캐시 읽기 ${x.tokens.cacheRead}` : undefined}>{x.tokens ? big(inTok(x.tokens)) : ''}</td>
                     <td className={cell}>{x.tokens ? big(x.tokens.output) : ''}</td>
                     <td className={cell}>{a.codex.nodes[x.key] ? big(a.codex.nodes[x.key].out) : ''}</td>

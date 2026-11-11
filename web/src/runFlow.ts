@@ -75,6 +75,8 @@ export function dropShared(names: string[]) {
 export const merge = (all: Status[]): Status => statusOf(all.flatMap(s => s === 'live' ? ['running'] : s === 'done' ? ['done'] : s === 'part' ? ['done', 'wait'] : ['wait']));
 
 export const dur = (ms: number) => { const s = Math.round(ms / 1000); return s < 60 ? `${s}초` : s < 3600 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${Math.floor(s / 3600)}시간 ${Math.floor(s % 3600 / 60)}분`; };
+// 타임라인 줄에서 사람을 기다린 시간 — 답 기다림(human)과 사람을 기다리는 명령 노드(humanWait)가 돈 시간. 화면엔 따로 안 보이고 걸린 시간에서 뺀다(서버 기록 · 분석은 그대로)
+export const waitOf = (e: { work?: number; human?: number }, s?: { humanWait?: boolean }) => (e.human ?? 0) + (s?.humanWait ? e.work ?? 0 : 0);
 
 // 타임라인 체인 카드(RunTimeline.tsx) — 체인 = 노드가 든 체인(group, 맨 위 엔진에 바로 놓인 노드는 혼자 한 체인).
 // 지금: 도는 · 확인 필요 노드(nowKeys)가 있거나, 시작했는데 다 끝나지 않았다. 끝: 다 끝남 · 건너뜀(마지막으로 끝난 차례). 남음: 아무것도 시작 안 함(끝난 런은 없음)

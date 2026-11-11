@@ -36,7 +36,7 @@ const topTool = (x: StatNode) => Object.entries(x.inside?.tools ?? {}).filter(([
 export type Item = { text: string; sub?: string; key?: string };
 export type Row = { label: string; items: Item[]; none?: string };
 // 먼저 볼 것 — 오래 걸린 단계 · 노드, 다시 돈 노드, 병목 갈래. 해당 없는 줄은 「none」 글.
-// 사람 대기는 엔진 분석 대상이 아니라 넣지 않는다 — 단계 시간 · 런 시간(elapsed)도 서버가 사람 대기를 뺀 값(사람 대기는 흐름 · 노드 칸에서 본다)
+// 사람 대기는 엔진 분석 대상이 아니라 넣지 않는다 — 단계 시간 · 런 시간(elapsed)도 서버가 사람 대기를 뺀 값(사람 대기는 서버가 기록만 하고 화면엔 안 보인다)
 export function highlights(a: Stats, cut = (n: string) => n): Row[] {
   const name = (k: string) => a.nodes.find(x => x.key === k)?.title ?? k;
   const slowPhases = [...phasesOf(a)].sort((x, y) => y.ms - x.ms).filter(p => p.ms >= 60_000).slice(0, 2);

@@ -51,7 +51,7 @@ function spansWhere(events: Ev[], keys: Set<string> | undefined, is: (v: Ev['sta
   return out;
 }
 // 사람 대기 구간 — 그중 하나라도 답 기다림 · 확인 필요이고 아무것도 돌지 않는 때.
-// 분석(런 시간, 비율, 비교, 헛돎, 병목)은 사람 대기가 없던 것처럼 이 구간을 뺀다 — 보여 주는 사람 대기 값(노드 · 흐름 · 타임라인)은 그대로
+// 분석(런 시간, 비율, 비교, 헛돎, 병목)은 사람 대기가 없던 것처럼 이 구간을 뺀다 — 사람 대기 값(노드 · 흐름 · 타임라인)은 API 에 기록으로만 남기고 화면은 안 보여 준다
 export const humanSpans = (events: Ev[], keys?: Set<string>) => spansWhere(events, keys, v => !has(v, WORK) && has(v, HUMAN));
 // 구간 합치기 — 겹친 것은 하나로
 const union = (...xs: [number, number][][]) => xs.flat().map(([a, b]): [number, number] => [a, b]).sort((p, q) => p[0] - q[0])
