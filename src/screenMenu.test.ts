@@ -193,6 +193,12 @@ test('Codex 승인 — 가로줄이 없으면 마지막 대화 줄(•) 아래�
   assert.deepEqual(m?.options.map(o => [o.label, o.desc]), [['Yes, proceed (y)', ''], ['No, and tell Codex what to do differently (esc)', '']]);
 });
 
+test('isFree — 직접 입력 선택지만, 이름 속 「직접」·「other」 낱말은 아니다', async () => {
+  const { isFree } = await import('../web/src/screenMenu.ts');
+  assert.deepEqual(['Type something.', 'Type something', 'Other', '직접 입력'].map(isFree), [true, true, true, true]);
+  assert.deepEqual(['지금 워크트리에 직접 (Recommended)', '내가 직접 (추천)', 'Another way', 'Chat about this'].map(isFree), [false, false, false, false]);
+});
+
 test('wide — 한글·한자·전각·이모지는 두 칸, ASCII·▾·←·· 는 한 칸', async () => {
   const { wide } = await import('../web/src/screenMenu.ts');
   assert.deepEqual(['가', '힣', '漢', 'Ａ', '🙂'].map(wide), [true, true, true, true, true]);

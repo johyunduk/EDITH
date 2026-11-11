@@ -99,8 +99,9 @@ function boxCol(l: string): number | null {
   return m ? cellsOf(l.slice(0, m[0].length - 1)) : null;
 }
 
-// 직접 써서 답하는 선택지(「Type something」 등) — 고르면 글을 받아야 한다
-export const isFree = (l: string) => /type something|직접|other/i.test(l);
+// 직접 써서 답하는 선택지(「Type something」 등) — 고르면 글을 받아야 한다.
+// 이름 첫머리만 본다 — 「지금 워크트리에 직접」 처럼 선택지 이름 속 낱말에 걸리면 눌러도 답이 안 들어간다
+export const isFree = (l: string) => /^(type something|other\b|직접 입력)/i.test(l.trim());
 
 // 가로줄 아래는 전부 질문 — 커밋 지킴이처럼 긴 질문도 머리(무엇을 할지)가 잘리지 않게. 빈 줄은 단락으로 하나만 남긴다.
 // 가로줄이 없으면(커서 메뉴·Codex 승인) 위쪽 대화가 섞이지 않게 마지막 대화 줄(•·⏺) 아래, 끝 6줄만. 왼쪽 막대(│ — 질문 상자)는 떼고 그 안의 들여쓰기는 둔다.
