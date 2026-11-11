@@ -1,14 +1,15 @@
 // 런 화면 「산출물」 — 엔진이 작업 문서에 남긴 edith-outputs.json 의 파일 · 주소를 보여 준다(쓰지 않는다):
 // [{"label": "<이름>", "path"?: "<파일 절대 경로>", "url"?: "<https 주소>", "node"?: "<만든 노드 키>", "note"?: "<짧은 설명>",
 //   "group"?: "<묶음 — 예: 문서 · 리뷰>", "fold"?: "<묶음 안에서 접어 둘 꾸러미 — 예: Codex 리뷰 원문>",
-//   "deploy"?: true — 배포 화면 카드에도 그 런의 링크로(배포 뒤 사람이 따라 해 볼 문서 같은 것)}] — 50개까지
+//   "deploy"?: true — 배포 화면 카드에도 그 런의 링크로(배포 뒤 사람이 따라 해 볼 문서 같은 것),
+//   "board"?: true — 런 화면 「결과물」 판에 미리 보기 카드로(흐름도 · ERD · 따라 할 가이드처럼 사람이 자주 여는 것)}] — 50개까지
 // 파일은 런 작업 폴더 · 실행 폴더 안의 것만(realpath — 링크로 밖을 가리키면 없는 것으로), 1MB 까지, 글 파일만(NUL 이 있으면 글이 아니다).
 // 주소는 http(s) 만 — 화면이 그대로 링크로 걸기 때문.
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
 export const OUTPUTS_FILE = 'edith-outputs.json';
-export type Output = { label: string; path?: string; url?: string; node?: string; note?: string; group?: string; fold?: string; deploy?: true };
+export type Output = { label: string; path?: string; url?: string; node?: string; note?: string; group?: string; fold?: string; deploy?: true; board?: true };
 export type OutputView = Output & { size?: number; at?: number; error?: string };
 const MAX = 1024 * 1024;
 
@@ -24,7 +25,7 @@ export function parseOutputs(t: string): Output[] {
     if (!label || (!p && !u)) return [];
     const node = str(x.node, 200), note = str(x.note, 120), group = str(x.group, 40), fold = str(x.fold, 40);
     return [{ label, ...(p ? { path: p } : u ? { url: u } : {}), ...(node ? { node } : {}), ...(note ? { note } : {}), ...(group ? { group } : {}), ...(fold ? { fold } : {}),
-      ...(x.deploy === true ? { deploy: true as const } : {}) }];
+      ...(x.deploy === true ? { deploy: true as const } : {}), ...(x.board === true ? { board: true as const } : {}) }];
   }).slice(0, 50);
 }
 

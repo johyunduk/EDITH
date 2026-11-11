@@ -26,6 +26,14 @@ export function phases(steps: FlowStep[]): Phase[] {
   return [...m.values()];
 }
 
+// 산출물마다 큰 단계 — 엔진이 적은 「만든 노드」(edith-outputs.json node)가 든 단계(고치는 노드도). 노드가 없거나 모르는 노드면 첫 단계에
+// shortcut: 만든 노드를 안 적는 엔진은 산출물이 모두 첫 단계 줄에 모인다 — 그런 엔진이 생기면 파일 시각 · 노드 기록 시각으로 맞춘다
+export function stageOf(ps: Phase[], nodes: (string | undefined)[]): Map<string, number[]> {
+  const m = new Map(ps.map(p => [p.id, [] as number[]]));
+  nodes.forEach((k, i) => { const p = (k && ps.find(x => x.groups.some(g => g.keys.includes(k)))) || ps[0]; if (p) m.get(p.id)!.push(i); });
+  return m;
+}
+
 // 갈래가 있는 큰 단계는 바로 앞 칸이 갈래 묶음이면 거기에(그 갈래 줄 끝에), 아니면 새 묶음을 연다
 export function columns(ps: Phase[]): Col[] {
   const cols: Col[] = [];

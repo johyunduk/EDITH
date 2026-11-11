@@ -33,9 +33,9 @@ test('산출물 파일 — 런 작업 폴더 안만, 링크로 밖을 가리키�
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('배포 화면에 걸 산출물 — deploy: true 이고 볼 수 있는 파일만, 차례는 전체 목록 기준', () => {
-  assert.deepEqual(parseOutputs(JSON.stringify([{ label: '가이드', path: '/w/g.html', deploy: true }, { label: '글자', path: '/w/x.md', deploy: 'yes' }])),
-    [{ label: '가이드', path: '/w/g.html', deploy: true }, { label: '글자', path: '/w/x.md' }]);
+test('배포 화면에 걸 산출물 — deploy: true 이고 볼 수 있는 파일만, 차례는 전체 목록 기준(deploy · board 는 true 만 받는다)', () => {
+  assert.deepEqual(parseOutputs(JSON.stringify([{ label: '가이드', path: '/w/g.html', deploy: true, board: true }, { label: '글자', path: '/w/x.md', deploy: 'yes', board: 1 }])),
+    [{ label: '가이드', path: '/w/g.html', deploy: true, board: true }, { label: '글자', path: '/w/x.md' }]);
   const root = mkdtempSync(join(tmpdir(), 'edith-out-')), cwd = join(root, 'wt'), work = join(root, 'run', 'work');
   try {
     mkdirSync(cwd, { recursive: true }); mkdirSync(work, { recursive: true });

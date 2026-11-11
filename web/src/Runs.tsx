@@ -1,4 +1,4 @@
-// 런 #번호 — 공방의 런(또는 시험으로 엔진 · 체인)을 한 번 돌린 것. 왼쪽 「새 런」과 런 목록, 가운데 타임라인(카드 덱 — RunTimeline.tsx, 「캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
+// 런 #번호 — 공방의 런(또는 시험으로 엔진 · 체인)을 한 번 돌린 것. 왼쪽 「새 런」과 런 목록, 가운데 결과물 판(Board — 「요약 · 타임라인 · 캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
 // 주소는 #/runs/<번호>. 돌리는 것은 서버의 실행기(src/runner.ts)이고, 화면은 run.json 을 읽어 보여 주며 멈춤 · 이어서 · 건너뛰기만 보낸다.
 // 런 이름은 「티켓 [안건] 짧은 제목」(받은 요청 · 배포 목록 · 엔진 요약에서)을 크게, 「#번호 엔진 이름」 은 그 위에 작게.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -15,7 +15,7 @@ import { Attach, upload } from './Attach.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
 import { RunFlow } from './RunFlow.tsx';
 import { RunTimeline, type Entry } from './RunTimeline.tsx';
-import { claudeChip, dropShared, dur, isTest, notionUrl, pastDays, phases, runNo, type ClaudeUsed } from './runFlow.ts';
+import { claudeChip, columns, dropShared, dur, isTest, notionUrl, pastDays, phases, runNo, stageOf, statusOf, type ClaudeUsed, type Phase } from './runFlow.ts';
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
 import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
@@ -466,17 +466,17 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
   );
 }
 
-type View = 'summary' | 'timeline' | 'canvas' | 'stats';
-const VIEWS: [View, string][] = [['summary', '요약'], ['timeline', '타임라인'], ['canvas', '캔버스'], ['stats', '분석']];
+type View = 'board' | 'summary' | 'timeline' | 'canvas' | 'stats';
+const VIEWS: [View, string][] = [['board', '결과물'], ['summary', '요약'], ['timeline', '타임라인'], ['canvas', '캔버스'], ['stats', '분석']];
 
 function RunDetail({ r, out }: { r: Run; out?: number }) {
   const qc = useQueryClient();
-  const [sel, setSel] = useState<string | null>(null), [busy, setBusy] = useState(false), [armed, setArmed] = useState(''), [view, setView] = useState<View>('timeline'), [watch, setWatch] = useState(false);
+  const [sel, setSel] = useState<string | null>(null), [busy, setBusy] = useState(false), [armed, setArmed] = useState(''), [view, setView] = useState<View>('board'), [watch, setWatch] = useState(false);
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(''), 3000); return () => clearTimeout(t); }, [armed]);
   useActedToast(r);
-  // 요약이 있는 끝난 런은 「요약」 부터 — 런을 바꾸거나 런이 막 끝났을 때
+  // 런을 바꾸면 「결과물」 부터 — 런 화면에서 가장 자주 여는 것이 흐름도 · ERD · 가이드 재생이라(2026-11-11 정함). 진행 · 요약은 옆 보기로
   const hasSummary = !!r.summary;
-  useEffect(() => { setView(hasSummary ? 'summary' : 'timeline'); }, [r.id, hasSummary]);
+  useEffect(() => { setView('board'); }, [r.id]);
   const act = async (what: 'stop' | 'resume' | 'skip' | 'rewind', key?: string) => {
     setBusy(true);
     try { await post(`/api/runs/${r.id}/${what}`, key ? { key } : {}); await qc.invalidateQueries({ queryKey: ['run', r.id] }); await qc.invalidateQueries({ queryKey: ['runs'] }); }
@@ -531,7 +531,7 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
           </>}
         </span>
       </div>
-      <Phases r={r} />
+      {view !== 'board' && <><Phases r={r} />
       <details className="rounded-lg border bg-card px-3 py-2 text-sm">
         <summary className="cursor-pointer"><span className="mr-2 text-xs font-semibold text-muted-foreground">{r.input ? '입력' : '정보'}</span>
           {/^https?:\/\/\S+$/.test(first) ? <a href={first} target="_blank" rel="noreferrer" className="break-all text-primary underline-offset-2 hover:underline">{first.replace(/^https?:\/\//, '')}</a> : first}
@@ -544,7 +544,7 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
           <span>시작 {when(r.created)}</span>
           <span title={r.dir}>런 폴더 <span className="font-mono">{r.dir.replace(/^\/(Users|home)\/[^/]+/, '~')}</span></span>
         </p>
-      </details>
+      </details></>}
       {r.state === 'queued' && (
         <p className="rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm text-violet-800 dark:text-violet-300">
           줄 서 있다 — 동시에 도는 런이 한도(설정 「런」)에 찼다. 도는 런이 끝나면 먼저 온 것부터 시작한다. 「지금 시작」 은 한도를 넘어 바로 시작한다.
@@ -569,14 +569,15 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
           ))}
         </div>
       )}
-      <Waiting r={r} />
+      {view !== 'board' && <Waiting r={r} />}
       {out !== undefined && <OutputSheet id={r.id} i={out} onClose={() => { location.hash = `#/runs/${r.id}`; }} />}
-      {view !== 'summary' && <>
+      {view !== 'summary' && view !== 'board' && <>
         <RepoOutputs id={r.id} />
         {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
       </>}
       {r.live && watch && <Live id={r.id} />}
-      {view === 'summary' && r.summary ? <SummaryView r={r} s={r.summary} toTimeline={() => setView('timeline')} />
+      {view === 'board' ? <Board r={r} />
+        : view === 'summary' && r.summary ? <SummaryView r={r} s={r.summary} toTimeline={() => setView('timeline')} />
         : view === 'stats' ? <Analysis id={r.id} sel={sel} pick={k => setSel(k === sel ? null : k)} detail={() => detail(false)} />
         : view === 'canvas' ? <>
           <RunFlow steps={r.steps} nodes={r.nodes} timeline={r.timeline ?? []} sel={sel} onPick={k => setSel(k === sel ? null : k)} />
@@ -759,16 +760,17 @@ function Sheet({ title, sub, onClose, children, extra, band }: { title: string; 
 }
 
 // 산출물 — 엔진이 작업 문서에 남긴 edith-outputs.json(서버 src/outputs.ts). 파일은 누르면 보기 창(.md 는 글로, .html · .svg 는 그림으로), 주소는 새 탭
-type OutputItem = { label: string; path?: string; url?: string; node?: string; note?: string; group?: string; fold?: string; error?: string };
+type OutputItem = { label: string; path?: string; url?: string; node?: string; note?: string; group?: string; fold?: string; board?: boolean; error?: string };
+type OutputOne = { label: string; path: string; text: string; act?: { label: string; hint?: string } };
 const useOutputs = (id: number) => useQuery({ queryKey: ['run-outputs', id], queryFn: () => get<OutputItem[]>(`/api/runs/${id}/outputs`), refetchInterval: 15_000 });
-// 엔진이 적은 묶음(group)마다 — 묶음이 없으면 한 덩이로
-function Outputs({ id }: { id: number }) {
-  const q = useOutputs(id);
-  if (!q.data?.length) return null;
-  const gs = groupOutputs(q.data.map((o, i): [OutputItem, number] => [o, i]));
+const useOutput = (id: number, i: number, on = true) => useQuery({ queryKey: ['run-output', id, i], queryFn: () => get<OutputOne>(`/api/runs/${id}/outputs/${i}`), enabled: on });
+// 엔진이 적은 묶음(group)마다 — 묶음이 없으면 한 덩이로. items 는 전체 목록 차례를 단 것
+function Outputs({ id, items }: { id: number; items: [OutputItem, number][] }) {
+  if (!items.length) return null;
+  const gs = groupOutputs(items);
   return (
     <section className="min-w-0">
-      <p className="mb-1 text-xs font-semibold text-muted-foreground">산출물 {q.data.length} — 엔진이 남긴 문서 · 주소(누르면 본다, 파일 이름은 마우스를 올리면)</p>
+      <p className="mb-1 text-xs font-semibold text-muted-foreground">산출물 {items.length} — 엔진이 남긴 문서 · 주소(누르면 본다, 파일 이름은 마우스를 올리면)</p>
       <div className={gs.length > 1 ? 'grid gap-x-4 gap-y-2.5 sm:grid-cols-2' : ''}>
         {gs.map(g => (
           <div key={g.name} className="min-w-0 space-y-1">
@@ -792,8 +794,114 @@ function RepoOutputs({ id }: { id: number }) {
         {bad > 0 && <span className="font-semibold text-rose-700 dark:text-rose-300">레포 확인 필요 {bad} · </span>}
         {dirty > 0 && <span className="font-semibold text-amber-700 dark:text-amber-400">커밋 안 한 파일 {dirty} · </span>}
         <span className="text-muted-foreground">{count}</span></summary>
-      <div className={`mt-2 grid gap-4 ${repos.length && outs.length ? 'md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)]' : ''}`}><Repos id={id} bare /><Outputs id={id} /></div>
+      <div className={`mt-2 grid gap-4 ${repos.length && outs.length ? 'md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)]' : ''}`}><Repos id={id} bare /><Outputs id={id} items={outs.map((o, i) => [o, i])} /></div>
     </details>
+  );
+}
+// 결과물 판 — 런 화면 기본 보기. 큰 단계(runFlow phases) 차례로 한 줄씩 — 머리(✓ 끝 · ● 지금 · ○ 남음 · 건너뜀, 걸린 시간), 그 단계가 만든 산출물 중
+// 판에 올린 것(board — 흐름도 · ERD · 가이드 · 기획 · 계획)은 미리 보기 카드, 나머지는 줄마다 「그 밖 산출물」 에 접는다. 도는 런 · 끝난 런이 같은 꼴이라
+// 같은 것은 늘 같은 자리에 있다(2026-11-11 정함 — 진행 중 · 끝을 같은 꼴로). 갈래가 갈리는 곳은 갈래마다 칸을 나란히(columns), 모두 건너뛴 갈래는 아래 한 줄로
+function Board({ r }: { r: Run }) {
+  const q = useOutputs(r.id), [view, setView] = useState<{ i: number; band: boolean } | null>(null);
+  const outs = q.data ?? [], ps = useMemo(() => phases(r.steps).filter(p => p.keys.length), [r.steps]);
+  const at = stageOf(ps, outs.map(o => o.node)), cut = dropShared(ps.map(p => p.name));
+  // 답 기다리는 노드와 바로 앞 노드가 만든 것 — 그 카드에 「답하기 전에 볼 것」
+  const blocked = r.steps.filter(s => r.nodes[s.key].state === 'blocked'), ask = new Set(outs.flatMap((o, i) => o.node && blocked.some(s => [s.key, ...s.deps].includes(o.node!)) ? [i] : []));
+  const row = (p: Phase) => <Stage key={p.id} r={r} p={p} name={cut(p.name)} items={(at.get(p.id) ?? []).map(i => [outs[i], i])} ask={ask} open={(i, band) => setView({ i, band })} />;
+  if (!ps.length) return <Empty>노드가 없는 런이다.</Empty>;
+  return (
+    <div className="space-y-2">
+      {columns(ps).map((c, n) => {
+        if (c.kind === 'box') return row(c.phase);
+        const on = c.rows.filter(x => !x.phases.every(p => idleOf(r, p))), off = c.rows.filter(x => x.phases.every(p => idleOf(r, p)));
+        return (
+          <Fragment key={n}>
+            {on.length > 0 && <div className={`grid gap-2 ${on.length > 1 ? 'lg:grid-cols-2' : ''}`}>{on.map(x => <div key={x.track} className="min-w-0 space-y-2">{x.phases.map(row)}</div>)}</div>}
+            {off.flatMap(x => x.phases).map(row)}
+          </Fragment>
+        );
+      })}
+      {view && <OutputSheet id={r.id} i={view.i} band0={view.band} onClose={() => setView(null)} />}
+    </div>
+  );
+}
+// 큰 단계 한 줄 — 남은 · 건너뛴 단계는 이름만 흐리게. 지금 단계는 지금 노드마다 한 줄(NowLine), 답 기다림 · 확인 필요면 주황
+const LIVE: NodeState[] = ['running', 'sending', 'blocked', 'check'];
+// 건너뛴 단계 — 노드를 다 건너뛰었거나, 스킬 노드를 다 건너뛰었다(「앱 없으면 건너뜀」 같은 명령 노드만 돈 갈래)
+const idleOf = (r: Run, p: Phase) => {
+  const sk = r.steps.filter(x => p.keys.includes(x.key) && x.kind === 'skill');
+  return p.keys.every(k => r.nodes[k].state === 'skipped') || (sk.length > 0 && sk.every(x => r.nodes[x.key].state === 'skipped'));
+};
+function Stage({ r, p, name, items, ask, open }: { r: Run; p: Phase; name: string; items: [OutputItem, number][]; ask: Set<number>; open: (i: number, band: boolean) => void }) {
+  const st = p.keys.map(k => r.nodes[k].state), s = statusOf(st), now = r.steps.filter(x => p.keys.includes(x.key) && LIVE.includes(r.nodes[x.key].state));
+  // 갈래 이름은 단계 이름에 없을 때만 앞에(「BE 계획」 에 be 는 군더더기) — 단계 줄(Phases)과 같게
+  const label = <>{p.track && !name.toLowerCase().includes(p.track.toLowerCase()) && <span className="mr-1.5 font-mono text-xs opacity-75">{p.track}</span>}{name}</>;
+  if (idleOf(r, p)) return <p className="px-3 text-sm text-muted-foreground/70">건너뜀 · {label}</p>;
+  if (s === 'wait' && !items.length) return <p className="px-3 text-sm text-muted-foreground">○ 남음 · {label}</p>;
+  // 걸린 시간 — 이 단계 노드 기록마다 일 + 사람 시간을 더한 것(처음 · 끝 사이로 재면 되돌림으로 다음 날 다시 돈 사이까지 든다), 도는 노드는 지금까지
+  const es = (r.timeline ?? []).filter(e => e.kind === 'node' && p.keys.includes(e.keys[0]));
+  const took = es.reduce((a, e) => a + (e.tone === 'now' ? Date.now() - e.t : e.work ?? 0) + (e.human ?? 0), 0), warn = now.some(x => r.nodes[x.key].state === 'blocked' || r.nodes[x.key].state === 'check');
+  const cards = items.filter(([o]) => o.board), gs = groupOutputs(items.filter(([o]) => !o.board));
+  const rest = gs.flatMap(g => g.items), folds = gs.flatMap(g => g.folds), n = rest.length + folds.reduce((a, f) => a + f.items.length, 0);
+  const head = s === 'done' ? <span className="text-emerald-700 dark:text-emerald-400">✓ 끝</span>
+    : s === 'live' ? <span className={warn ? 'text-amber-700 dark:text-amber-300' : 'text-sky-700 dark:text-sky-300'}>● 지금</span>
+    : <span className="text-muted-foreground">{s === 'part' ? '◐ 여기까지' : '○ 남음'}</span>;
+  return (
+    <section className={`space-y-2 rounded-xl border bg-card px-4 py-3 ${s === 'live' ? (warn ? 'border-amber-500/70 bg-amber-500/5' : 'border-sky-500/60 bg-sky-500/5') : ''}`} aria-label={p.name}>
+      <p className="flex items-baseline gap-2 text-sm font-semibold">{head}<span>{label}</span>
+        {es.length > 0 && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{dur(took)}{s === 'live' ? '째' : ''}</span>}</p>
+      {now.map(x => <NowLine key={x.key} r={r} s={x} />)}
+      {cards.length > 0 && <div className="flex flex-wrap gap-2">{cards.map(([o, i]) => <Card key={i} id={r.id} o={o} i={i} ask={ask.has(i)} open={band => open(i, band)} />)}</div>}
+      {n > 0 && <details className="text-sm"><summary className="cursor-pointer text-xs text-muted-foreground">그 밖 산출물 {n}</summary><div className="mt-1.5"><OutputChips id={r.id} items={rest} folds={folds} /></div></details>}
+    </section>
+  );
+}
+// 지금 노드 한 줄 — 몇 분째와 Claude 마지막 말(오른쪽 런 pane 대화의 마지막 글 — 타임라인 지금 카드와 같은 것), 답 기다림 · 확인 필요는 그 까닭
+type ChatItem = { kind: string; text: string };
+function NowLine({ r, s }: { r: Run; s: Step }) {
+  const n = r.nodes[s.key], pane = s.track ? r.panes?.[s.track]?.pane : r.pane, live = n.state === 'running' && s.kind === 'skill' && !!pane;
+  const chat = useQuery({ queryKey: ['chat', pane], queryFn: () => get<{ items: ChatItem[] }>(`/api/herdr/panes/${pane}/chat`), enabled: live, refetchInterval: 3000 });
+  const t = (r.timeline ?? []).findLast(e => e.kind === 'node' && e.keys[0] === s.key)?.t;
+  const said = n.state === 'blocked' ? '답을 기다린다 — 오른쪽 런 pane 의 질문 창' : n.state === 'check' ? n.reason ?? n.summary ?? '확인이 필요하다 — 「이어서」 · 「건너뛰기」'
+    : live ? chat.data?.items.findLast(x => x.kind === 'text')?.text : undefined;
+  return (
+    <div className="text-sm">
+      <p className="flex items-baseline gap-2"><span className="font-semibold">{s.kind === 'command' ? `$ ${s.title}` : s.title}</span>
+        {s.track && <span className="rounded-md bg-violet-500/12 px-1.5 font-mono text-[0.6875rem] font-semibold text-violet-700 dark:text-violet-300">{s.track}</span>}
+        {t && <span className="ml-auto text-xs text-muted-foreground tabular-nums">{dur(Date.now() - t)}째</span>}</p>
+      {said && <p className={`mt-1 line-clamp-2 ${n.state === 'running' ? 'text-foreground/85' : 'text-amber-800 dark:text-amber-300'}`}>{said}</p>}
+    </div>
+  );
+}
+// 판의 카드 하나 — 위는 미리 보기(svg 는 그림, html 은 줄인 화면, 글은 앞부분), 아래는 묶음 · 이름 · 설명(엔진이 적은 마지막 재생 결과 같은 것). 주소는 새 탭
+// ask — 답 기다리는 노드(또는 바로 앞 노드)가 만든 것: 「답하기 전에 볼 것」
+function Card({ id, o, i, ask, open }: { id: number; o: OutputItem; i: number; ask?: boolean; open: (band: boolean) => void }) {
+  const one = useOutput(id, i, !!o.path && !o.error), t = one.data, act = t?.act;
+  const head = <>{o.group && <span className="block text-xs text-muted-foreground">{o.group}</span>}<span className="block font-semibold">{o.label}</span></>;
+  if (o.url) return (
+    <a href={o.url} target="_blank" rel="noreferrer" className="flex w-full flex-col justify-end gap-1 rounded-xl border bg-card p-4 text-sm hover:border-primary/60 sm:w-60">
+      {head}<span className="truncate text-xs text-primary">{o.url.replace(/^https?:\/\//, '')} ↗</span>
+    </a>
+  );
+  const pic = t && (/\.svg$/i.test(t.path) ? <img src={svgSrc(t.text)} alt="" className="size-full object-contain p-2" />
+    // 줄인 화면 — 네 배 크기로 그려 4분의 1 로. 누르기 · 탭 이동은 카드가 받는다
+    : /\.html?$/i.test(t.path) ? <iframe sandbox="" srcDoc={frameDoc(t.text)} title="" tabIndex={-1} aria-hidden className="pointer-events-none absolute top-0 left-0 h-[400%] w-[400%] origin-top-left scale-25 border-0" />
+    : /\.(md|markdown)$/i.test(t.path) ? <div className="pointer-events-none px-3 py-2 text-xs [&_h1]:text-sm [&_h2]:text-sm"><Md text={t.text.slice(0, 1500)} /></div>
+    : <pre className="px-3 py-2 text-xs whitespace-pre-wrap text-muted-foreground">{t.text.slice(0, 600)}</pre>);
+  return (
+    <div className={`flex w-full flex-col overflow-hidden rounded-xl border bg-card text-sm hover:border-primary/60 sm:w-60 ${ask ? 'border-amber-500 ring-4 ring-amber-500/15' : ''}`}>
+      {ask && <span className="bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-800 dark:text-amber-300">답하기 전에 볼 것</span>}
+      <button type="button" disabled={!!o.error} onClick={() => open(false)} title={o.path} className="flex flex-1 flex-col text-left disabled:opacity-60">
+        <span className="relative block h-32 overflow-hidden border-b bg-white text-foreground">
+          {pic ?? <span className="block p-3 text-xs text-muted-foreground">{o.error ?? (one.error ? (one.error as Error).message : '읽는 중…')}</span>}
+        </span>
+        <span className="block px-3 pt-2 pb-0.5">{head}</span>
+        {/* 설명이 파일 이름뿐이면 빼고(이름은 마우스를 올리면) — 마지막 재생 결과 같은 것만 */}
+        {o.note && !o.path?.endsWith(o.note) && <span className="block px-3 text-xs text-muted-foreground">{o.note}</span>}
+      </button>
+      {act && <Button size="sm" className="mx-3 mt-2 h-7 self-start text-xs" title={act.hint} onClick={() => open(true)}>▶ {act.label}</Button>}
+      <span className="pb-2.5" />
+    </div>
   );
 }
 // 답 기다리는 노드 — 그 노드와 바로 앞 노드가 남긴 산출물(승인 카드가 가리키는 ERD 같은 것)을 답하기 전에 바로 연다. 답은 오른쪽 런 pane
@@ -839,9 +947,15 @@ function OutputChips({ id, items, folds = [] }: { id: number; items: [OutputItem
 }
 // 산출물 하나 보기 창 — 칩을 누르거나 주소 #/runs/<번호>/out/<차례>(배포 카드 링크)로 연다
 // 공방 엔진에 이 산출물 단추(on: "output")가 있으면 머리줄에 그 단추 — 누르면 창 안 띠(ActBand), 도는 동안은 진행 줄(JobLine)
-function OutputSheet({ id, i, label, onClose }: { id: number; i: number; label?: string; onClose: () => void }) {
-  const one = useQuery({ queryKey: ['run-output', id, i], queryFn: () => get<{ label: string; path: string; text: string; act?: { label: string; hint?: string } }>(`/api/runs/${id}/outputs/${i}`) });
-  const act = one.data?.act, [band, setBand] = useState(false), { job, refresh } = useJob(id, i, !!act);
+// 엔진이 그린 그림을 iframe 에 — 빈 sandbox 로 띄워 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
+// base — srcdoc 은 EDITH 주소를 기준으로 삼아 목차 #앵커가 EDITH 로 튀어 「연결을 거부」 로 뜬다. doctype 뒤에 넣어 표준 모드 유지
+const frameDoc = (t: string) => t.replace(/^(\s*<!doctype[^>]*>)?/i, '$1<base href="about:srcdoc">');
+// svg 는 그림(img)으로 — img 안의 svg 는 스크립트 · 바깥 자원을 안 쓰고, 창 폭에 맞춰 줄어든다(iframe 은 그림 제 크기라 오른쪽이 잘렸다)
+const svgSrc = (t: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(t)}`;
+// band0 — 띠를 편 채로 연다(판 카드의 산출물 단추)
+function OutputSheet({ id, i, label, band0 = false, onClose }: { id: number; i: number; label?: string; band0?: boolean; onClose: () => void }) {
+  const one = useOutput(id, i);
+  const act = one.data?.act, [band, setBand] = useState(band0), { job, refresh } = useJob(id, i, !!act);
   const running = job?.state === 'running';
   return (
     <Sheet title={label ?? one.data?.label ?? ''} sub={one.data?.path} onClose={onClose}
@@ -850,9 +964,8 @@ function OutputSheet({ id, i, label, onClose }: { id: number; i: number; label?:
         : act && band && !running ? <ActBand id={id} i={i} onClose={() => setBand(false)} onStarted={() => { setBand(false); void refresh(); }} /> : null}>
       {one.isLoading ? <Empty>읽는 중…</Empty> : one.error ? <Empty>{(one.error as Error).message}</Empty>
         : one.data && (/\.(md|markdown)$/i.test(one.data.path) ? <Md text={one.data.text} />
-          // 엔진이 그린 그림 — 빈 sandbox 라 스크립트가 돌지 않고 출처가 없어(쿠키 · /api 못 씀) 이 화면에 손대지 못한다
-          // base — srcdoc 은 EDITH 주소를 기준으로 삼아 목차 #앵커가 EDITH 로 튀어 「연결을 거부」 로 뜬다. doctype 뒤에 넣어 표준 모드 유지
-          : /\.(html?|svg)$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={one.data.text.replace(/^(\s*<!doctype[^>]*>)?/i, '$1<base href="about:srcdoc">')} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
+          : /\.svg$/i.test(one.data.path) ? <img src={svgSrc(one.data.text)} alt={one.data.label} className="max-h-[75vh] w-full rounded-lg border bg-white object-contain" />
+          : /\.html?$/i.test(one.data.path) ? <iframe sandbox="" srcDoc={frameDoc(one.data.text)} title={one.data.path} className="h-[70vh] w-full rounded-lg border bg-white" />
           : <pre className="code-panel whitespace-pre-wrap">{one.data.text}</pre>)}
     </Sheet>
   );
