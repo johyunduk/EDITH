@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chainView, claudeChip, columns, dropShared, merge, notionUrl, pastDays, phases, short, stageOf, statusOf } from '../web/src/runFlow.ts';
+import { chainView, claudeChip, columns, dropShared, foldOf, merge, notionUrl, pastDays, phases, short, stageOf, statusOf } from '../web/src/runFlow.ts';
 import type { FlowStep } from '../web/src/stepFlow.ts';
 
 // 맨 위: 엔진 i(체인 a · b) → 체인 p → be 갈래(체인 d → e) · fe 갈래(체인 f) → 체인 j. p 에 고치는 노드 x.
@@ -32,6 +32,18 @@ test('산출물 단계 — 만든 노드가 든 큰 단계(고치는 노드 포�
   const m = stageOf(phases(STEPS), ['d.1', undefined, 'p.x', '없는.노드', 'j.1']);
   assert.deepEqual([...m].filter(([, v]) => v.length), [['i', [1, 3]], ['p', [2]], ['d', [0]], ['j', [4]]]);
   assert.deepEqual([...stageOf([], ['d.1'])], []);
+});
+
+test('결과물 판 처음 펼침 — 지금 + 바로 앞(갈래 안 · 앞 칸 · 앞 갈래들의 끝), 그보다 앞 칸은 덱, 지금이 없으면 모두 덱', () => {
+  const cols = columns(phases(STEPS)), f = (now: string[], idle: string[] = []) => {
+    const r = foldOf(cols, p => now.includes(p.id), p => idle.includes(p.id));
+    return [[...r.open].sort().join(), r.deck];
+  };
+  assert.deepEqual(f(['e']), ['d,e', 2]);           // be 갈래 둘째 — 그 갈래의 앞
+  assert.deepEqual(f(['d']), ['d,p', 1]);           // 갈래 첫 단계 — 앞 칸(계획)
+  assert.deepEqual(f(['j']), ['e,f,j', 2]);         // 합친 뒤 — 갈래마다 마지막
+  assert.deepEqual(f(['j'], ['f']), ['e,j', 2]);    // 건너뛴 갈래 끝은 빼고
+  assert.deepEqual(f([]), ['', 4]);                 // 끝난 런 — 모두 덱
 });
 
 test('런 흐름 상태 — 하나라도 돌면 live, 다 끝(건너뜀 포함)이면 done, 몇은 끝이면 part', () => {

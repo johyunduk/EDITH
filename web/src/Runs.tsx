@@ -1,7 +1,7 @@
 // 런 #번호 — 공방의 런(또는 시험으로 엔진 · 체인)을 한 번 돌린 것. 왼쪽 「새 런」과 런 목록, 가운데 결과물 판(Board — 「요약 · 타임라인 · 캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
 // 주소는 #/runs/<번호>. 돌리는 것은 서버의 실행기(src/runner.ts)이고, 화면은 run.json 을 읽어 보여 주며 멈춤 · 이어서 · 건너뛰기만 보낸다.
 // 런 이름은 「티켓 [안건] 짧은 제목」(받은 요청 · 배포 목록 · 엔진 요약에서)을 크게, 「#번호 엔진 이름」 은 그 위에 작게.
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { get, post, useHerdr } from './api.ts';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,7 @@ import { Attach, upload } from './Attach.tsx';
 import { NODE, type NodeState } from './StepFlow.tsx';
 import { RunFlow } from './RunFlow.tsx';
 import { RunTimeline, type Entry } from './RunTimeline.tsx';
-import { claudeChip, columns, dropShared, dur, isTest, notionUrl, pastDays, phases, runNo, stageOf, statusOf, type ClaudeUsed, type Phase } from './runFlow.ts';
+import { claudeChip, columns, dropShared, dur, foldOf, isTest, notionUrl, pastDays, phases, runNo, stageOf, statusOf, type ClaudeUsed, type Col, type Phase, type Status } from './runFlow.ts';
 import { byPhase, highlights, inTok, type StatNode, type Stats } from './runStats.ts';
 import type { FlowStep } from './stepFlow.ts';
 import { groupOutputs, groupSize, type OutputGroup } from './outputGroups.ts';
@@ -576,7 +576,7 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
         {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
       </>}
       {r.live && watch && <Live id={r.id} />}
-      {view === 'board' ? <Board r={r} />
+      {view === 'board' ? <Board key={r.id} r={r} />
         : view === 'summary' && r.summary ? <SummaryView r={r} s={r.summary} toTimeline={() => setView('timeline')} />
         : view === 'stats' ? <Analysis id={r.id} sel={sel} pick={k => setSel(k === sel ? null : k)} detail={() => detail(false)} />
         : view === 'canvas' ? <>
@@ -800,46 +800,94 @@ function RepoOutputs({ id }: { id: number }) {
 }
 // 결과물 판 — 런 화면 기본 보기. 큰 단계(runFlow phases) 차례로 한 줄씩 — 머리(✓ 끝 · ● 지금 · ○ 남음 · 건너뜀, 걸린 시간), 그 단계가 만든 산출물 중
 // 판에 올린 것(board — 흐름도 · ERD · 가이드 · 기획 · 계획)은 미리 보기 카드, 나머지는 줄마다 「그 밖 산출물」 에 접는다. 도는 런 · 끝난 런이 같은 꼴이라
-// 같은 것은 늘 같은 자리에 있다(2026-11-11 정함 — 진행 중 · 끝을 같은 꼴로). 갈래가 갈리는 곳은 갈래마다 칸을 나란히(columns), 모두 건너뛴 갈래는 아래 한 줄로
+// 같은 것은 늘 같은 자리에 있다(2026-11-11 정함 — 진행 중 · 끝을 같은 꼴로). 갈래가 갈리는 곳은 갈래마다 칸을 나란히(columns — 같은 차례끼리 한 줄), 모두 건너뛴 갈래는 아래 한 줄로.
+// 스크롤이 길어 지금 단계와 그 바로 앞만 펼치고(foldOf), 그보다 앞 끝난 단계는 맨 위 「끝난 단계 n개」 덱에, 나머지 줄은 이름 칩으로 접는다(같은 날 — 시안 5차 L)
 function Board({ r }: { r: Run }) {
-  const q = useOutputs(r.id), [view, setView] = useState<{ i: number; band: boolean } | null>(null);
-  const outs = q.data ?? [], ps = useMemo(() => phases(r.steps).filter(p => p.keys.length), [r.steps]);
+  const q = useOutputs(r.id), [view, setView] = useState<{ i: number; band: boolean } | null>(null), [fold, setFold] = useFold(r.id);
+  const outs = q.data ?? [], ps = useMemo(() => phases(r.steps).filter(p => p.keys.length), [r.steps]), cols = useMemo(() => columns(ps), [ps]);
   const at = stageOf(ps, outs.map(o => o.node)), cut = dropShared(ps.map(p => p.name));
   // 답 기다리는 노드와 바로 앞 노드가 만든 것 — 그 카드에 「답하기 전에 볼 것」
   const blocked = r.steps.filter(s => r.nodes[s.key].state === 'blocked'), ask = new Set(outs.flatMap((o, i) => o.node && blocked.some(s => [s.key, ...s.deps].includes(o.node!)) ? [i] : []));
-  const row = (p: Phase) => <Stage key={p.id} r={r} p={p} name={cut(p.name)} items={(at.get(p.id) ?? []).map(i => [outs[i], i])} ask={ask} open={(i, band) => setView({ i, band })} />;
+  const stOf = (p: Phase) => phaseSt(r, p), idle = (p: Phase) => idleOf(r, p);
+  const { open: open0, deck } = foldOf(cols, p => stOf(p) === 'live', idle);
+  const isOpen = (p: Phase) => fold.rows[p.id] ?? open0.has(p.id);
+  // 덱에 넣는 것 — 덱 칸 중 돈 단계(건너뜀 · 아직 안 돈 단계는 덱 아래 한 줄로)
+  const shut = (p: Phase) => !idle(p) && stOf(p) !== 'wait', deckPs = cols.slice(0, deck).flatMap(c => c.kind === 'box' ? [c.phase] : c.rows.flatMap(x => x.phases)).filter(shut);
+  const row = (p: Phase) => <Stage key={p.id} r={r} p={p} name={cut(p.name)} items={(at.get(p.id) ?? []).map(i => [outs[i], i])} ask={ask} open={(i, band) => setView({ i, band })}
+    folded={!isOpen(p)} flip={() => setFold({ ...fold, rows: { ...fold.rows, [p.id]: !isOpen(p) } })} />;
+  // 칸들을 그린다 — pick 에 드는 단계만
+  const lay = (cs: Col[], pick: (p: Phase) => boolean) => cs.map((c, n) => {
+    if (c.kind === 'box') return pick(c.phase) ? row(c.phase) : null;
+    const rows = c.rows.map(x => ({ ...x, phases: x.phases.filter(pick) })).filter(x => x.phases.length);
+    const on = rows.filter(x => !x.phases.every(idle)), off = rows.filter(x => x.phases.every(idle));
+    return (
+      <Fragment key={n}>
+        {/* 넓은 화면은 같은 차례 단계끼리 한 줄 — 높이가 같아 지금 줄끼리 나란히 붙는다(갈래마다 따로 쌓으니 엇갈렸다). 좁은 화면은 갈래마다 차례로 */}
+        {on.length > 0 && (
+          <div style={{ '--n': on.length } as CSSProperties} className="grid gap-2 lg:grid-cols-[repeat(var(--n),minmax(0,1fr))]">
+            {on.flatMap((x, c) => x.phases.map((p, i) => (
+              <div key={p.id} style={{ '--c': c + 1, '--r': i + 1 } as CSSProperties} className="grid min-w-0 lg:[grid-column:var(--c)] lg:[grid-row:var(--r)]">{row(p)}</div>
+            )))}
+          </div>
+        )}
+        {off.flatMap(x => x.phases).map(row)}
+      </Fragment>
+    );
+  });
   if (!ps.length) return <Empty>노드가 없는 런이다.</Empty>;
+  const some = ps.some(p => !isOpen(p)) || (deckPs.length > 0 && !fold.deck);
   return (
     <div className="space-y-2">
-      {columns(ps).map((c, n) => {
-        if (c.kind === 'box') return row(c.phase);
-        const on = c.rows.filter(x => !x.phases.every(p => idleOf(r, p))), off = c.rows.filter(x => x.phases.every(p => idleOf(r, p)));
-        return (
-          <Fragment key={n}>
-            {on.length > 0 && <div className={`grid gap-2 ${on.length > 1 ? 'lg:grid-cols-2' : ''}`}>{on.map(x => <div key={x.track} className="min-w-0 space-y-2">{x.phases.map(row)}</div>)}</div>}
-            {off.flatMap(x => x.phases).map(row)}
-          </Fragment>
-        );
-      })}
+      <p className="flex justify-end">
+        <button type="button" onClick={() => setFold({ deck: some, rows: Object.fromEntries(ps.map(p => [p.id, some])) })} className="text-xs text-muted-foreground hover:text-foreground">{some ? '모두 펼치기' : '모두 접기'}</button>
+      </p>
+      {deckPs.length > 0 && (
+        <section className="rounded-xl border bg-card px-4 py-2.5" aria-label="끝난 단계">
+          <button type="button" aria-expanded={!!fold.deck} onClick={() => setFold({ ...fold, deck: !fold.deck })} className="flex w-full flex-wrap items-baseline gap-x-2 text-left text-sm">
+            <span className="w-3 text-xs text-muted-foreground">{fold.deck ? '▾' : '▸'}</span><span className="font-semibold">끝난 단계 {deckPs.length}개</span>
+            <span className="text-xs text-muted-foreground">{deckPs.map(p => cut(p.name)).join(' · ')}</span>
+          </button>
+          {fold.deck && <div className="mt-2 space-y-2">{lay(cols.slice(0, deck), shut)}</div>}
+        </section>
+      )}
+      {lay(cols.slice(0, deck), p => !shut(p))}
+      {lay(cols.slice(deck), () => true)}
       {view && <OutputSheet id={r.id} i={view.i} band0={view.band} onClose={() => setView(null)} />}
     </div>
   );
 }
-// 큰 단계 한 줄 — 남은 · 건너뛴 단계는 이름만 흐리게. 지금 단계는 지금 노드마다 한 줄(NowLine), 답 기다림 · 확인 필요면 주황
+// 결과물 판 펼침 — 런마다 이 브라우저에 기억(덱 · 줄마다). 처음 값(foldOf)에서 사람이 바꾼 것만 적는다
+type Fold = { deck?: boolean; rows: Record<string, boolean> };
+function useFold(id: number): [Fold, (f: Fold) => void] {
+  const key = `edith.runs.fold.${id}`;
+  const [f, setF] = useState<Fold>(() => { try { return { rows: {}, ...JSON.parse(localStorage.getItem(key) ?? '{}') }; } catch { return { rows: {} }; } });
+  return [f, n => { setF(n); try { localStorage.setItem(key, JSON.stringify(n)); } catch { /* 저장 안 됨 */ } }];
+}
+// 큰 단계 한 줄 — 남은 · 건너뛴 단계는 이름만 흐리게. 지금 단계는 지금 노드마다 한 줄(NowLine), 답 기다림 · 확인 필요면 주황.
+// 접힌 줄(folded)은 머리 + 판 카드 이름 칩(누르면 바로 보기 창) · 「+그 밖 n」 — 머리를 누르면 펼치고 접는다
 const LIVE: NodeState[] = ['running', 'sending', 'blocked', 'check'];
+// 단계 상태 — 고치는 노드(fixOnly — 단계 노드 수엔 안 든다)가 돌아도 지금, 도는 런에서 노드 사이(몇은 끝 · 몇은 대기)도 지금
+// (고치는 노드가 도는 구현 단계가 「일부 끝」 으로 보여 덱에 들어갔다)
+const phaseSt = (r: Run, p: Phase): Status => {
+  if (p.groups.some(g => g.keys.some(k => LIVE.includes(r.nodes[k].state)))) return 'live';
+  const st = statusOf(p.keys.map(k => r.nodes[k].state));
+  return st === 'part' && r.state === 'running' ? 'live' : st;
+};
 // 건너뛴 단계 — 노드를 다 건너뛰었거나, 스킬 노드를 다 건너뛰었다(「앱 없으면 건너뜀」 같은 명령 노드만 돈 갈래)
 const idleOf = (r: Run, p: Phase) => {
   const sk = r.steps.filter(x => p.keys.includes(x.key) && x.kind === 'skill');
   return p.keys.every(k => r.nodes[k].state === 'skipped') || (sk.length > 0 && sk.every(x => r.nodes[x.key].state === 'skipped'));
 };
-function Stage({ r, p, name, items, ask, open }: { r: Run; p: Phase; name: string; items: [OutputItem, number][]; ask: Set<number>; open: (i: number, band: boolean) => void }) {
-  const st = p.keys.map(k => r.nodes[k].state), s = statusOf(st), now = r.steps.filter(x => p.keys.includes(x.key) && LIVE.includes(r.nodes[x.key].state));
+function Stage({ r, p, name, items, ask, open, folded, flip }: {
+  r: Run; p: Phase; name: string; items: [OutputItem, number][]; ask: Set<number>; open: (i: number, band: boolean) => void; folded: boolean; flip: () => void;
+}) {
+  const all = p.groups.flatMap(g => g.keys), s = phaseSt(r, p), now = r.steps.filter(x => all.includes(x.key) && LIVE.includes(r.nodes[x.key].state));
   // 갈래 이름은 단계 이름에 없을 때만 앞에(「BE 계획」 에 be 는 군더더기) — 단계 줄(Phases)과 같게
   const label = <>{p.track && !name.toLowerCase().includes(p.track.toLowerCase()) && <span className="mr-1.5 font-mono text-xs opacity-75">{p.track}</span>}{name}</>;
   if (idleOf(r, p)) return <p className="px-3 text-sm text-muted-foreground/70">건너뜀 · {label}</p>;
   if (s === 'wait' && !items.length) return <p className="px-3 text-sm text-muted-foreground">○ 남음 · {label}</p>;
   // 걸린 시간 — 이 단계 노드 기록마다 일 + 사람 시간을 더한 것(처음 · 끝 사이로 재면 되돌림으로 다음 날 다시 돈 사이까지 든다), 도는 노드는 지금까지
-  const es = (r.timeline ?? []).filter(e => e.kind === 'node' && p.keys.includes(e.keys[0]));
+  const es = (r.timeline ?? []).filter(e => e.kind === 'node' && all.includes(e.keys[0]));
   const took = es.reduce((a, e) => a + (e.tone === 'now' ? Date.now() - e.t : e.work ?? 0) + (e.human ?? 0), 0), warn = now.some(x => r.nodes[x.key].state === 'blocked' || r.nodes[x.key].state === 'check');
   const cards = items.filter(([o]) => o.board), gs = groupOutputs(items.filter(([o]) => !o.board));
   const rest = gs.flatMap(g => g.items), folds = gs.flatMap(g => g.folds), n = rest.length + folds.reduce((a, f) => a + f.items.length, 0);
@@ -848,11 +896,22 @@ function Stage({ r, p, name, items, ask, open }: { r: Run; p: Phase; name: strin
     : <span className="text-muted-foreground">{s === 'part' ? '◐ 여기까지' : '○ 남음'}</span>;
   return (
     <section className={`space-y-2 rounded-xl border bg-card px-4 py-3 ${s === 'live' ? (warn ? 'border-amber-500/70 bg-amber-500/5' : 'border-sky-500/60 bg-sky-500/5') : ''}`} aria-label={p.name}>
-      <p className="flex items-baseline gap-2 text-sm font-semibold">{head}<span>{label}</span>
-        {es.length > 0 && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{dur(took)}{s === 'live' ? '째' : ''}</span>}</p>
-      {now.map(x => <NowLine key={x.key} r={r} s={x} />)}
-      {cards.length > 0 && <div className="flex flex-wrap gap-2">{cards.map(([o, i]) => <Card key={i} id={r.id} o={o} i={i} ask={ask.has(i)} open={band => open(i, band)} />)}</div>}
-      {n > 0 && <details className="text-sm"><summary className="cursor-pointer text-xs text-muted-foreground">그 밖 산출물 {n}</summary><div className="mt-1.5"><OutputChips id={r.id} items={rest} folds={folds} /></div></details>}
+      <button type="button" onClick={flip} aria-expanded={!folded} className="flex w-full items-baseline gap-2 text-left text-sm font-semibold">
+        <span className="w-3 text-xs font-normal text-muted-foreground">{folded ? '▸' : '▾'}</span>{head}<span>{label}</span>
+        {es.length > 0 && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{dur(took)}{s === 'live' ? '째' : ''}</span>}
+      </button>
+      {folded ? cards.length + n > 0 && (
+        // 칩 이름은 「 · 」 앞까지(「BE 흐름 1 · 근로자 정보에서 …」 → 「BE 흐름 1」), 전체 이름은 마우스를 올리면
+        <p className="flex flex-wrap gap-1.5">
+          {cards.map(([o, i]) => <button key={i} type="button" title={o.label} onClick={() => open(i, false)}
+            className={`rounded-md border bg-background px-2 py-0.5 text-xs hover:border-primary/60 ${ask.has(i) ? 'border-amber-500' : ''}`}>{o.label.split(' · ')[0]}</button>)}
+          {n > 0 && <button type="button" onClick={flip} className="rounded-md border border-dashed border-input px-2 py-0.5 text-xs text-muted-foreground hover:border-primary/60">+그 밖 {n}</button>}
+        </p>
+      ) : <>
+        {now.map(x => <NowLine key={x.key} r={r} s={x} />)}
+        {cards.length > 0 && <div className="flex flex-wrap gap-2">{cards.map(([o, i]) => <Card key={i} id={r.id} o={o} i={i} ask={ask.has(i)} open={band => open(i, band)} />)}</div>}
+        {n > 0 && <details className="text-sm"><summary className="cursor-pointer text-xs text-muted-foreground">그 밖 산출물 {n}</summary><div className="mt-1.5"><OutputChips id={r.id} items={rest} folds={folds} /></div></details>}
+      </>}
     </section>
   );
 }

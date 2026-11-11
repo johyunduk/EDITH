@@ -34,6 +34,19 @@ export function stageOf(ps: Phase[], nodes: (string | undefined)[]): Map<string,
   return m;
 }
 
+// 결과물 판 처음 펼침 — 지금 단계 + 그 바로 앞 단계(갈래 안이면 그 갈래의 앞, 갈래 첫 단계면 앞 칸 — 앞 칸이 갈래 묶음이면 갈래마다 마지막 것).
+// deck = 그보다 앞 칸 수(「끝난 단계 n개」 덱에 접는다). 지금이 없으면(끝난 런 · 아직 안 돈 런) 모든 칸
+export function foldOf(cols: Col[], live: (p: Phase) => boolean, idle: (p: Phase) => boolean): { open: Set<string>; deck: number } {
+  const open = new Set<string>();
+  const before = (n: number): Phase[] => { const c = cols[n - 1]; return !c ? [] : c.kind === 'box' ? [c.phase] : c.rows.flatMap(x => x.phases.filter(p => !idle(p)).slice(-1)); };
+  cols.forEach((c, n) => {
+    if (c.kind === 'box') { if (live(c.phase)) [c.phase, ...before(n)].forEach(p => open.add(p.id)); return; }
+    for (const x of c.rows) x.phases.forEach((p, i) => { if (live(p)) [p, ...(i ? [x.phases[i - 1]] : before(n))].forEach(q => open.add(q.id)); });
+  });
+  const first = cols.findIndex(c => (c.kind === 'box' ? [c.phase] : c.rows.flatMap(x => x.phases)).some(p => open.has(p.id)));
+  return { open, deck: first < 0 ? cols.length : first };
+}
+
 // 갈래가 있는 큰 단계는 바로 앞 칸이 갈래 묶음이면 거기에(그 갈래 줄 끝에), 아니면 새 묶음을 연다
 export function columns(ps: Phase[]): Col[] {
   const cols: Col[] = [];
