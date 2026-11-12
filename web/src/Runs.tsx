@@ -602,10 +602,9 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
       )}
       {view !== 'board' && <Waiting r={r} />}
       {out !== undefined && <OutputSheet id={r.id} i={out} onClose={() => { location.hash = `#/runs/${r.id}`; }} />}
-      {view !== 'summary' && view !== 'board' && <>
-        <RepoOutputs id={r.id} />
-        {r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
-      </>}
+      {view !== 'summary' && view !== 'board' && <RepoOutputs id={r.id} />}
+      {/* 런 단추(「내리기」 같은 것)는 처음 여는 결과물 판에서도 — 요약 보기는 제 자리에 따로 둔다 */}
+      {view !== 'summary' && r.actions.length > 0 && r.state !== 'dropped' && <Actions r={r} />}
       {r.live && watch && <Live id={r.id} />}
       {view === 'board' ? <Board key={r.id} r={r} />
         : view === 'summary' && r.summary ? <SummaryView r={r} s={r.summary} toTimeline={() => setView('timeline')} />
