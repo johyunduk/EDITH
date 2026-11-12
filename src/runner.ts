@@ -294,6 +294,15 @@ export const claudeOf = (id: number, key: string, attempt: number): ClaudeUsed |
   try { return JSON.parse(readFileSync(join(attemptDir(id, key, attempt), 'claude.json'), 'utf8')) as ClaudeUsed; } catch { return null; }
 };
 // 통과한 노드가 시도 폴더에 rewind.json 을 남겼으면 그 노드부터 다시(명령 노드는 $EDITH_REWIND, 스킬 노드는 결과 파일 옆). 틀렸으면 확인 필요.
+// 엔진이 노드 밖(뒤에서 도는 일)에서 낸 되돌림 — 작업 폴더의 이 파일. 고리가 읽고 지운 뒤 단추 되돌림처럼 도는 노드를 끊고 되돌린다.
+// 노드의 rewind.json 과 같은 꼴 · 같은 검사라 노드가 이미 낼 수 있던 것보다 넓지 않다. 틀렸으면 확인 필요
+export const ENGINE_REWIND = 'edith-rewind.json';
+export function engineRewind(r: Run, file = join(dirOf(r.id), 'work', ENGINE_REWIND)) {
+  let t: string;
+  try { t = readFileSync(file, 'utf8'); rmSync(file, { force: true }); } catch { return; }
+  const b = parseRewind(t), e = typeof b === 'string' ? b : rewindLive(r, b.to, '엔진', b.reason);
+  if (e) { r.state = 'check'; r.reason = `엔진 되돌림 — ${e}`; }
+}
 export function rewindAfter(r: Run, s: Step, at: string) {
   let t: string;
   try { t = readFileSync(join(at, 'rewind.json'), 'utf8'); } catch { return; }
@@ -652,6 +661,7 @@ export function drive(id: number) {
         if (!r) break;
         for (const a of queued.get(id) ?? []) apply(r, a);
         queued.delete(id);
+        if (r.state !== 'dropped') engineRewind(r);
         const held = checks(r);
         if (moving(r)) await tick(r);
         unattend(r);

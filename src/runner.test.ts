@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeArgs, claudeUsed, closingTalk, flatten, nap, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runNo, runSpace, nextId, settle, skip, skipRest, unattend, wake, type Run, type Step } from './runner.ts';
+import { claudeArgs, claudeUsed, closingTalk, engineRewind, flatten, nap, parseLimit, parsePicks, pickRequest, nextStep, nextSteps, parseResult, parseRewind, previewSteps, promptFor, recover, resume, rewind, rewindAfter, actBlocked, cutOff, runLabel, runNo, runSpace, nextId, settle, skip, skipRest, unattend, wake, type Run, type Step } from './runner.ts';
 import { createEngine, type Engine } from './workshop.ts';
 import { groupOf, shortName } from '../web/src/wsGroups.ts';
 
@@ -212,6 +212,23 @@ test('통과한 노드의 rewind.json — 있으면 되돌리고, 없으면 그�
     settle(r, s('z'), { result: '통과' });
     rewindAfter(r, s('z'), at);
     assert.deepEqual([r.nodes.z.state, r.state], ['check', 'check']);
+  } finally { rmSync(at, { recursive: true, force: true }); }
+});
+
+test('엔진이 뒤에서 낸 되돌림(edith-rewind.json) — 읽고 지운 뒤 되돌리고, 없으면 그대로, 틀렸으면 확인 필요', () => {
+  const at = mkdtempSync(join(tmpdir(), 'edith-engine-rewind-')), f = join(at, 'edith-rewind.json');
+  try {
+    const r = run(flatten('flow', load, resolve) as Step[]), s = (k: string) => r.steps.find(x => x.key === k)!;
+    for (const k of ['a', 'be.b1', 'be.b2']) settle(r, s(k), { result: '통과', summary: '했다' });
+    engineRewind(r, f);
+    assert.equal(r.rewinds?.length ?? 0, 0);
+    writeFileSync(f, '{"to":"be.b1","reason":"기획자 답이 가정과 다르다"}');
+    engineRewind(r, f);
+    assert.deepEqual([r.nodes['be.b1'].state, r.nodes['be.b2'].state, r.rewinds?.[0].by, existsSync(f)], ['wait', 'wait', '엔진', false]);
+    writeFileSync(f, '{"to":"없음"}');
+    engineRewind(r, f);
+    assert.equal(r.state, 'check');
+    assert.match(r.reason ?? '', /^엔진 되돌림 — /);
   } finally { rmSync(at, { recursive: true, force: true }); }
 });
 
