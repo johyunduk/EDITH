@@ -270,6 +270,8 @@ test('보내는 글 · 결과 파일', () => {
   assert.deepEqual(parseResult('{"결과":"건너뜀","한줄":" 노션 원본 없음 — 넘어감 ","요약":"노션 원본이 없다"}'), { result: '건너뜀', summary: '노션 원본이 없다', line: '노션 원본 없음 — 넘어감', reason: undefined });
   assert.equal(typeof parseResult('{"결과":"ok"}'), 'string');
   assert.equal(typeof parseResult('깨짐'), 'string');
+  // 요약 안에 엔터를 그대로 쓴 결과 파일(#58) — 따옴표 밖 줄바꿈 · 들여쓰기는 그대로 두고 읽는다
+  assert.deepEqual(parseResult('{\n  "결과": "통과",\n  "요약": "승인했다.\n다음은 \\"구현\\"이다."\n}'), { result: '통과', summary: '승인했다.\n다음은 "구현"이다.', reason: undefined });
 });
 
 test('펼쳐 보기 — 초안 짜임을 쓰고, 아직 없는 스킬은 막지 않는다', () => {

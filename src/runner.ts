@@ -346,7 +346,9 @@ export function promptFor(r: Run, s: Step, dir: string, res: string, extra: stri
 }
 export function parseResult(t: string): Outcome | string {
   let o: Record<string, unknown>;
-  try { o = JSON.parse(t); } catch { return '결과 파일이 JSON 이 아니다'; }
+  // Claude 가 요약의 줄바꿈을 \n 대신 엔터 그대로 쓸 때가 있다(#41 · #46 · #58) — 따옴표 안의 엔터 · 탭만 이스케이프해 한 번 더 읽는다
+  const esc = (s: string) => s.replace(/"(?:[^"\\]|\\.)*"/gs, m => m.replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t'));
+  try { o = JSON.parse(t); } catch { try { o = JSON.parse(esc(t)); } catch { return '결과 파일이 JSON 이 아니다'; } }
   if (o?.결과 !== '통과' && o?.결과 !== '건너뜀' && o?.결과 !== '실패' && o?.결과 !== '막힘') return '결과 파일의 "결과" 가 통과 · 건너뜀 · 실패 · 막힘 이 아니다';
   const summary = typeof o.요약 === 'string' ? o.요약.slice(0, 600) : undefined;
   const line = typeof o.한줄 === 'string' && o.한줄.trim() ? o.한줄.trim().slice(0, 80) : undefined;
