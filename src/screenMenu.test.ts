@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { guardCard, mainPush, parseMenu } from '../web/src/screenMenu.ts';
+import { guardCard, mainPush, parseMenu, warnAsk } from '../web/src/screenMenu.ts';
 
 test('번호 메뉴 — 번호·설명 줄·질문, 커서는 없다', () => {
   const m = parseMenu([
@@ -138,6 +138,14 @@ test('main 푸시 질문(커밋 지킴이) — 머리표 「⚠ main 푸시」 �
   assert.equal(mainPush(parseMenu(lines.map(l => l.replace(' ☐ ⚠ main 푸시', ' ☐ git push')))), null);
   assert.equal(mainPush(parseMenu(['⏺ 「☐ ⚠ main 푸시」 머리표를 단다', '────────', ' ☐ git commit', '│ git commit 1건 — 실행할까?', '❯ 1. 실행', '  2. 막기'])), null);
   assert.equal(mainPush(null), null);
+});
+
+test('위험 질문 — 질문 어느 줄이든 「⚠ 되돌리기 어려운 선택」 으로 시작하면(맥락이 앞에 붙어도), main 푸시 · 보통 ⚠ 줄 · 메뉴 없음은 아니다', () => {
+  const ask = (...q: string[]) => parseMenu(['──────────────────────────────', ' ☐ 기획 바뀜', '', ...q.map(l => `│ ${l}`), '❯ 1. 덧대서 이어 간다', '  2. 고친다 — 버리고 새로 시작', 'Enter to select · ↑/↓ to navigate · Esc to cancel']);
+  assert.equal(warnAsk(ask('⚠ 되돌리기 어려운 선택 — 기획이 크게 바뀌었다. 버릴까?')), true);
+  assert.equal(warnAsk(ask('측이 BE 만에서 FE 도로 늘었다.', '', '⚠ 되돌리기 어려운 선택 — 기획이 크게 바뀌었다. 버릴까?')), true, '맥락이 질문 앞');
+  assert.equal(warnAsk(ask('⚠ 주의: 시험이 느리다', '그대로 할까?')), false);
+  assert.equal(warnAsk(null), false);
 });
 
 test('커밋 지킴이 질문 카드 — 같은 레포의 커밋 · 푸시는 한 상자, 머지는 커밋 앞, 푸시도 보낼 커밋 제목, 접힌 줄은 앞 줄에, 명령 원문은 따로', () => {

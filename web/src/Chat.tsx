@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { get, type HPane } from './api.ts';
 import { Empty, Icon, Md } from './ui.tsx';
 import { Ansi } from './ansi.tsx';
-import { guardCard, mainPush, parseMenu, type Menu } from './screenMenu.ts';
+import { guardCard, mainPush, parseMenu, warnAsk, type Menu } from './screenMenu.ts';
 import { Kind, WARN } from './herdrUi.tsx';
 import { AskBand, useAsksOpen } from './Asks.tsx';
 
@@ -159,13 +159,15 @@ const ChatItem = memo(function ChatItem({ it, agent, tools }: { it: Item; agent:
   );
 });
 
-// 대화 끝 「답을 기다린다」 말풍선 — 자세한 것은 아래 입력칸 카드에. main · master 푸시 질문(커밋 지킴이)은 빨강
+// 대화 끝 「답을 기다린다」 말풍선 — 자세한 것은 아래 입력칸 카드에. main · master 푸시 질문(커밋 지킴이)과 「⚠ 되돌리기 어려운 선택」 질문은 빨강
 function WaitNote({ menu }: { menu: Menu }) {
-  const mp = mainPush(menu), q = mp?.question ?? menu.question;
+  const mp = mainPush(menu), warn = warnAsk(menu), q = mp?.question ?? menu.question;
   return (
-    <div className={`ml-9 rounded-xl border px-3.5 py-2.5 text-sm ${mp ? 'border-rose-500/40 bg-rose-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
-      <div className={`flex items-center gap-1.5 text-xs font-semibold ${mp ? 'text-rose-700 dark:text-rose-400' : 'text-amber-700 dark:text-amber-400'}`}>
-        {mp ? <><Icon className="size-3.5">{WARN}</Icon>{mp.branch} 푸시를 기다린다 — 아래 입력칸에서 고른다</> : <><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다 — 아래 입력칸에서 고른다</>}
+    <div className={`ml-9 rounded-xl border px-3.5 py-2.5 text-sm ${mp || warn ? 'border-rose-500/40 bg-rose-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
+      <div className={`flex items-center gap-1.5 text-xs font-semibold ${mp || warn ? 'text-rose-700 dark:text-rose-400' : 'text-amber-700 dark:text-amber-400'}`}>
+        {mp ? <><Icon className="size-3.5">{WARN}</Icon>{mp.branch} 푸시를 기다린다 — 아래 입력칸에서 고른다</>
+          : warn ? <><Icon className="size-3.5">{WARN}</Icon>되돌리기 어려운 선택을 기다린다 — 아래 입력칸에서 고른다</>
+          : <><span className="size-1.5 animate-pulse rounded-full bg-amber-500" />답을 기다린다 — 아래 입력칸에서 고른다</>}
       </div>
       {q && <div className="mt-1 whitespace-pre-wrap">{guardCard(q)?.why ?? q.split('\n')[0]}</div>}
     </div>

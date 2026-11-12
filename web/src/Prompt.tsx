@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { get, post, type HPane } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Icon } from './ui.tsx';
-import { guardCard, isFree, mainPush, wide, type Guard, type Menu } from './screenMenu.ts';
+import { guardCard, isFree, mainPush, warnAsk, wide, type Guard, type Menu } from './screenMenu.ts';
 import { WARN } from './herdrUi.tsx';
 import { toast } from './copy.ts';
 import { Attach, upload } from './Attach.tsx';
@@ -98,8 +98,8 @@ function GuardCard({ g }: { g: Guard }) {
 }
 export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   const agent = !!p.agent, { menu, raw } = useScreen(p), qc = useQueryClient();
-  // main · master 푸시 질문(커밋 지킴이)은 카드를 빨강으로 — 머리에 브랜치 · 원격, 질문은 ⚠ 첫 줄을 뗀 나머지
-  const mp = mainPush(menu), question = mp?.question ?? menu?.question ?? '';
+  // main · master 푸시 질문(커밋 지킴이)은 카드를 빨강으로 — 머리에 브랜치 · 원격, 질문은 ⚠ 첫 줄을 뗀 나머지. 「⚠ 되돌리기 어려운 선택」 줄이 든 질문(warn)도 빨강
+  const mp = mainPush(menu), warn = warnAsk(menu), question = mp?.question ?? menu?.question ?? '';
   const guard = guardCard(question);   // 커밋 지킴이 질문이면 레포별 상자로
   const [text, setText] = useState(() => loadDraft(p.id)), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [typed, setTyped] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null), [caret, setCaret] = useState(0);
@@ -162,11 +162,15 @@ export function PromptBox({ p, label }: { p: HPane; label?: string }) {
   return (
     <div className="space-y-1">
       {menu && (
-        <div className={`space-y-2.5 rounded-2xl border p-3.5 shadow-sm ${mp ? 'border-rose-500/60 bg-gradient-to-b from-rose-500/12 to-rose-500/5' : 'border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-amber-500/5'}`}>
+        <div className={`space-y-2.5 rounded-2xl border p-3.5 shadow-sm ${mp || warn ? 'border-rose-500/60 bg-gradient-to-b from-rose-500/12 to-rose-500/5' : 'border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-amber-500/5'}`}>
           {mp ? (
             <div className="flex flex-wrap items-center gap-2 text-[0.8125rem] font-bold text-rose-700 dark:text-rose-400">
               <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-rose-600 text-white"><Icon className="size-3.5">{WARN}</Icon></span>{mp.branch} 에 바로 푸시
               <span className="rounded-md border border-rose-500/40 bg-card px-1.5 font-mono text-[0.6875rem] font-semibold">{mp.ref}</span>
+            </div>
+          ) : warn ? (
+            <div className="flex items-center gap-2 text-[0.8125rem] font-bold text-rose-700 dark:text-rose-400">
+              <span className="flex size-5 animate-pulse items-center justify-center rounded-full bg-rose-600 text-white"><Icon className="size-3.5">{WARN}</Icon></span>되돌리기 어려운 선택 — 잘 보고 고른다
             </div>
           ) : (
             <div className="flex items-center gap-2 text-[0.75rem] font-semibold text-amber-700 dark:text-amber-400">

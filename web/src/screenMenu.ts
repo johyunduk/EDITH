@@ -43,6 +43,10 @@ export function mainPush(m: Menu | null): { branch: string; ref: string; questio
   const head = m.question.match(/^⚠ \S+ 에 바로 올라간다 — (\S+)\n*/);
   return { branch, ref: head?.[1] ?? branch, question: head ? m.question.slice(head[0].length) : m.question };
 }
+// 되돌리기 어려운 것을 묻는 질문 — 질문에 「⚠ 되돌리기 어려운 선택」 으로 시작하는 줄이 있으면(엔진이 질문 글에 넣는다 — 머리표는 묻는 Claude 가 정해 못 믿는다,
+// 맥락이 질문 앞에 붙기도 해 첫 줄로도 못 본다) 카드 · 말풍선을 main 푸시와 같은 빨강으로
+export const WARN_LINE = '⚠ 되돌리기 어려운 선택';
+export const warnAsk = (m: Menu | null) => !!m && !mainPush(m) && m.question.split('\n').some(l => l.trimStart().startsWith(WARN_LINE));
 
 // 커밋 지킴이 질문을 카드로 — 「왜:」 단락, 레포마다 커밋 · 푸시 · 머지 줄, 명령 원문(plugins/commit-guard describe 가 쓰는 줄 꼴).
 // 같은 레포가 잇따르면(커밋하고 푸시) 한 상자. 못 알아보는 꼴(설명을 못 푼 명령 · 다른 질문)이면 null — 카드는 글 그대로 보인다.
