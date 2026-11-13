@@ -95,6 +95,8 @@ export function consoleKey() {
   writeFileSync(file, `${key}\n`, { mode: 0o600 });
   return key;
 }
+// 「배포」 탭에 띄울 이 기기의 다른 화면(배포 보드 등) — CONFIG_DIR/deploy-board 파일의 http://127.0.0.1:<포트> 한 줄. 없거나 꼴이 틀리면 EDITH 배포 화면
+const deployBoardUrl = () => { try { const u = readFileSync(join(CONFIG_DIR, 'deploy-board'), 'utf8').trim(); return /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}\/?$/.test(u) ? u : undefined; } catch { return undefined; } };
 const same = (a: string | undefined, b: string) => !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 // 열쇠 쿠키는 포트마다 따로(edith-<포트>) — 같은 127.0.0.1 에 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 포트만 달리 뜨면 쿠키가 겹친다
 const cookieKey = (req: Pick<IncomingMessage, 'headers'>, port: string) => req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)edith-${port}=([^;]+)`))?.[1];
@@ -403,7 +405,7 @@ export function serve(port: number) {
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await withPush(await snapshot()));   // 승인 대기 pane 은 main 푸시인지(push)도
       // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
-      if (path === '/api/view') return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot, stale: stale(), web: webBuilt(), restart: canRestart });
+      if (path === '/api/view') { const board = deployBoardUrl(); return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot, stale: stale(), web: webBuilt(), restart: canRestart, ...(board ? { board } : {}) }); }
       if (req.method === 'POST' && path === '/api/restart') {
         if (!canRestart) return reply(res, 409, '여기서는 다시 켤 수 없다 — 터미널에서 Ctrl+C 뒤 edith');
         reply(res, 200, { ok: true });

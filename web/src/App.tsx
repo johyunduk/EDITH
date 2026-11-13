@@ -123,7 +123,7 @@ export default function App() {
           )}
         </span>
       </header>
-      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? (r.id ? <EngineSettingsPage key={r.id} id={r.id} /> : <SettingsPage theme={theme} setTheme={setTheme} />) : r.view === 'deploy' ? <DeployPage /> : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
+      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? (r.id ? <EngineSettingsPage key={r.id} id={r.id} /> : <SettingsPage theme={theme} setTheme={setTheme} />) : r.view === 'deploy' ? (view?.board && !remote ? <iframe title="배포 보드" src={view.board} allow="clipboard-write" className="min-h-0 w-full flex-1 border-0" /> : <DeployPage />) : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
 }
