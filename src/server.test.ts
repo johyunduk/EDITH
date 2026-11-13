@@ -3,8 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { refuse } from './server.ts';
+import { boardUrl, refuse } from './server.ts';
 import { prune } from './uploads.ts';
+
+test('배포 탭에 띄울 화면 주소는 이 기기 루프백 http 한 줄만 — 바깥 주소 · https · 경로 · 여러 줄은 버린다', () => {
+  assert.equal(boardUrl('http://127.0.0.1:4330\n'), 'http://127.0.0.1:4330');
+  assert.equal(boardUrl('http://localhost:4330/'), 'http://localhost:4330/');
+  for (const bad of ['http://example.com:4330', 'https://127.0.0.1:4330', 'http://127.0.0.1:4330/x', 'http://127.0.0.1', 'http://127.0.0.1:4330\nhttp://example.com', 'javascript:alert(1)', ''])
+    assert.equal(boardUrl(bad), undefined, bad);
+});
 
 const KEY = 'k'.repeat(32);
 const req = (method: string, headers: Record<string, string> = {}) => ({ method, headers: { host: '127.0.0.1:4320', ...headers } });

@@ -96,7 +96,9 @@ export function consoleKey() {
   return key;
 }
 // 「배포」 탭에 띄울 이 기기의 다른 화면(배포 보드 등) — CONFIG_DIR/deploy-board 파일의 http://127.0.0.1:<포트> 한 줄. 없거나 꼴이 틀리면 EDITH 배포 화면
-const deployBoardUrl = () => { try { const u = readFileSync(join(CONFIG_DIR, 'deploy-board'), 'utf8').trim(); return /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}\/?$/.test(u) ? u : undefined; } catch { return undefined; } };
+// iframe 에 넣는 주소라 이 기기 루프백 http 만 받는다 — 바깥 주소를 적어도 EDITH 안에 남의 화면을 띄우지 않게
+export const boardUrl = (text: string) => { const u = text.trim(); return /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}\/?$/.test(u) ? u : undefined; };
+const deployBoardUrl = () => { try { return boardUrl(readFileSync(join(CONFIG_DIR, 'deploy-board'), 'utf8')); } catch { return undefined; } };
 const same = (a: string | undefined, b: string) => !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 // 열쇠 쿠키는 포트마다 따로(edith-<포트>) — 같은 127.0.0.1 에 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 포트만 달리 뜨면 쿠키가 겹친다
 const cookieKey = (req: Pick<IncomingMessage, 'headers'>, port: string) => req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)edith-${port}=([^;]+)`))?.[1];
