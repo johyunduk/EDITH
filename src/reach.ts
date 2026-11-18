@@ -75,7 +75,11 @@ async function compute(path: string, start: string, head: string, ref: string): 
   if (!files.length) return { ref, state: 'none' };
   const a = await applies(path, start, head, ref, files);
   if (a.ok === files.length) return { ref, state: 'content', at: secs(await out(path, ['log', '-1', '--format=%ct', ref, '--', ...files.slice(0, 50)])) };
-  if (a.ok > 0) return { ref, state: 'partial', k: a.ok, n: files.length, missing: a.bad.slice(0, 50) };
+  // 일부 — 맞은 파일 중 그 브랜치에 이 브랜치가 쓴 뒤(작성 시각 — 체리픽 · 리베이스에도 그대로)에 들어간 것이 있을 때만.
+  // 먼저 있던 같은 내용은 딴 일이 넣은 것이다(예: 딴 안건이 어제 운영에 낸 아이콘을 이 브랜치가 오늘 똑같이 넣음)
+  const at = async (r: string, f: string) => Number(await out(path, ['log', '-1', '--format=%at', r, '--', f]) || 0);
+  const late = await Promise.all(files.filter(f => !a.bad.includes(f)).map(async f => await at(ref, f) >= await at(`${start}..${head}`, f)));
+  if (late.some(Boolean)) return { ref, state: 'partial', k: a.ok, n: files.length, missing: a.bad.slice(0, 50) };
   // 같은 제목 — 딴 뒤의 커밋만 본다(오래된 같은 제목에 걸리지 않게). 짧은 제목(「fix」 따위)은 빼고
   const since = await out(path, ['log', '-1', '--format=%cI', start]);
   const subjects = [...new Set(((await out(path, ['log', '--no-merges', '--format=%s', `${start}..${head}`])) ?? '').split('\n').map(s => s.trim()).filter(s => s.length >= 8))].slice(0, 10);

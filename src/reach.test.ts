@@ -25,6 +25,8 @@ function repo() {
   g('checkout', '-qb', 'part', 'master'); put('a.txt', 'a2\n'); g('commit', '-qam', 'only a');
   // later — 같은 제목으로 들어간 뒤 두 파일 다 더 고침(제목만 같음)
   g('checkout', '-qb', 'later', 'master'); put('a.txt', 'a3\n'); put('b.txt', 'b3\n'); g('add', '.'); g('commit', '-qm', 'feat: 관리자 메모 칸 (+고침)');
+  // same-new — 딴 안건이 b.txt 와 똑같은 파일을 feature 보다 먼저 넣음(먼저 있던 같은 내용은 일부가 아니다)
+  g('checkout', '-qb', 'same-new', 'master'); put('b.txt', 'b\n'); g('add', 'b.txt'); g('commit', '-qm', 'other: 같은 아이콘', '--date=2000-01-01T00:00:00');
   // none — 아무것도 안 들어감
   g('checkout', '-qb', 'none', 'master'); put('keep.txt', 'k2\n'); g('commit', '-qam', 'other work');
   g('checkout', '-q', 'feature');
@@ -42,6 +44,7 @@ test('reachOf — 커밋 그대로 · 내용 일치 · 일부 · 제목만 · �
     const later = await reachOf(r.d, r.start, 'later');
     assert.deepEqual([later.state, later.subject], ['subject', 'feat: 관리자 메모 칸']);
     assert.equal((await reachOf(r.d, r.start, 'none')).state, 'none');
+    assert.equal((await reachOf(r.d, r.start, 'same-new')).state, 'none');
     assert.equal((await reachOf(r.d, r.start, 'origin/nope')).state, 'missing');
     // fast-forward — feature 자체(조상이고 머지 없음)
     const ff = await reachOf(r.d, r.start, 'feature');
