@@ -78,7 +78,7 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   });
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className={`max-h-80 shrink-0 overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
+      <aside className={`flex max-h-80 shrink-0 flex-col overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
         <Requests onOpen={setReq} />
         <NewRun req={req} done={() => setReq(null)} />
         {!list.data ? <p className="p-2.5 text-xs text-muted-foreground">불러오는 중…</p>
@@ -120,19 +120,21 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
   const chip = (on: boolean) => `h-7 rounded-full border px-2.5 text-xs ${on ? 'border-primary bg-accent font-semibold text-accent-foreground' : 'bg-card hover:bg-muted/60'}`;
   const pill = (r: Item) => <span className={`shrink-0 rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>;
   const row = (r: Item) => `flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 ${r.id === current ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`;
+  // 탭 · 종류 칩은 두고 목록만 남은 높이 안에서 스크롤한다. 위 칸(받은 요청 · 새 런)이 길면 최소 16rem 은 남기고 옆줄 전체가 스크롤
   return (
-    <>
-      <div role="tablist" aria-label="런 목록" className="my-1.5 grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+    <div className="flex min-h-64 flex-1 flex-col">
+      <div role="tablist" aria-label="런 목록" className="my-1.5 grid shrink-0 grid-cols-3 gap-1 rounded-lg bg-muted p-1">
         <button type="button" role="tab" aria-selected={tab === 'live'} onClick={() => setTab('live')} className={tabCls(tab === 'live')}>진행 중 {live.length}</button>
         <button type="button" role="tab" aria-selected={tab === 'sched'} onClick={() => setTab('sched')} className={tabCls(tab === 'sched')}>스케줄 {scheds.length}</button>
         <button type="button" role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')} className={tabCls(tab === 'past')}>지난 런 {past.length}</button>
       </div>
       {tab !== 'sched' && (
-        <div role="group" aria-label="런 종류" className="mb-1.5 flex gap-1.5">
+        <div role="group" aria-label="런 종류" className="mb-1.5 flex shrink-0 gap-1.5">
           {([[false, '실제 런'], [true, '시험 런']] as const).map(([t, label]) =>
             <button key={label} type="button" aria-pressed={test === t} onClick={() => setTest(t)} className={chip(test === t)}>{label}{liveOf(t) > 0 && ` · 진행 ${liveOf(t)}`}</button>)}
         </div>
       )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
       {tab === 'sched' ? (
         <div role="tabpanel" aria-label="스케줄" className="space-y-1">
           {scheds.map(s => (
@@ -161,11 +163,14 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
         </div>
       ) : (
         <div role="tabpanel" aria-label="지난 런" className="space-y-1.5">
-          <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="#번호 · 티켓 · 제목으로 찾기" aria-label="지난 런 찾기"
-            className="h-8 w-full rounded-md border bg-card px-2.5 text-[0.8125rem] outline-none focus:ring-2 focus:ring-ring/40" />
-          <div role="group" aria-label="상태로 거르기" className="flex flex-wrap gap-1.5">
-            {([['all', `전체 ${past.length}`], ['done', `끝 ${past.filter(r => r.state === 'done').length}`], ['dropped', `버림 ${past.filter(r => r.state === 'dropped').length}`]] as const).map(([k, label]) =>
-              <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)} className={chip(only === k)}>{label}</button>)}
+          {/* 찾기 · 상태 칩은 스크롤해도 위에 붙어 있게 */}
+          <div className="sticky top-0 z-10 space-y-1.5 bg-sidebar pb-0.5">
+            <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="#번호 · 티켓 · 제목으로 찾기" aria-label="지난 런 찾기"
+              className="h-8 w-full rounded-md border bg-card px-2.5 text-[0.8125rem] outline-none focus:ring-2 focus:ring-ring/40" />
+            <div role="group" aria-label="상태로 거르기" className="flex flex-wrap gap-1.5">
+              {([['all', `전체 ${past.length}`], ['done', `끝 ${past.filter(r => r.state === 'done').length}`], ['dropped', `버림 ${past.filter(r => r.state === 'dropped').length}`]] as const).map(([k, label]) =>
+                <button key={k} type="button" aria-pressed={only === k} onClick={() => setOnly(k)} className={chip(only === k)}>{label}</button>)}
+            </div>
           </div>
           {!days.length && <p className="p-2.5 text-xs text-muted-foreground">{past.length ? '맞는 지난 런이 없다' : '아직 끝난 런이 없다'}</p>}
           {days.map(([d, rs]) => (
@@ -184,7 +189,8 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
           ))}
         </div>
       )}
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -270,7 +276,8 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
         className="flex w-full items-center gap-1 rounded px-1 text-left text-[0.6875rem] font-semibold text-sky-700 hover:bg-sky-500/10 dark:text-sky-400">
         <span aria-hidden className="w-2.5">{fold ? '▸' : '▾'}</span>받은 요청 {asks.length}
       </button>
-      {!fold && asks.map(r => {
+      {/* 카드 3장 정도(24rem)까지만 — 넷째부터는 이 안에서 스크롤 */}
+      {!fold && <div className="max-h-96 space-y-1 overflow-y-auto">{asks.map(r => {
         // 제목 — 요청이 준 것, 없으면 입력 첫 줄(주소뿐이면 주소 대신 「노션」 단추로)
         const link = notionUrl(r.input), first = r.input.split('\n')[0].trim(), head = r.title ?? (link && !/\s/.test(first) && notionUrl(first) === link ? '' : first);
         return (
@@ -305,7 +312,7 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
           )}
         </div>
         );
-      })}
+      })}</div>}
     </div>}
     {amends.length > 0 && <div className="mb-2 space-y-1 rounded-lg border border-amber-500/45 bg-amber-500/5 p-1.5">
       <p className="px-1 text-[0.6875rem] font-semibold text-amber-700 dark:text-amber-400">Knock, knock · 추가 요청 {amends.length}</p>
