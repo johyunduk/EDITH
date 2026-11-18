@@ -705,7 +705,7 @@ const LineList = ({ lines }: { lines: Line[] }) => (
 );
 // 확인은 서버가 뒤에서 하고(몇 분 걸릴 수 있다) 화면은 2초마다 본다 — 그사이 EDITH 를 다시 켜면 서버가 잊으니(missing) 「다시 확인」.
 // 창을 다시 열면 서버가 기억하는 앞 결과(같은 항목)를 그대로 보인다 — 새로 보는 것은 「다시 확인」
-function CleanSheet({ ids, title, onClose }: { ids: string[]; title: string; onClose: () => void }) {
+export function CleanSheet({ ids, title, onClose }: { ids: string[]; title: string; onClose: () => void }) {
   const qc = useQueryClient(), [plans, setPlans] = useState<CleanPlan[] | null>(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [res, setRes] = useState<string | null>(null);
   const [since, setSince] = useState(0), [now, setNow] = useState(Date.now()), [skip, setSkip] = useState<Set<string>>(new Set()), round = useRef(0);
   const [fixes, setFixes] = useState<Record<string, Fix>>({}), [fixing, setFixing] = useState('');

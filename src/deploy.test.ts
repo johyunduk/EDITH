@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addTask, checkTask, deployDiff, dupFunctions, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, checkTask, deployDiff, dupFunctions, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, mainRepo, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -31,6 +31,19 @@ function repo() {
   const file = join(d, 'deploy.json');
   return { d, r, o, file, done: () => rmSync(d, { recursive: true, force: true }) };
 }
+
+test('배포 보드용 가벼운 목록(lite) — 보관했는데 남은 브랜치는 세지 않는다 · 본 레포 찾기는 경로가 있는 동안 기억하고 지운 워크트리는 다시 던진다', async () => {
+  const r = repo();
+  try {
+    await cliAdd(r.r, 'feature', {}, r.file); await cliDone(r.r, 'feature', '2026-11-18', r.file);
+    assert.deepEqual([(await deployView(r.file)).leftover.map(x => x.branch), (await deployView(r.file, true)).leftover], [['feature'], []]);
+    const wt = join(r.d, 'wt');
+    execFileSync('git', ['-C', r.r, 'worktree', 'add', '-q', wt, 'early']);
+    assert.deepEqual([await mainRepo(wt), await mainRepo(wt)], [realpathSync(r.r), realpathSync(r.r)]);
+    execFileSync('git', ['-C', r.r, 'worktree', 'remove', wt]);
+    await assert.rejects(mainRepo(wt), /git 레포 경로가 아니다/);
+  } finally { r.done(); }
+});
 
 test('parseStore — 틀린 항목 · 칸은 빼고, 없는 환경 이름의 할 일은 버린다', () => {
   const s = parseStore(JSON.stringify({ rev: 3, items: [

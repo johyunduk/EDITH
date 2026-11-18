@@ -250,7 +250,7 @@ export function serve(port: number) {
       // 끝난 런의 코드가 어느 브랜치까지 갔나(src/reach.ts) · 「새로 받기」 — 그 레포들을 origin 에서 fetch
       // 배포 목록(src/deploy.ts) — 보기(항목 + 그 브랜치의 런) · 최신화(fetch) · 배포일 · 연기 · 보관 · 메모 · 할 일 체크 · 직접 한 일 적기 · 항목 더하기 · 다음 환경에 올리기(레포마다 push) · 그 머지 준비(충돌은 Claude pane)
       // · 배포 조치 뽑기(공방 훅 on: prep — 기다리지 않는다) · 정리 미리보기 · 정리(src/cleanup.ts — 워크트리 · 워크스페이스 · 로컬 브랜치, 공방 훅 on: cleanup) · 걸린 확인 고치기(같은 훅 fix)
-      if (path === '/api/deploy' && req.method === 'GET') return reply(res, 200, await deployBoard());
+      if (path === '/api/deploy' && req.method === 'GET') return reply(res, 200, await deployBoard(undefined, url.searchParams.get('lite') === '1'));
       if (path === '/api/deploy/clean-plan' && req.method === 'GET') return reply(res, 200, cleanState(url.searchParams.get('ids') ?? ''));
       // 「변경 ›」 의 AI 요약 — pane 변경 보기와 같은 summarize(파일마다, 같은 diff 는 기억해 둔 것). 화면이 보는 것과 같은 deployDiff 를 서버가 다시 떠서 묻는다
       if (path === '/api/deploy/diff-summary' && req.method === 'POST') {

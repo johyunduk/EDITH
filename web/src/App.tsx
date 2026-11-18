@@ -12,7 +12,7 @@ import { EngineSettingsPage } from './EngineSettings.tsx';
 const WorkshopPage = lazy(() => import('./Workshop.tsx').then(m => ({ default: m.WorkshopPage })));
 const RunsPage = lazy(() => import('./Runs.tsx').then(m => ({ default: m.RunsPage })));
 import { copyOnSelect, toast } from './copy.ts';
-import { DeployPage } from './Deploy.tsx';
+import { CleanSheet, DeployPage } from './Deploy.tsx';
 import { TodayPage } from './Today.tsx';
 import { Icon, TERMINAL } from './ui.tsx';
 import { APP_NAME, applyTheme, readTheme } from './theme.ts';
@@ -57,6 +57,18 @@ export default function App() {
   // 배포 보드 틀 — 처음 「배포」 탭을 연 뒤로는 내리지 않고 숨겨 둔다(다시 열 때마다 보드를 처음부터 띄워 「불러오는 중」 몇 초를 기다리지 않게). 숨긴 동안도 보드는 30초마다 읽는다
   const board = view?.board && !remote ? view.board : null, [boardOn, setBoardOn] = useState(false);
   if (board && r.view === 'deploy' && !boardOn) setBoardOn(true);
+  // 보드 카드 「정리」 — 보드 틀이 보낸 EDITH 항목으로 EDITH 정리 창(보드는 각자 맥의 워크트리 · 로컬 브랜치를 건드리지 않는다). 확인부터 보고, 치우는 건 창의 단추
+  const [clean, setClean] = useState<{ ids: string[]; title: string } | null>(null), boardFrame = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    if (!board) return;
+    const f = (e: MessageEvent) => {
+      const d = e.data as { type?: unknown; ids?: unknown; title?: unknown } | null;
+      if (e.origin === new URL(board).origin && d?.type === 'gada-deploy:clean' && Array.isArray(d.ids) && d.ids.length && d.ids.every(i => typeof i === 'string'))
+        setClean({ ids: (d.ids as string[]).slice(0, 20), title: String(d.title ?? '').slice(0, 120) });
+    };
+    addEventListener('message', f);
+    return () => removeEventListener('message', f);
+  }, [board]);
   // 탭 제목 — herdr 는 보고 있는 pane 의 「세션 이름 | 워크스페이스 이름」(탭이 좁으면 뒤가 잘리니 세션 이름이 앞), 나머지(pane 을 안 열었을 때도)는 「EDITH | 메뉴」, 런 하나를 열었으면 「EDITH | 런 #12」
   const pane = r.view === 'herdr' ? herdr.data?.panes.find(p => p.id === r.id) : undefined;
   const menu = r.view === 'runs' && /^\d+$/.test(r.id ?? '') ? `${MENU.runs} ${runNo(Number(r.id))}` : MENU[r.view];
@@ -126,7 +138,9 @@ export default function App() {
           )}
         </span>
       </header>
-      {board && boardOn && <iframe title="배포 보드" src={board} allow="clipboard-write" className={r.view === 'deploy' ? 'min-h-0 w-full flex-1 border-0' : 'hidden'} />}
+      {board && boardOn && <iframe ref={boardFrame} title="배포 보드" src={board} allow="clipboard-write" className={r.view === 'deploy' ? 'min-h-0 w-full flex-1 border-0' : 'hidden'} />}
+      {/* 창을 닫으면 보드에 알린다 — 보드가 EDITH 목록을 새로 받아 정리해 보관한 카드를 바로 뺀다 */}
+      {clean && board && <CleanSheet ids={clean.ids} title={clean.title} onClose={() => { setClean(null); boardFrame.current?.contentWindow?.postMessage({ type: 'gada-deploy:refresh' }, new URL(board).origin); }} />}
       {/* 「배포」 — view 를 받기 전엔 비워 둔다(옛 배포 화면이 잠깐 비쳤다가 보드로 바뀌지 않게) */}
       {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? (r.id ? <EngineSettingsPage key={r.id} id={r.id} /> : <SettingsPage theme={theme} setTheme={setTheme} />) : r.view === 'deploy' ? (view && !board ? <DeployPage /> : null) : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>

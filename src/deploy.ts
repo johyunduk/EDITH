@@ -7,7 +7,7 @@
 // 쓰기는 화면(배포일 · 메모 · 연기 · 보관 · 할 일 체크 · 항목 더하기 · 다음 환경에 올리기 — 파일 판(rev)이 화면이 본 것과 같을 때만)과
 // CLI(edith deploy … — 스킬 · 엔진이 등록 · 메모 · 배포 조치 · 보관 · 지우기). 둘이 겹치지 않게 쓰기마다 잠금(deploy.json.lock).
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 import { DATA_DIR } from './config.ts';
 import { sh } from './sh.ts';
@@ -157,12 +157,13 @@ export async function stateOf(x: Item, envs: Env[], base = envs.at(-1)!.ref): Pr
 }
 
 // 화면 — 보관 안 한 항목과 그 코드 상태, 레포마다 마지막 받은 때. 보관한 것은 수(done)만 — 쌓이니 목록은 deployDone 으로 따로 연다
-export async function deployView(file = DEPLOY_FILE) {
+// lite — 배포 보드(gada-deploy-board)가 부를 때: 보관했는데 남은 브랜치는 세지 않는다(보드는 안 쓴다)
+export async function deployView(file = DEPLOY_FILE, lite = false) {
   const s = loadStore(file), active = s.items.filter(x => !x.done), repos = [...new Set(active.map(x => x.repo))];
   const [states, fetched] = await Promise.all([each(active, 4, x => stateOf(x, s.envs)), Promise.all(repos.map(fetchedAt))]);
   const st = new Map(active.map((x, i) => [x.id, states[i]]));
   return { rev: s.rev, envs: s.envs, items: active.map(x => ({ ...x, state: st.get(x.id), ...(prepping.has(x.id) ? { prep: prepping.get(x.id) } : {}) })), done: s.items.length - active.length,
-    repos: repos.map((r, i) => ({ path: r, name: basename(r), fetched: fetched[i] })), hooks: { prep: !!deployHook('prep'), cleanup: !!deployHook('cleanup') }, leftover: await leftOf(s) };
+    repos: repos.map((r, i) => ({ path: r, name: basename(r), fetched: fetched[i] })), hooks: { prep: !!deployHook('prep'), cleanup: !!deployHook('cleanup') }, leftover: lite ? [] : await leftOf(s) };
 }
 // 보관했는데 이 맥에 브랜치가 남은 것(정리 안 한 것) — 「Complete」 의 「남은 n개 정리」. 레포마다 브랜치 목록 한 번
 async function leftOf(s: Store) {
@@ -197,8 +198,9 @@ const nowOf = (r: Run) => {
   const wait = at(['blocked', 'check']);
   return wait.length ? `${wait[0]} — 사람 확인` : at(['running', 'sending'])[0] ?? (r.state === 'queued' ? '대기 줄' : r.state === 'stopped' ? '멈춤' : undefined);
 };
-export async function deployBoard(file = DEPLOY_FILE) {
-  const v = await deployView(file), key = (repo: string, branch: string) => `${repo}\0${branch}`;
+// lite — 배포 보드가 부를 때(GET /api/deploy?lite=1): 단추 막기(markWait) · 머지 브랜치 상태 · 남은 브랜치를 건너뛴다 — 보드는 런과 단추 이름만 받아 막는 까닭 · 머지 브랜치는 자기가 센다
+export async function deployBoard(file = DEPLOY_FILE, lite = false) {
+  const v = await deployView(file, lite), key = (repo: string, branch: string) => `${repo}\0${branch}`;
   const active = new Map(v.items.filter(x => !x.done).map(x => [key(x.repo, x.branch), x.id]));
   const archived = new Set(loadStore(file).items.filter(x => x.done).map(x => key(x.repo, x.branch)));
   const links: Record<string, RunLink[]> = {}, extra: { run: RunLink; repos: ReachRepo[] }[] = [];
@@ -228,6 +230,7 @@ export async function deployBoard(file = DEPLOY_FILE) {
     if (loose.length) extra.push({ run: link(), repos: loose });
   });
   const items = v.items.map(x => ({ ...x, runs: (links[x.id] ?? []).sort((a, b) => b.id - a.id) }));
+  if (lite) return { ...v, items, extra: extra.sort((a, b) => b.run.id - a.run.id) };
   // 단추 목록은 항목마다 따로 만든 것(link)이라 그 항목 브랜치로 막아도 다른 항목에 번지지 않는다
   await each(items, 4, x => markWait(x, x.runs.flatMap(r => r.actions)));
   // 아직 안 들어간 환경(stage · 운영)이면 그 머지 브랜치 상태 — 레포 줄의 「<환경> 머지 준비」 · 「<환경> 에 올리기」 가 본다
@@ -578,9 +581,14 @@ export async function prepareMerge(b: { id?: unknown; env?: unknown }, file = DE
 }
 
 // ── CLI(edith deploy …) — 스킬 · 키트가 쓴다. 레포는 그 안의 아무 경로(워크트리여도) — 본 체크아웃(공통 .git 의 부모)으로 바꿔 찾는다 ──
+// 경로 → 본 레포는 그 경로가 있는 동안 바뀌지 않는다 — 배포 목록이 런마다(지금까지 쌓인 런 전부) 매번 git 에 묻지 않게 기억한다. 지운 워크트리는 다시 git 으로(없다고 던진다)
+const mains = new Map<string, string>();
 export async function mainRepo(path: string) {
+  const hit = mains.get(path);
+  if (hit && existsSync(path)) return hit;
   const d = isAbsolute(path) ? await out(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']) : null;
   if (!d) throw new Error(`git 레포 경로가 아니다(절대 경로로): ${path}`);
+  mains.set(path, dirname(d));
   return dirname(d);
 }
 const find = (s: Store, repo: string, branch: string) => s.items.find(x => !x.done && x.repo === repo && x.branch === branch);
