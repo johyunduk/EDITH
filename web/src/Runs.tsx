@@ -1,4 +1,4 @@
-// 런 #번호 — 공방의 런(또는 시험으로 엔진 · 체인)을 한 번 돌린 것. 왼쪽 「새 런」과 런 목록, 가운데 결과물 판(Board — 「요약 · 타임라인 · 캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
+// 런 #번호 — 공방의 런(또는 시험으로 엔진 · 체인)을 한 번 돌린 것. 왼쪽 맨 위 「새 런」 단추(누르면 가운데에 새 런 칸)와 런 목록, 가운데 결과물 판(Board — 「요약 · 타임라인 · 캔버스 · 분석」 으로 바꿔 본다), 오른쪽 런 pane(Claude).
 // 주소는 #/runs/<번호>. 돌리는 것은 서버의 실행기(src/runner.ts)이고, 화면은 run.json 을 읽어 보여 주며 멈춤 · 이어서 · 건너뛰기만 보낸다.
 // 런 이름은 「티켓 [안건] 짧은 제목」(받은 요청 · 배포 목록 · 엔진 요약에서)을 크게, 「#번호 엔진 이름」 은 그 위에 작게.
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -54,7 +54,7 @@ const RUN_TONE: Record<RunState, string> = {
   dropped: 'bg-muted text-muted-foreground line-through',
 };
 const ended = (s: RunState) => s === 'done' || s === 'dropped';
-const PLAY = <path d="M6 4.5v15l12.5-7.5z" />;
+const PLUS = <path d="M12 5v14M5 12h14" />, X = <path d="M18 6 6 18M6 6l12 12" />;
 const KIND = { chain: '체인', engine: '엔진' } as const;
 // 노션 로고(채운 모양) — simple-icons notion.svg(CC0)
 const NOTION = 'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z';
@@ -72,6 +72,10 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   // 주소 #/runs/<번호>[/out/<산출물 차례>] — 뒤엣것은 배포 카드의 산출물 링크가 그 문서를 바로 열게. #/runs/schedule/<엔진> — 스케줄 하나
   const m = id?.match(/^(\d+)(?:\/out\/(\d{1,2}))?$/), n = m ? Number(m[1]) : undefined, out = m?.[2] ? Number(m[2]) : undefined, sched = id?.match(/^schedule\/(.+)$/)?.[1];
   const [req, setReq] = useState<Req | null>(null);
+  // 새 런 칸 — 가운데에 연다(옆줄은 좁아 목록이 밀려나니). 목록에서 다른 런 · 스케줄로 가면 닫는다
+  // shortcut: 보던 런을 목록에서 다시 누르면 주소가 그대로라 안 닫힌다 — 단추 · ✕ 로 닫는다
+  const [newOpen, setNewOpen] = useState(false);
+  useEffect(() => { if (n !== undefined || sched) setNewOpen(false); }, [n, sched]);
   const run = useQuery({
     queryKey: ['run', n], queryFn: () => get<Run>(`/api/runs/${n}`), enabled: n !== undefined,
     refetchInterval: q => q.state.data?.state === 'running' || q.state.data?.acted.some(a => a.code === null) ? 1500 : 5000,   // 단추 명령이 도는 동안도 자주
@@ -79,15 +83,17 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <aside className={`flex max-h-80 shrink-0 flex-col overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
-        <Requests onOpen={setReq} />
-        <NewRun req={req} done={() => setReq(null)} />
+        <NewRunButton open={newOpen} toggle={() => setNewOpen(v => !v)} />
+        <Requests onOpen={setReq} sel={newOpen ? req?.id : undefined} />
         {!list.data ? <p className="p-2.5 text-xs text-muted-foreground">불러오는 중…</p>
           : !list.data.length ? <p className="p-2.5 text-xs text-muted-foreground">아직 런이 없다</p>
           : <RunList items={list.data} current={n} sched={sched} />}
       </aside>
       <main className="flex min-h-[32rem] min-w-0 flex-1 flex-col overflow-y-auto">
-        {sched ? <ScheduleDetail id={sched} />
-          : n === undefined ? <div className="p-6"><Empty>왼쪽 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
+        {/* 닫혀도 늘 둔다 — 고르던 런 · 입력을 남기고, 공방에서 온 주소(?run=)를 읽는다 */}
+        <NewRun open={newOpen} setOpen={setNewOpen} req={req} done={() => setReq(null)} />
+        {newOpen ? null : sched ? <ScheduleDetail id={sched} />
+          : n === undefined ? <div className="p-6"><Empty>왼쪽 위 「새 런」에서 공방의 런을 골라 돌린다. 지난 런은 목록에서 본다.</Empty></div>
           : run.error && !run.data ? <div className="p-6"><Empty>런을 읽지 못했다 — {String(run.error)}</Empty></div>
           : !run.data ? <div className="p-6"><Empty>불러오는 중…</Empty></div>
           : <RunDetail r={run.data} out={out} />}
@@ -120,7 +126,7 @@ function RunList({ items, current, sched }: { items: Item[]; current?: number; s
   const chip = (on: boolean) => `h-7 rounded-full border px-2.5 text-xs ${on ? 'border-primary bg-accent font-semibold text-accent-foreground' : 'bg-card hover:bg-muted/60'}`;
   const pill = (r: Item) => <span className={`shrink-0 rounded-full px-2 py-px text-[0.6875rem] font-semibold ${RUN_TONE[r.state]}`}>{RUN_LABEL[r.state]}</span>;
   const row = (r: Item) => `flex items-start gap-2 rounded-md border-l-2 px-2 py-1.5 ${r.id === current ? 'border-primary bg-accent text-accent-foreground' : 'border-transparent hover:bg-muted/70'}`;
-  // 탭 · 종류 칩은 두고 목록만 남은 높이 안에서 스크롤한다. 위 칸(받은 요청 · 새 런)이 길면 최소 16rem 은 남기고 옆줄 전체가 스크롤
+  // 탭 · 종류 칩은 두고 목록만 남은 높이 안에서 스크롤한다. 위 칸(새 런 단추 · 받은 요청)이 길면 최소 16rem 은 남기고 옆줄 전체가 스크롤
   return (
     <div className="flex min-h-64 flex-1 flex-col">
       <div role="tablist" aria-label="런 목록" className="my-1.5 grid shrink-0 grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -247,10 +253,11 @@ function ScheduleDetail({ id }: { id: string }) {
 
 // 받은 요청 — 다른 도구가 requests/ 에 둔 「이 엔진을 이 입력으로」. 「열기」 는 새 런 칸에 채우기만 하고(시작은 사람이), 「거절」 은 사유(비워도 된다)를 받아 답만 쓴다.
 // 엔진에 요청 훅(actions.json on: "request")이 있으면 시작 · 거절 때 그 명령이 요청 쪽에 알린다 — 거절 사유도 넘어간다
-function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
+// sel — 지금 새 런 칸에 연 요청(카드에 테두리)
+function Requests({ onOpen, sel }: { onOpen: (r: Req) => void; sel?: string }) {
   const qc = useQueryClient(), q = useQuery({ queryKey: ['requests'], queryFn: () => get<Req[]>('/api/requests'), refetchInterval: 5000 });
   const [no, setNo] = useState<string | null>(null), [why, setWhy] = useState('');
-  // 접기 — 쌓이면 목록이 새 런 칸을 밀어내니 머리줄만 남긴다. 이 브라우저에 기억한다
+  // 접기 — 쌓이면 런 목록을 밀어내니 머리줄만 남긴다. 이 브라우저에 기억한다
   const [fold, setFoldState] = useState(() => { try { return localStorage.getItem('edith.runs.requests') === 'off'; } catch { return false; } });
   const setFold = (v: boolean) => { setFoldState(v); try { localStorage.setItem('edith.runs.requests', v ? 'off' : 'on'); } catch { /* 저장 안 됨 */ } };
   // 엔진 이름(id 대신) — 새 런 칸과 같은 목록
@@ -281,7 +288,7 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
         // 제목 — 요청이 준 것, 없으면 입력 첫 줄(주소뿐이면 주소 대신 「노션」 단추로)
         const link = notionUrl(r.input), first = r.input.split('\n')[0].trim(), head = r.title ?? (link && !/\s/.test(first) && notionUrl(first) === link ? '' : first);
         return (
-        <div key={r.id} className="space-y-1 rounded-md bg-card px-2.5 py-2 text-xs">
+        <div key={r.id} className={`space-y-1 rounded-md bg-card px-2.5 py-2 text-xs ${r.id === sel ? 'ring-2 ring-primary ring-inset' : ''}`}>
           <p className="flex items-center gap-1.5">
             {r.tag && <span className="min-w-0 truncate rounded bg-muted px-1.5 py-px text-[0.6875rem] font-medium text-muted-foreground" title={r.tag}>{r.tag}</span>}
             <span className="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground tabular-nums" title={r.id}>{when(r.at)}</span>
@@ -344,12 +351,25 @@ function Requests({ onOpen }: { onOpen: (r: Req) => void }) {
 }
 
 type Pick = { label: string; note?: string; input: string; title?: string; tag?: string };
-// 새 런 — 공방의 런을 카드로 고르고(고른 카드에 작업 폴더 · 입력 · 무인), 엔진 · 체인 바로 시험은 아래 접힌 칸. 받은 요청을 열면 그 값으로 채운다.
-// 주소 #/runs?run=<런> · ?test=<엔진> 으로 오면(공방 「이 런 시작」 · 「시험으로 돌리기」) 그것을 고른 채로 연다.
-function NewRun({ req, done }: { req: Req | null; done: () => void }) {
+// 새 런 단추 — 옆줄 맨 위 늘 같은 자리(받은 요청 수에 따라 오르내리지 않게). 열린 동안 채우고 ▸ — 칸은 가운데에 열렸다
+function NewRunButton({ open, toggle }: { open: boolean; toggle: () => void }) {
+  const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { kind: string; broken: boolean }[] }>('/api/workshop') });
+  const count = engines.data?.engines.filter(e => e.kind === 'run' && !e.broken).length ?? 0;
+  return (
+    <button type="button" onClick={toggle} aria-expanded={open}
+      className={`mb-2 flex h-9 w-full shrink-0 items-center gap-2 rounded-md border px-2.5 text-left text-[0.8125rem] font-semibold shadow-xs transition ${open ? 'border-primary bg-primary text-primary-foreground' : 'border-primary/50 bg-card text-accent-foreground hover:bg-accent'}`}>
+      <Icon className="size-3.5">{PLUS}</Icon>새 런
+      {open ? <Icon className="ml-auto size-3.5">{CHEVRON_R}</Icon> : count > 0 && <span className="ml-auto text-[0.6875rem] font-medium text-muted-foreground" title="고를 수 있는 공방 런">런 {count}</span>}
+    </button>
+  );
+}
+
+// 새 런 칸(가운데) — 공방의 런을 카드로 고르고(고른 런의 작업 폴더 · 입력 · 무인은 그 아래 칸), 엔진 · 체인 바로 시험은 맨 아래 접힌 칸. 받은 요청을 열면 그 값으로 채운다.
+// 열림은 RunsPage 가 쥔다(옆줄 단추). 주소 #/runs?run=<런> · ?test=<엔진> 으로 오면(공방 「이 런 시작」 · 「시험으로 돌리기」) 그것을 고른 채로 연다.
+function NewRun({ open, setOpen, req, done }: { open: boolean; setOpen: (v: boolean) => void; req: Req | null; done: () => void }) {
   const qc = useQueryClient();
   const engines = useQuery({ queryKey: ['workshop'], queryFn: () => get<{ engines: { id: string; name: string; nodes: number; kind: 'chain' | 'engine' | 'run'; broken: boolean; engine?: string }[] }>('/api/workshop') });
-  const [open, setOpen] = useState(false), [test, setTest] = useState(false), [engine, setEngine] = useState(''), [input, setInput] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [branch, setBranch] = useState(''), [unattended, setUnattended] = useState(false), [testRun, setTestRun] = useState(false);
+  const [test, setTest] = useState(false), [engine, setEngine] = useState(''), [input, setInput] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [branch, setBranch] = useState(''), [unattended, setUnattended] = useState(false), [testRun, setTestRun] = useState(false);
   // 고른 것의 작업 폴더 설정 — 늘 같은 폴더 · 새 워크트리면 폴더를 묻지 않는다
   type Def = { engine: { workdir?: Workdir; kind?: string; engine?: string; input?: string; unattended?: boolean } | null; picks?: string };
   const eq = useQuery({ queryKey: ['workshop', engine], queryFn: () => get<Def>(`/api/workshop/${engine}`), enabled: !!engine });
@@ -440,17 +460,22 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
             )}
             <FolderInput value={cwd} onChange={setCwd} placeholder="~/develop/project/app  (치면 하위 폴더 추천 · Tab)" className={`font-mono text-xs ${field}`} />
           </div>}
-          {eq.data?.picks && (picks
-            ? <select value="" onChange={e => { const p = picks[Number(e.target.value)]; if (p) { setInput(p.input); setPicked(p); } }} className={`${field} text-xs`} aria-label={eq.data.picks}>
-                <option value="">{picks.length ? `${eq.data.picks} — ${picks.length}개` : `${eq.data.picks} — 없다`}</option>
-                {picks.map((p, i) => <option key={i} value={i}>{p.label}{p.note ? ` · ${p.note}` : ''}</option>)}
-              </select>
-            : <Button type="button" size="sm" variant="outline" className="h-7 w-full text-xs" disabled={picking} onClick={() => void loadPicks()}>{picking ? '불러오는 중…' : eq.data.picks}</Button>)}
-          <label className="block text-xs text-muted-foreground">입력 — {eq.data?.engine?.input ?? '모든 노드에 같이 간다(예: 기획서 링크)'}
-            <textarea value={input} onChange={e => setInput(e.target.value)} rows={3} className={`mt-0.5 resize-y ${field}`}
-              onPaste={e => { const f = [...e.clipboardData.files]; if (!f.length) return; e.preventDefault(); upload(f).then(addPaths, (x: Error) => setErr(`올리지 못했다 — ${x.message}`)); }} /></label>
+          {/* 고르기 목록(엔진에 있으면)은 입력 머리줄 오른쪽 */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <label htmlFor="new-run-input" className="min-w-0 flex-1">입력 — {eq.data?.engine?.input ?? '모든 노드에 같이 간다(예: 기획서 링크)'}</label>
+            {eq.data?.picks && (picks
+              ? <select value="" onChange={e => { const p = picks[Number(e.target.value)]; if (p) { setInput(p.input); setPicked(p); } }} aria-label={eq.data.picks}
+                  className="h-7 max-w-full rounded-md border bg-card px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring/50">
+                  <option value="">{picks.length ? `${eq.data.picks} — ${picks.length}개` : `${eq.data.picks} — 없다`}</option>
+                  {picks.map((p, i) => <option key={i} value={i}>{p.label}{p.note ? ` · ${p.note}` : ''}</option>)}
+                </select>
+              : <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={picking} onClick={() => void loadPicks()}>{picking ? '불러오는 중…' : eq.data.picks}</Button>)}
+          </div>
+          <textarea id="new-run-input" value={input} onChange={e => setInput(e.target.value)} rows={3} className={`resize-y ${field}`}
+            onPaste={e => { const f = [...e.clipboardData.files]; if (!f.length) return; e.preventDefault(); upload(f).then(addPaths, (x: Error) => setErr(`올리지 못했다 — ${x.message}`)); }} />
           <div className="flex items-center gap-1.5"><Attach onPaths={addPaths} /><span className="text-[0.6875rem] text-muted-foreground">파일을 올리면 그 경로가 입력 끝에 붙는다(붙여넣기도)</span></div>
           {/* 무인 — 기본 꺼짐. 켜면 확인 필요를 사람에게 넘기지 않고 다시 돌리거나 건너뛴다(엔진도 run.json · $EDITH_UNATTENDED 로 안다) */}
+          <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
           <label className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={unattended} onChange={e => setUnattended(e.target.checked)} className="mt-0.5" />
             <span><span className="font-medium text-foreground">무인 — 사람 없이 끝까지</span> · 확인 필요가 되면 2번까지 다시 돌리고, 그래도 안 되면 건너뛰고 이어 간다. 권한 승인 화면은 그대로 기다린다</span>
@@ -460,47 +485,49 @@ function NewRun({ req, done }: { req: Req | null; done: () => void }) {
             <input type="checkbox" checked={testRun} onChange={e => setTestRun(e.target.checked)} className="mt-0.5" />
             <span><span className="font-medium text-foreground">시험 런</span> · 번호를 따로 센다(「시험 #1」). 진짜 런 번호는 그대로 이어진다</span>
           </label>
+          </div>
           {err && <p className="text-xs break-words text-destructive">{err}</p>}
-          <Button type="submit" size="sm" className="h-7 w-full text-xs" disabled={busy || !engine || (wd.kind === 'ask' && !cwd.trim()) || (wd.kind === 'worktree' && !branch.trim())}>{busy ? '시작하는 중…' : '런 시작'}</Button>
-          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{wd.kind === 'worktree' ? '레포에서 그 브랜치로 워크트리와 워크스페이스를 만들고' : 'herdr 에 「런·이름 #번호」 워크스페이스를 만들고 작업 폴더에서'} Claude 를 띄워 노드를 하나씩 보낸다. 시작할 때의 사본으로 돈다(공방에서 고쳐도 이 런은 그대로).</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-2.5">
+            <p className="min-w-0 flex-1 basis-60 text-[0.6875rem] leading-relaxed text-muted-foreground">{wd.kind === 'worktree' ? '레포에서 그 브랜치로 워크트리와 워크스페이스를 만들고' : 'herdr 에 「런·이름 #번호」 워크스페이스를 만들고 작업 폴더에서'} Claude 를 띄워 노드를 하나씩 보낸다. 시작할 때의 사본으로 돈다(공방에서 고쳐도 이 런은 그대로).</p>
+            <Button type="submit" size="sm" className="h-8 shrink-0 px-5 text-xs" disabled={busy || !engine || (wd.kind === 'ask' && !cwd.trim()) || (wd.kind === 'worktree' && !branch.trim())}>{busy ? '시작하는 중…' : '런 시작'}</Button>
+          </div>
     </>
   );
+  if (!open) return null;
+  const sel = runs.find(r => r.id === engine);
   return (
-    <>
-      <button onClick={() => setOpen(v => !v)} className="mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] font-medium hover:bg-muted/70">
-        <Icon className="size-3.5">{PLAY}</Icon>새 런
-      </button>
-      {open && (
-        <form onSubmit={e => { e.preventDefault(); void go(); }} className="mb-2 space-y-1.5 rounded-lg border bg-card p-2">
-          {req && <p className="flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400"><span className="min-w-0 flex-1 truncate">요청 {req.from ?? req.id} 에서 — 시작하면 요청에 런 번호로 답한다</span>
-            <button type="button" className="shrink-0 underline-offset-2 hover:underline" onClick={done}>떼기</button></p>}
-          {runs.map(r => r.id === engine
-            ? <div key={r.id} className="space-y-1.5 rounded-lg border-2 border-primary bg-card p-2">
-                <button type="button" onClick={() => setEngine('')} className="flex w-full items-baseline gap-1.5 text-left" aria-expanded="true">
-                  <span className="text-sm font-semibold">{r.name}</span><span className="ml-auto truncate text-[0.6875rem] text-muted-foreground">엔진 {nameOf(r.engine)}</span>
-                </button>
-                {fields}
-              </div>
-            : <button key={r.id} type="button" onClick={() => { setEngine(r.id); setTest(false); }} aria-expanded="false"
-                className="flex w-full items-baseline gap-1.5 rounded-lg border bg-card px-2.5 py-2 text-left hover:border-primary/50">
-                <span className="text-sm font-semibold">{r.name}</span><span className="ml-auto truncate text-[0.6875rem] text-muted-foreground">엔진 {nameOf(r.engine)}</span>
-              </button>)}
-          {engines.data && !runs.length && <p className="px-1 text-xs text-muted-foreground">공방에 런이 없다 — 공방 「+ 새 런」 에서 엔진을 골라 만든다</p>}
-          {/* 엔진 · 체인 바로 시험 — 런 없이 그 엔진 설정으로(체인 하나만 돌려 볼 때) */}
-          <details open={test} onToggle={e => setTest(e.currentTarget.open)} className="rounded-lg border border-dashed bg-card/60 p-2">
-            <summary className="cursor-pointer text-xs text-muted-foreground">엔진 · 체인 바로 시험</summary>
-            <div className="mt-1.5 space-y-1.5">
-              <select value={isRun ? '' : engine} onChange={e => setEngine(e.target.value)} aria-label="시험으로 돌릴 엔진 · 체인" className={field}>
-                <option value="">고르기</option>
-                {all.filter(e => e.kind !== 'run' && !e.broken).sort((a, b) => Number(b.kind === 'engine') - Number(a.kind === 'engine'))
-                  .map(e => <option key={e.id} value={e.id}>{e.name} ({KIND[e.kind as 'chain' | 'engine']} · {e.id})</option>)}
-              </select>
-              {engine && !isRun && fields}
-            </div>
-          </details>
-</form>
-      )}
-    </>
+    <form onSubmit={e => { e.preventDefault(); void go(); }} className="space-y-3 p-4">
+      {req && <p className="flex items-center gap-2 rounded-md border border-sky-500/35 bg-sky-500/5 px-2.5 py-1.5 text-xs text-sky-700 dark:text-sky-400">
+        <span className="min-w-0 flex-1 truncate">{[req.tag, req.from].filter(Boolean).join(' · ') || req.id} 요청에서 열었다 — 시작하면 요청에 런 번호로 답한다</span>
+        <button type="button" className="shrink-0 font-medium underline-offset-2 hover:underline" onClick={done}>떼기</button></p>}
+      <div className="flex items-start gap-3">
+        <div className="min-w-0"><h1 className="text-lg font-bold">새 런</h1><p className="text-xs text-muted-foreground">공방의 런을 고르고, 작업 폴더 · 입력을 넣어 시작한다</p></div>
+        <button type="button" onClick={() => setOpen(false)} title="닫기" aria-label="새 런 닫기"
+          className="ml-auto grid size-8 shrink-0 place-items-center rounded-md border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"><Icon className="size-4">{X}</Icon></button>
+      </div>
+      {runs.length > 0 && <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{runs.map(r => (
+        <button key={r.id} type="button" aria-pressed={r.id === engine} onClick={() => { if (r.id === engine) setEngine(''); else { setEngine(r.id); setTest(false); } }}
+          className={`flex min-w-0 items-baseline gap-1.5 rounded-lg border px-3 py-2 text-left ${r.id === engine ? 'border-primary bg-accent/60 ring-1 ring-primary' : 'bg-card hover:border-primary/50'}`}>
+          <span className="text-sm font-semibold">{r.name}</span><span className="ml-auto truncate text-[0.6875rem] text-muted-foreground">엔진 {nameOf(r.engine)}</span>
+        </button>))}</div>}
+      {sel && <div className="space-y-2 rounded-lg border bg-card p-3">
+        <p className="flex items-baseline gap-2"><span className="text-sm font-semibold">{sel.name}</span><span className="text-[0.6875rem] text-muted-foreground">엔진 {nameOf(sel.engine)}</span></p>
+        {fields}
+      </div>}
+      {engines.data && !runs.length && <p className="px-1 text-xs text-muted-foreground">공방에 런이 없다 — 공방 「+ 새 런」 에서 엔진을 골라 만든다</p>}
+      {/* 엔진 · 체인 바로 시험 — 런 없이 그 엔진 설정으로(체인 하나만 돌려 볼 때) */}
+      <details open={test} onToggle={e => setTest(e.currentTarget.open)} className="rounded-lg border border-dashed bg-card/60 px-3 py-2">
+        <summary className="cursor-pointer text-xs text-muted-foreground">엔진 · 체인 바로 시험</summary>
+        <div className="mt-2 space-y-2">
+          <select value={isRun ? '' : engine} onChange={e => setEngine(e.target.value)} aria-label="시험으로 돌릴 엔진 · 체인" className={field}>
+            <option value="">고르기</option>
+            {all.filter(e => e.kind !== 'run' && !e.broken).sort((a, b) => Number(b.kind === 'engine') - Number(a.kind === 'engine'))
+              .map(e => <option key={e.id} value={e.id}>{e.name} ({KIND[e.kind as 'chain' | 'engine']} · {e.id})</option>)}
+          </select>
+          {engine && !isRun && fields}
+        </div>
+      </details>
+    </form>
   );
 }
 
