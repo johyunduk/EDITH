@@ -5,6 +5,7 @@ import { Icon, TERMINAL } from './ui.tsx';
 import type { MenuItem } from './Menu.tsx';
 import claudeIcon from './icons/claude.svg';
 import codexIcon from './icons/codex.svg';
+import agyIcon from './icons/antigravity.svg';
 
 // unknown 은 에이전트가 없거나 herdr 가 상태를 못 가린 것 — 표시하지 않는다.
 export const STATUS: Record<string, string> = { working: '작업 중', blocked: '승인 대기', done: '끝남', idle: '대기' };
@@ -14,9 +15,11 @@ export const WARN = <><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4
 export const PUSH_TONE = 'bg-rose-500/15 text-rose-700 dark:text-rose-400';
 export const PushTag = ({ branch }: { branch: string }) =>
   <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${PUSH_TONE}`}><Icon className="size-3.5">{WARN}</Icon>{branch} 푸시 대기</span>;
-const ICON: Record<string, string> = { claude: claudeIcon, codex: codexIcon };
+const ICON: Record<string, string> = { claude: claudeIcon, codex: codexIcon, agy: agyIcon };
+// 셸에서 띄울 수 있는 에이전트 — herdr 종류 이름 → 화면 이름(agy = Antigravity CLI). 서버 start() 의 목록과 같게.
+export const LAUNCH: Record<string, string> = { claude: 'Claude', codex: 'Codex', agy: 'Antigravity' };
 
-// 에이전트 종류 — Claude·Codex 는 아이콘, 그 밖의 에이전트는 첫 글자, 셸은 터미널 아이콘.
+// 에이전트 종류 — Claude·Codex·Antigravity 는 아이콘, 그 밖의 에이전트는 첫 글자, 셸은 터미널 아이콘.
 export function Kind({ agent }: { agent: string | null }) {
   if (agent && ICON[agent]) return <img src={ICON[agent]} alt={agent} className="size-3.5 shrink-0" />;
   if (!agent) return <Icon className="size-3.5 text-muted-foreground">{TERMINAL}</Icon>;
@@ -56,7 +59,7 @@ export function usePaneMenu() {
       { label: '위에 새 칸', run: call('split', { direction: 'up' }) },
       { label: '아래에 새 칸', run: call('split', { direction: 'down' }) },
       { label: '새 탭으로 빼기', run: call('move', { workspace: p.workspace }) },
-      ...(shellIdle(p) ? ['-', { label: '여기서 Claude 띄우기', run: call('start', { kind: 'claude' }) }, { label: '여기서 Codex 띄우기', run: call('start', { kind: 'codex' }) }] as MenuItem[] : []),
+      ...(shellIdle(p) ? ['-', ...Object.entries(LAUNCH).map(([kind, name]) => ({ label: `여기서 ${name} 띄우기`, run: call('start', { kind }) }))] as MenuItem[] : []),
       '-',
       { label: 'Esc 보내기', run: call('keys', { key: 'esc' }) },
       { label: 'Ctrl+C 보내기', run: call('keys', { key: 'ctrl+c' }) },

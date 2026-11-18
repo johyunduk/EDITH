@@ -78,18 +78,19 @@ const uniq = (es: Entry[]) => [...new Map(es.map(e => [e.name, e])).values()];  
 
 export async function commands(agent: string, cwd: string) {
   const root = (await sh('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { ok: true })).stdout.trim() || cwd;
+  // shortcut: 그 밖의 에이전트(agy 등)는 명령 목록을 모른다 — Claude 것을 잘못 추천하지 않게 빈 목록. 자주 쓰면 그 에이전트 명령을 넣는다.
   return cached(`${agent}:${root}`, () => uniq(agent === 'codex'
     ? [
       ...CODEX_BUILTIN.map(([name, desc]) => ({ name, desc })),
       ...list(join(HOME, '.codex', 'prompts')).filter(f => f.endsWith('.md')).map(f => ({ name: `/prompts:${f.slice(0, -3)}`, desc: describe(join(HOME, '.codex', 'prompts', f)) })),
       ...codexSkills().map(d => ({ name: `/${d}`, desc: describe(join(HOME, '.codex', 'skills', d, 'SKILL.md')), skill: true })),
     ]
-    : [
+    : agent === 'claude' ? [
       ...CLAUDE_BUILTIN.map(([name, desc]) => ({ name, desc })),
       ...scan(join(HOME, '.claude'), '/'),
       ...(root !== HOME ? scan(join(root, '.claude'), '/') : []),
       ...plugins(),
-    ]));
+    ] : []));
 }
 
 // @ 파일 — 작업 폴더 아래 파일·폴더(git 이 무시하는 것 빼고). git 레포가 아니면 4단계까지 훑는다(node_modules·.git 빼고).

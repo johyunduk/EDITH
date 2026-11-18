@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toCodex } from './complete.ts';
+import { tmpdir } from 'node:os';
+import { commands, toCodex } from './complete.ts';
+
+test('명령 목록을 모르는 에이전트(agy)는 Claude 명령을 추천하지 않는다', async () => {
+  assert.deepEqual(await commands('agy', tmpdir()), []);
+  assert.ok((await commands('claude', tmpdir())).some(e => e.name === '/clear'));
+});
 
 test('Claude 방식으로 쓴 글을 Codex 기호로 — /스킬→$스킬, 맨 앞 명령은 Codex 이름, 나머지는 그대로', () => {
   const skills = new Set(['adversarial-review', 'flow', 'caveman']);

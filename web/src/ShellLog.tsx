@@ -1,11 +1,11 @@
-// 셸 pane 본문 — 명령별 기록(명령 줄 + 출력). 프롬프트에서 쉬면 Claude·Codex 띄우기 버튼.
+// 셸 pane 본문 — 명령별 기록(명령 줄 + 출력). 프롬프트에서 쉬면 Claude·Codex·Antigravity 띄우기 버튼.
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, post, type HPane } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { Empty } from './ui.tsx';
 import { Ansi } from './ansi.tsx';
-import { Kind, atPrompt } from './herdrUi.tsx';
+import { Kind, LAUNCH, atPrompt } from './herdrUi.tsx';
 
 type SBlock = { cmd: string; where: string; out: string[] };
 
@@ -44,9 +44,9 @@ export function ShellLog({ p }: { p: HPane }) {
       {(idle || (data && !blocks.length)) && !running && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           <span className="font-mono font-bold text-primary">❯</span> 대기 중{last?.where && ` · ${last.where}`} — 아래 칸에 명령, 또는
-          {(['claude', 'codex'] as const).map(k => (
+          {Object.entries(LAUNCH).map(([k, name]) => (
             <Button key={k} size="sm" variant="outline" className="h-6 gap-1 rounded-full px-2.5 text-xs" disabled={!!busy} onClick={() => void launch(k)}>
-              <Kind agent={k} />{busy === k ? '띄우는 중' : k === 'claude' ? 'Claude' : 'Codex'}
+              <Kind agent={k} />{busy === k ? '띄우는 중' : name}
             </Button>
           ))}
           {err && <span className="text-destructive">{err}</span>}

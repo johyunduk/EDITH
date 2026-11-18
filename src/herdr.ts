@@ -286,20 +286,32 @@ const fromSeen = (l: Seen, day: boolean): Limit =>
 
 // 셸 명령 기록 — 터미널의 지난 출력을 프롬프트 줄 기준으로 「명령 + 출력」 으로 자른다(브라우저 스크롤로 보려고).
 // 프롬프트 기호는 줄 첫 낱말 중 흔한 것(➜ ❯ $ % # λ, PowerShell 의 PS)에서 가장 많이 나온 것. 오래된 출력은 끝 3000줄까지만. 출력 줄은 색(ANSI) 그대로.
-// ponytail: robbyrussell(➜ 폴더 git:(브랜치) ✗ 명령)·PowerShell(PS 경로> 명령) 꼴만 명령을 떼어 낸다. 다른 테마는 프롬프트 줄 통째로 보인다.
+// 첫 낱말에 기호가 없으면 낱말 1~3개 뒤에 홀로 선 기호(TAIL)로 — starship(EDITH(main) > 명령)·macOS 기본 zsh(나@맥 폴더 % 명령). 그때 where 는 기호 앞 전부.
+// ponytail: robbyrussell(➜ 폴더 git:(브랜치) ✗ 명령)·PowerShell(PS 경로> 명령)·TAIL 꼴만 명령을 떼어 낸다. 다른 테마는 프롬프트 줄 통째로 보인다.
+// TAIL 꼴은 맨 앞부터 낱말 1~3개 뒤 「a > b」 같은 출력 줄도 프롬프트로 잘린다 — 잦으면 지금 프롬프트(끝 줄)의 앞 낱말과 맞는 줄만 받는다.
 const MARKS = ['➜', '❯', '$', '%', '#', 'λ', 'PS'];
+const TAIL = /^((?:\S+ +){1,3}?)(>|❯|\$|%|#|λ)(?: +(.*))?$/;
+const top = (count: Map<string, number>) => [...count].sort((a, b) => b[1] - a[1])[0]?.[0];
 export async function history(id: string) {
   // 출력은 터미널 색(ANSI) 그대로 넘기고, 프롬프트 찾기는 색을 뺀 글로 한다
-  const raw = (await sh('herdr', ['pane', 'read', id, '--source', 'recent-unwrapped', '--lines', '3000', '--format', 'ansi'])).stdout.replace(/\r/g, '').split('\n');
+  return shellBlocks((await sh('herdr', ['pane', 'read', id, '--source', 'recent-unwrapped', '--lines', '3000', '--format', 'ansi'])).stdout.replace(/\r/g, '').split('\n'));
+}
+export function shellBlocks(raw: string[]) {
   const lines = raw.map(l => l.replace(ANSI, ''));
-  const count = new Map<string, number>();
+  const count = new Map<string, number>(), tails = new Map<string, number>();
   for (const l of lines) { const m = l.split(' ')[0]; if (MARKS.includes(m)) count.set(m, (count.get(m) ?? 0) + 1); }
-  const mark = [...count].sort((a, b) => b[1] - a[1])[0]?.[0];
+  // 끝 줄이 명령 없는 TAIL 프롬프트(쉬는 중)면 그 꼴이 지금 프롬프트 — 출력 속 「$ 명령」 같은 줄이 많아도 이쪽을 먼저
+  const end = lines.findLast(l => l.trim())?.match(TAIL), now = end && !end[3]?.trim() ? end[2] : undefined;
+  const mark = now ? undefined : top(count);
+  if (!mark && !now) for (const l of lines) { const t = l.match(TAIL); if (t) tails.set(t[2], (tails.get(t[2]) ?? 0) + 1); }
+  const tail = now ?? top(tails);
   type Block = { cmd: string; where: string; out: string[] };
   const blocks: Block[] = [];
   let cur: Block | null = null;
   lines.forEach((l, i) => {
-    if (mark && l.startsWith(`${mark} `)) {
+    const t = tail ? l.match(TAIL) : null;
+    if (t && t[2] === tail) { cur = { cmd: (t[3] ?? '').trim(), where: t[1].trim(), out: [] }; blocks.push(cur); }
+    else if (mark && l.startsWith(`${mark} `)) {
       // PowerShell 은 「PS C:\경로> 명령」 — 폴더는 경로의 마지막 칸
       const ps = mark === 'PS' ? l.match(/^PS (.+?)>\s?(.*)$/) : null;
       const m = ps ? [l, ps[1].split(/[\\/]/).pop() ?? ps[1], ps[2]] : l.match(/^\S+\s+(\S+)(?:\s+git:\([^)]*\))?(?:\s+✗)?\s?(.*)$/);
@@ -309,7 +321,7 @@ export async function history(id: string) {
     else if (l.trim()) { cur = { cmd: '', where: '', out: [raw[i]] }; blocks.push(cur); }   // 첫 프롬프트 앞 출력
   });
   for (const b of blocks) while (b.out.length && !b.out.at(-1)!.replace(ANSI, '').trim()) b.out.pop();
-  return { mark: mark ?? null, blocks: blocks.slice(-200) };
+  return { mark: mark ?? tail ?? null, blocks: blocks.slice(-200) };
 }
 
 // 배치 바꾸기 — 나누기(왼·오·위·아래)·닫기·새 칸에 에이전트 띄우기. herdr 배치를 바꾸므로 터미널 herdr 화면도 같이 바뀐다.
@@ -424,9 +436,9 @@ export function ratio(tab: string, path: unknown, value: unknown) {
   return api('layout.set_split_ratio', { tab_id: tab, path, ratio: Math.min(0.9, Math.max(0.1, value)) });
 }
 // 셸 pane 에 에이전트를 띄운다(herdr agent start — 셸이 프롬프트에 있어야 한다). 이름은 herdr 가 요구해서 붙인다.
-// args 는 그 에이전트 명령에 붙일 인자(실행기가 Claude 에 --add-dir 을 넘긴다).
+// args 는 그 에이전트 명령에 붙일 인자(실행기가 Claude 에 --add-dir 을 넘긴다). kind 는 herdr 이름 그대로 — agy 는 Antigravity CLI.
 export async function start(id: string, kind: string, args: string[] = []) {
-  if (kind !== 'claude' && kind !== 'codex') throw new Error(`띄울 수 없는 종류: ${kind}`);
+  if (!['claude', 'codex', 'agy'].includes(kind)) throw new Error(`띄울 수 없는 종류: ${kind}`);
   // 셸이 프롬프트에 오기 전(새 워크스페이스의 셸 설정 · /exit 직후)엔 「셸이 아니다」(agent_pane_busy) — 15초까지 다시
   for (let i = 0; ; i++) {
     try { await api('agent.start', { name: `${kind}-${Date.now().toString(36)}`, kind, pane_id: id, timeout_ms: 60000, ...(args.length ? { args } : {}) }); break; }
