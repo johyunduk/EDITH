@@ -183,8 +183,14 @@ export function deployDone(q = '', before?: string, limit = 40, file = DEPLOY_FI
 // ── 런 잇기 — 런이 남긴 레포 칸(edith-repos.json — 워크트리를 만들면 생긴다)을 본 레포 · 브랜치로 바꿔 배포 항목에 붙인다(배포 화면이 결과 화면을 품는다, 2026-10-26).
 // via(이슈 → 안건 브랜치)가 있으면 안건 항목 밑 「이슈 줄」(그 런의 레포 상태 issue). 목록에 없는 런 일은 extra(런 하나 = 카드 하나), 보관한 항목의 런은 뺀다.
 // 단추(reach 가 적힌 런 단추)는 끝난 런만 — 도는 런은 지금 노드(now)만 ──
-// acting — 지금 도는 런 단추(누른 때부터 끝 코드가 찰 때까지), last — 마지막으로 끝난 단추(끝 코드 · 까닭)
-export type Act = { label: string; at: number; code: number | null; note?: string; repo?: string };
+// acting — 지금 도는 런 단추(누른 때부터 끝 코드가 찰 때까지), last — 마지막으로 끝난 단추(끝 코드 · 까닭). ask — 도는 단추가 사람 답을 기다린다(askOf)
+export type Act = { label: string; at: number; code: number | null; note?: string; repo?: string; ask?: string };
+// 도는 단추가 사람 답을 기다리나 — 공방 키트(gada-prepare mergeWait)가 묻고 쉴 때 남기는 줄 「심부름 탭(<탭>)이 사람에게 묻고 쉰다(<물음 파일>) — …」 의
+// 물음 파일이 아직 있으면 그 줄(답해서 탭이 다시 일하면 키트가 파일을 지운다 — 줄은 기록에 남아도 기다림이 아니다). 물음 파일은 그 런 work 폴더 안 것만
+export const askOf = (output: string, work: string) => {
+  const m = [...output.matchAll(/^.*묻고 쉰다\(([^()\n]+)\).*$/gm)].at(-1);
+  return m && m[1].startsWith(work + sep) && existsSync(m[1]) ? m[0].trim().slice(0, 300) : undefined;
+};
 // path — 이 항목에 해당하는 그 런의 워크트리(레포 줄 단추 row 가 그 레포만 돌게)
 // 런 입력 글에서 첫 http(s) 주소 — 끝 문장부호 · 괄호는 뺀다. 다른 스킴(javascript: 등)은 잡지 않는다
 export const inputLink = (input: string) => input.match(/https?:\/\/[^\s<>"'`)\]]+/)?.[0].replace(/[.,;:!?]+$/, '');
@@ -215,7 +221,8 @@ export async function deployBoard(file = DEPLOY_FILE, lite = false) {
     }));
     // 레포 상태(git 이 무겁다)는 이슈 줄 · 목록에 없는 런 일에만
     const repos = at.some(a => a && (a.via || (!a.id && !a.old))) ? await runRepos(full) : [];
-    const tag = runTag(full), url = inputLink(full.input), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}) }));
+    const work = join(RUNS, String(full.id), 'work'), ask = (a: { code: number | null; output: string }) => { const t = a.code === null ? askOf(a.output, work) : undefined; return t ? { ask: t } : {}; };
+    const tag = runTag(full), url = inputLink(full.input), done = acted(full.id).map(a => ({ label: a.label, at: a.at, code: a.code, ...(a.note ? { note: a.note } : {}), ...(a.repo ? { repo: a.repo } : {}), ...ask(a) }));
     const acting = done.find(a => a.code === null), last = done.find(a => a.code !== null);
     const docs = deployOutputs(join(RUNS, String(full.id), 'work'), [full.cwd, join(RUNS, String(full.id))]);
     const link = (issue?: ReachRepo, path?: string): RunLink => ({ id: full.id, title: runTitle(full), ...(tag ? { tag } : {}), ...(url ? { link: url } : {}), state: full.state, ...(path ? { path } : {}),

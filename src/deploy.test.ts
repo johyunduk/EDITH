@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addTask, checkTask, deployDiff, dupFunctions, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, mainRepo, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
+import { addTask, askOf, checkTask, deployDiff, dupFunctions, inputLink, deployFile, filesDir, prepItems, prepOf, promoteCheck, promoteMany, cliAdd, cliBlock, cliCheck, cliDone, cliDrop, cliNote, cliRange, cliSet, cliShow, cliTask, deployDone, deployView, editItems, importItems, loadStore, mainRepo, markWait, parseStore, prepareMerge, promote } from './deploy.ts';
 import type { ReachAction } from './reach.ts';
 
 // 사용자 git 설정(서명 · 훅)에 기대지 않게 — 시험 동안 빈 설정과 이름만
@@ -418,4 +418,18 @@ test('되돌린 환경 — 그 칸은 되돌려짐, 다시 올리기 · 다음 �
     await assert.rejects(promote({ id, env: 'prod' }, r.file), /stage 에서 되돌려졌다/);
     await assert.rejects(prepareMerge({ id, env: 'prod' }, r.file, async () => { throw new Error('Claude 를 부르면 안 된다'); }), /stage 에서 되돌려졌다/);
   } finally { r.done(); }
+});
+
+test('도는 단추가 사람 답을 기다리나 — 키트가 남긴 「묻고 쉰다(물음 파일)」 줄의 파일이 그 런 work 안에 아직 있으면 그 줄, 답해서 지웠거나 work 밖이면 아니다', () => {
+  const d = mkdtempSync(join(tmpdir(), 'edith-ask-')), work = join(d, 'work'), f = join(work, 'ultron', 'merge-ask.fe.md');
+  try {
+    mkdirSync(join(work, 'ultron'), { recursive: true });
+    const line = (p: string) => `심부름 탭(w29:pDX)이 사람에게 묻고 쉰다(${p}) — 답할 때까지 기다린다`;
+    const out = `심부름 탭(w29:pDX)에 보냈다 — 머지 · 검증이 끝날 때까지 기다린다\n${line(join(work, 'ultron', 'old.md'))}\n${line(f)}\n`;
+    assert.equal(askOf(out, work), undefined, '파일이 없다 — 답해서 키트가 지웠다');
+    writeFileSync(f, '# 물음\n');
+    assert.equal(askOf(out, work), line(f), '마지막 물음 줄');
+    assert.equal(askOf(line(f), join(d, 'other')), undefined, '그 런 work 밖 파일은 안 본다');
+    assert.equal(askOf('dev 머지 준비 끝\n', work), undefined);
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });
