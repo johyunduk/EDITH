@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { get, type HerdrView } from './api.ts';
 import { Kind, paneText } from './herdrUi.tsx';
+import { openTab } from './Tabs.tsx';
 import type { Asks } from './asks.ts';
 
 // ask 는 받은 뒤에만 있다('' 면 기록에 시킨 말이 없었다). 예전 알림·셸은 text(pane 이름)만.
@@ -71,7 +72,7 @@ export function AlertBell({ data, alerts }: { data?: HerdrView; alerts: ReturnTy
   for (const a of alerts.list) if (!seen.has(a.pane)) { seen.add(a.pane); latest.add(a.id); }
   const pending = (a: Alert) => latest.has(a.id) && status.get(a.pane) === a.kind;   // 그 pane 이 아직 그 상태 — 확인이 필요
   const blocked = data?.panes.filter(p => p.status === 'blocked').length ?? 0, waiting = blocked + (data?.panes.filter(p => p.status === 'done').length ?? 0);
-  const go = (a: Alert) => { alerts.update(l => l.map(x => x.id === a.id ? { ...x, read: true } : x)); setOpen(false); location.hash = `#/herdr/${a.pane}`; };
+  const go = (a: Alert) => { alerts.update(l => l.map(x => x.id === a.id ? { ...x, read: true } : x)); setOpen(false); openTab(`#/herdr/${a.pane}`); };
   const unread = alerts.list.filter(a => !a.read).length;
   return (
     <div ref={box} className="relative">

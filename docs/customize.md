@@ -55,7 +55,8 @@ git merge upstream/main     # 템플릿으로 만든 레포는 처음 한 번 --
 | `src/settings.ts` | 설정 화면의 플러그인 켜짐(`claude plugin configure <플러그인>@edith`) — 켜고 끌 플러그인은 `PLUGINS` |
 | `src/machines.ts` | 다른 기기의 EDITH — `machines.json`, SSH 터널, 그 기기의 열쇠 붙은 주소 |
 | `src/config.ts` · `src/sh.ts` | 경로(설정·데이터 폴더), 프로세스 실행 도우미 |
-| `web/src/App.tsx` | 머리줄·주소(#/today, #/herdr, #/skills, #/workshop, #/runs, #/deploy — 옛 #/results 도)·승인 대기 알림·새 코드 알림(다시 켜기) |
+| `web/src/App.tsx` | 머리줄 · 화면 고르기 · 승인 대기 알림 · 새 코드 알림(다시 켜기) |
+| `web/src/tabs.ts` · `web/src/Tabs.tsx` | 머리줄 탭 줄 — 주소 읽기(`route` — #/today, #/herdr, #/skills, #/workshop, #/runs, #/deploy · 옛 #/results), 탭 규칙(같은 화면 열쇠 `tabKey` · 그냥 이동 `navigate` · 새 탭 `open` · 닫기 · 끌어 옮기기 · 되살리기 — 탭은 이 브라우저 `edith.tabs`), 탭 줄 · 「+」 창(메뉴 `TILES` · 최근 닫은 탭), ⌘클릭 · 가운데 클릭을 새 탭으로, ⌥T · ⌥W · ⌥1~9 |
 | `web/src/Herdr.tsx` | herdr 화면 틀 — 왼쪽 사이드바, 오른쪽 고른 pane |
 | `web/src/Side.tsx` | 사이드바 — 새 워크스페이스, 워크스페이스·탭·pane 트리(끌어 놓기), 상태 표시, 다른 기기 |
 | `web/src/PaneView.tsx` | pane 화면 — 머리(브랜치·사용량·원격·변경·칸 버튼), 본문 고르기, 탭 전체 칸 배치 |
@@ -111,11 +112,9 @@ if (req.method === 'POST' && path === '/api/note') {
 
 ### 머리줄에 화면(탭) 하나 더하기
 
-`web/src/App.tsx`:
-
-1. `route()` 에 `#/notes` 를 알아보는 줄을 더한다.
-2. `<nav>` 에 `<a href="#/notes" className={nav(r.view === 'notes')}>노트</a>`.
-3. 아래 `{r.view === 'skills' ? … : …}` 에 새 화면 컴포넌트를 더한다(새 파일 `web/src/Notes.tsx`).
+1. `web/src/tabs.ts` 의 `route()` 에 `#/notes` 를 알아보는 줄을 더한다.
+2. `web/src/Tabs.tsx` 의 `MENU`(이름) · `ICON` · `TILES`(「+」 창 칸과 아랫줄 글)에 `notes` 를 더한다.
+3. `web/src/App.tsx` 아래 `{r.view === 'skills' ? … : …}` 에 새 화면 컴포넌트를 더한다(새 파일 `web/src/Notes.tsx`).
 
 ### 엔진 설정 표 내놓기 — `on: "settings"`
 

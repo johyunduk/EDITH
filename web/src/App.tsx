@@ -1,4 +1,4 @@
-// EDITH 화면 — 위에서 「herdr」·「공방」·「런」·「배포」·「오늘」·「설정」 을 고른다(「스킬」 은 메뉴에서 숨김 — 주소로는 열린다). 주소는 #/today, #/herdr/<pane id>, #/skills/<id>, #/workshop/<폴더>, #/runs/<번호>, #/deploy(옛 #/results — 배포가 결과를 품었다), #/settings. 오른쪽 위 종은 알림함.
+// EDITH 화면 — 머리줄 탭 줄(Tabs.tsx)에 열어 둔 화면을 늘어놓고, 메뉴(herdr · 공방 · 런 · 배포 · 오늘 · 설정)는 「+」 창에서 연다. 주소는 tabs.ts 의 route. 오른쪽 위 종은 알림함.
 // 다른 기기의 EDITH 를 터널로 보고 있으면(원격) 보라 테두리·「원격 · 기기」 배지·탭 제목 [기기] 로 이 기기 화면과 헷갈리지 않게 한다.
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -14,33 +14,14 @@ const RunsPage = lazy(() => import('./Runs.tsx').then(m => ({ default: m.RunsPag
 import { copyOnSelect, toast } from './copy.ts';
 import { CleanSheet, DeployPage } from './Deploy.tsx';
 import { TodayPage } from './Today.tsx';
-import { Icon, TERMINAL } from './ui.tsx';
+import { Icon } from './ui.tsx';
 import { APP_NAME, applyTheme, readTheme } from './theme.ts';
 import { runNo } from './runFlow.ts';
+import { route } from './tabs.ts';
+import { MENU, TabBar, openTab } from './Tabs.tsx';
 
-// 육각형 로고(lucide hexagon + 안쪽 꼭짓점 선)·스킬 탭 아이콘(lucide layout-grid)·설정 탭 아이콘(lucide settings)
+// 육각형 로고(lucide hexagon + 안쪽 꼭짓점 선)
 const HEX = <><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /></>;
-const GEAR = <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></>;
-const GRID = <><rect width="7" height="7" x="3" y="3" rx="1" /><rect width="7" height="7" x="14" y="3" rx="1" /><rect width="7" height="7" x="14" y="14" rx="1" /><rect width="7" height="7" x="3" y="14" rx="1" /></>;
-
-// 공방 탭 아이콘(lucide workflow)
-const FLOW = <><rect width="8" height="8" x="3" y="3" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect width="8" height="8" x="13" y="13" rx="2" /></>;
-const PLAY = <><circle cx="12" cy="12" r="10" /><path d="m10 8 6 4-6 4z" /></>;   // 런 탭(lucide circle-play)
-const TODAY = <><path d="M8 2v4" /><path d="M16 2v4" /><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M3 10h18" /><path d="m9 16 2 2 4-4" /></>;   // 오늘 탭(lucide calendar-check)
-const ROCKET = <><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" /><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" /><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" /><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" /></>;   // 배포 탭(lucide rocket)
-
-// 스킬 메뉴는 숨긴다(2026-10-30 — 노드 스킬은 공방에서 본다). 화면 · #/skills 주소는 그대로 — 다시 보이려면 true
-const SKILLS_MENU = false;
-const MENU = { herdr: 'herdr', skills: '스킬', workshop: '공방', runs: '런', deploy: '배포', today: '오늘', settings: '설정' };
-const route = () => {
-  const h = decodeURIComponent(location.hash), skill = h.match(/^#\/skills(?:\/(.+))?/), ws = h.match(/^#\/workshop(?:\/(.+))?/), runs = h.match(/^#\/runs(?:\/(.+))?/);
-  if (h.startsWith('#/settings')) return { view: 'settings' as const, id: h.match(/^#\/settings\/engine\/(.+)/)?.[1] };   // 엔진 설정 표(EngineSettings.tsx)
-  if (h.startsWith('#/deploy') || h.startsWith('#/results')) return { view: 'deploy' as const, id: undefined };
-  if (h.startsWith('#/today')) return { view: 'today' as const, id: undefined };
-  if (ws) return { view: 'workshop' as const, id: ws[1] };
-  if (runs) return { view: 'runs' as const, id: runs[1] };
-  return skill ? { view: 'skills' as const, id: skill[1] } : { view: 'herdr' as const, id: h.match(/^#\/herdr\/(.+)/)?.[1] };
-};
 
 export default function App() {
   const [theme, setTheme] = useState(readTheme);
@@ -92,7 +73,6 @@ export default function App() {
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
   }, []);
-  const nav = (on: boolean) => `flex h-13 shrink-0 items-center gap-2 border-b-2 px-4 text-sm whitespace-nowrap transition ${on ? 'border-primary bg-accent/60 font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`;
   const err = herdr.error && String(herdr.error);
   return (
     <div className="flex h-screen flex-col">
@@ -109,17 +89,7 @@ export default function App() {
         <span className="flex items-center gap-2 text-lg font-bold tracking-[0.08em]">
           <Icon className="brand-mark size-6 text-primary">{HEX}<path d="M12 22V12M12 12 3.3 7M12 12l8.7-5" /></Icon>{APP_NAME}
         </span>
-        {/* 좁은 화면에선 탭 줄만 옆으로 밀린다(페이지는 가로로 안 밀리게) */}
-        <nav className="-my-px flex max-w-full min-w-0 self-stretch overflow-x-auto [scrollbar-width:none]">
-          <a href="#/herdr" className={nav(r.view === 'herdr')}><Icon className="size-4">{TERMINAL}</Icon>herdr</a>
-          {SKILLS_MENU && <a href="#/skills" className={nav(r.view === 'skills')}><Icon className="size-4">{GRID}</Icon>스킬</a>}
-          <a href="#/workshop" className={nav(r.view === 'workshop')}><Icon className="size-4">{FLOW}</Icon>공방</a>
-          <a href="#/runs" className={`relative ${nav(r.view === 'runs')}`}><Icon className="size-4">{PLAY}</Icon>런
-            {asked > 0 && <span title={`받은 요청 ${asked} — 런 시작 · 거절 전까지 보인다`} className="absolute top-3 right-1.5 min-w-3 rounded-full bg-red-500 px-0.5 text-center text-[0.5rem] leading-3 font-bold text-white tabular-nums ring-2 ring-card">{asked}</span>}</a>
-          <a href="#/deploy" className={nav(r.view === 'deploy')}><Icon className="size-4">{ROCKET}</Icon>배포</a>
-          <a href="#/today" className={nav(r.view === 'today')}><Icon className="size-4">{TODAY}</Icon>오늘</a>
-          <a href="#/settings" className={nav(r.view === 'settings')}><Icon className="size-4">{GEAR}</Icon>설정</a>
-        </nav>
+        <TabBar data={herdr.data} asked={asked} />
         {err?.includes('401') && <span className="text-sm text-destructive">열쇠 없음 — 터미널에서 edith 를 다시 치면 열쇠 붙은 주소로 열린다</span>}
         <span className="ml-auto flex items-center gap-2 py-1">
           {view && <Fresh view={view} />}
@@ -189,7 +159,7 @@ function useBlockedAlert(brand: string, data?: HerdrView, remote?: string | null
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         const what = p.push ? `⚠ ${p.push} 푸시 승인 대기` : '승인 대기';   // main · master 푸시(커밋 지킴이)는 제목에서 가른다
         const n = new Notification(remote ? `${what} · ${remote}` : what, { body: `${ws?.label ?? ''} · ${p.title}`, tag: id });
-        n.onclick = () => { window.focus(); location.hash = `#/herdr/${id}`; };
+        n.onclick = () => { window.focus(); openTab(`#/herdr/${id}`); };   // 그 pane 탭으로(없으면 새 탭)
       }
     }
     if (fresh.length) beep();
