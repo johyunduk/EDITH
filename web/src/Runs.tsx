@@ -65,7 +65,7 @@ const DOT: Record<RunState, string> = { queued: 'bg-violet-500', running: 'bg-sk
 const place = (s: Step) => s.boxes?.map(b => b.name).join(' › ') ?? s.lane;
 const when = (t: number) => new Date(t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-export function RunsPage({ id, side }: { id?: string; side: boolean }) {
+export function RunsPage({ id }: { id?: string }) {
   const list = useQuery({ queryKey: ['runs'], queryFn: () => get<Item[]>('/api/runs'), refetchInterval: 3000 });
   const [fold, setFoldState] = useState(() => { try { return localStorage.getItem('edith.runs.pane') === 'off'; } catch { return false; } });
   const setFold = (v: boolean) => { setFoldState(v); try { localStorage.setItem('edith.runs.pane', v ? 'off' : 'on'); } catch { /* 저장 안 됨 */ } };
@@ -82,7 +82,7 @@ export function RunsPage({ id, side }: { id?: string; side: boolean }) {
   });
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className={`flex max-h-80 shrink-0 flex-col overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0 ${side ? '' : 'hidden'}`}>
+      <aside className={`flex max-h-80 shrink-0 flex-col overflow-y-auto border-b bg-sidebar p-1.5 md:max-h-none md:w-64 md:border-r md:border-b-0`}>
         <NewRunButton open={newOpen} toggle={() => setNewOpen(v => !v)} />
         <Requests onOpen={setReq} sel={newOpen ? req?.id : undefined} />
         {!list.data ? <p className="p-2.5 text-xs text-muted-foreground">불러오는 중…</p>

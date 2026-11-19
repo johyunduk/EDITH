@@ -60,7 +60,7 @@ export default function App() {
   // 받은 요청 수 — 런 화면 목록과 같은 쿼리(시작 · 거절로 답하면 목록에서 빠지고 수도 같이 준다)
   const asked = useQuery({ queryKey: ['requests'], queryFn: () => get<unknown[]>('/api/requests'), refetchInterval: 5000 }).data?.length ?? 0;
   const [perm, setPerm] = useState(() => typeof Notification === 'undefined' ? 'denied' : Notification.permission);
-  // 사이드 메뉴 접기 — 헤더 버튼이나 ⌘B·Ctrl+B. 이 브라우저에만 기억한다(저장이 막혀도 동작).
+  // 사이드 메뉴 접기 — 헤더 버튼이나 ⌘B·Ctrl+B. 이 브라우저에만 기억한다(저장이 막혀도 동작). 런 화면은 접지 않는다(런 목록은 늘 보인다 — 단추를 숨기고 ⌘B 도 안 받는다)
   const [side, setSide] = useState(() => { try { return localStorage.getItem('edith.side') !== 'off'; } catch { return true; } });
   const toggleSide = () => setSide(v => { try { localStorage.setItem('edith.side', v ? 'off' : 'on'); } catch { /* 저장 안 됨 */ } return !v; });
   useEffect(() => {
@@ -68,6 +68,7 @@ export default function App() {
     const key = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'b' || e.shiftKey || e.altKey) return;
       if (e.target instanceof Element && e.target.closest('.xterm')) return;
+      if (route().view === 'runs') return;
       e.preventDefault(); toggleSide();
     };
     addEventListener('keydown', key);
@@ -81,7 +82,7 @@ export default function App() {
       {/* relative z-40 — 흐림(backdrop-blur)이 헤더를 따로 쌓아서, 이게 없으면 알림 목록이 아래 칸(z-10·20) 뒤로 들어간다 */}
       <header className={`relative z-40 flex min-h-13 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 backdrop-blur ${remote ? 'bg-violet-500/15' : 'bg-card/80'}`}>
         <button onClick={toggleSide} title={`사이드 메뉴 ${side ? '접기' : '펴기'} (⌘B)`}
-          className={`-ml-1 rounded-lg p-1.5 hover:bg-muted ${side ? 'text-muted-foreground' : 'bg-accent text-accent-foreground'}`}>
+          className={`-ml-1 rounded-lg p-1.5 hover:bg-muted ${side ? 'text-muted-foreground' : 'bg-accent text-accent-foreground'} ${r.view === 'runs' ? 'invisible' : ''}`}>
           <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.6">
             <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" /><path d="M7.5 3.5v13" />{side && <path d="M4.6 7.5h1M4.6 10h1M4.6 12.5h1" strokeLinecap="round" />}
           </svg>
@@ -112,7 +113,7 @@ export default function App() {
       {/* 창을 닫으면 보드에 알린다 — 보드가 EDITH 목록을 새로 받아 정리해 보관한 카드를 바로 뺀다 */}
       {clean && board && <CleanSheet ids={clean.ids} title={clean.title} onClose={() => { setClean(null); boardFrame.current?.contentWindow?.postMessage({ type: 'gada-deploy:refresh' }, new URL(board).origin); }} />}
       {/* 「배포」 — view 를 받기 전엔 비워 둔다(옛 배포 화면이 잠깐 비쳤다가 보드로 바뀌지 않게) */}
-      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} side={side} />}</Suspense> : r.view === 'settings' ? (r.id ? <EngineSettingsPage key={r.id} id={r.id} /> : <SettingsPage theme={theme} setTheme={setTheme} />) : r.view === 'deploy' ? (view && !board ? <DeployPage /> : null) : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
+      {r.view === 'skills' ? <SkillsPage id={r.id} side={side} /> : r.view === 'workshop' || r.view === 'runs' ? <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">불러오는 중…</p>}>{r.view === 'workshop' ? <WorkshopPage id={r.id} side={side} /> : <RunsPage id={r.id} />}</Suspense> : r.view === 'settings' ? (r.id ? <EngineSettingsPage key={r.id} id={r.id} /> : <SettingsPage theme={theme} setTheme={setTheme} />) : r.view === 'deploy' ? (view && !board ? <DeployPage /> : null) : r.view === 'today' ? <TodayPage /> : <HerdrPage pane={r.id} side={side} brand={APP_NAME} />}
     </div>
   );
 }
