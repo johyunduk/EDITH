@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { boardUrl, refuse } from './server.ts';
+import { boardUrl, editorUrl, refuse } from './server.ts';
 import { prune } from './uploads.ts';
 
 test('배포 탭에 띄울 화면 주소는 이 기기 루프백 http 한 줄만 — 바깥 주소 · https · 경로 · 여러 줄은 버린다', () => {
@@ -11,6 +11,12 @@ test('배포 탭에 띄울 화면 주소는 이 기기 루프백 http 한 줄만
   assert.equal(boardUrl('http://localhost:4330/'), 'http://localhost:4330/');
   for (const bad of ['http://example.com:4330', 'https://127.0.0.1:4330', 'http://127.0.0.1:4330/x', 'http://127.0.0.1', 'http://127.0.0.1:4330\nhttp://example.com', 'javascript:alert(1)', ''])
     assert.equal(boardUrl(bad), undefined, bad);
+});
+
+test('런 「에디터로 열기」 주소 꼴은 {id} 가 든 앱 주소 한 줄만 — 웹 · 파일 · 스크립트 주소와 여러 줄은 버린다', () => {
+  assert.equal(editorUrl('myeditor://run/{id}\n'), 'myeditor://run/{id}');
+  for (const bad of ['myeditor://run/80', 'https://example.com/{id}', 'HTTP://x/{id}', 'javascript://%0aalert(1)/{id}', 'file:///tmp/{id}', 'myeditor://run/{id}\nhttps://x/{id}', 'myeditor:run/{id}', ''])
+    assert.equal(editorUrl(bad), undefined, bad);
 });
 
 const KEY = 'k'.repeat(32);

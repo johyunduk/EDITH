@@ -226,6 +226,7 @@ Claude Code 에는 세션끼리 주고받는 `SendMessage`(대상은 `ListAgents
 | `~/.config/edith/console.key` | 화면 열쇠 |
 | `~/.config/edith/machines.json` | 다른 기기 목록(이름 → SSH 대상) — 직접 만든다 |
 | `~/.config/edith/runs.json` | 런 동시 수(설정 화면) |
+| `~/.config/edith/run-editor` | 런 화면 「에디터로 열기」 단추가 부를 앱 주소 꼴 한 줄(예: `myeditor://run/{id}`, `{id}` 는 런 번호) — 직접 만든다, 없으면 단추가 없다 |
 | `~/.local/share/edith/workshop/` | 공방 — 엔진·체인 폴더(`engine.json`·`actions.json`) |
 | `~/.local/share/edith/workshop-runs/` | 런 — 번호마다 엔진 사본·작업 문서(`work/`)·로그 |
 | `~/.local/share/edith/requests/` | 받은 요청과 답(`<id>.json`·`<id>.answer.json`) |

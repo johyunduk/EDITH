@@ -99,6 +99,14 @@ export function consoleKey() {
 // iframe 에 넣는 주소라 이 기기 루프백 http 만 받는다 — 바깥 주소를 적어도 EDITH 안에 남의 화면을 띄우지 않게
 export const boardUrl = (text: string) => { const u = text.trim(); return /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}\/?$/.test(u) ? u : undefined; };
 const deployBoardUrl = () => { try { return boardUrl(readFileSync(join(CONFIG_DIR, 'deploy-board'), 'utf8')); } catch { return undefined; } };
+// 런 화면 「에디터로 열기」 — CONFIG_DIR/run-editor 파일의 앱 주소 꼴 한 줄(예: myeditor://run/{id}, {id} 는 런 번호로 바뀐다). 없으면 단추가 없다
+// 이 기기 앱을 부르는 주소만 — 웹 · 파일 · 스크립트 주소는 화면 링크로 넣지 않는다
+const WEB_SCHEMES = new Set(['http', 'https', 'file', 'javascript', 'data', 'vbscript', 'blob', 'about', 'ftp', 'ws', 'wss']);
+export const editorUrl = (text: string) => {
+  const u = text.trim(), m = u.match(/^([a-z][a-z0-9+.-]*):\/\/\S*$/i);
+  return m && u.includes('{id}') && !WEB_SCHEMES.has(m[1].toLowerCase()) ? u : undefined;
+};
+const runEditorUrl = () => { try { return editorUrl(readFileSync(join(CONFIG_DIR, 'run-editor'), 'utf8')); } catch { return undefined; } };
 const same = (a: string | undefined, b: string) => !!a && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 // 열쇠 쿠키는 포트마다 따로(edith-<포트>) — 같은 127.0.0.1 에 이 기기 EDITH 와 터널로 연 다른 기기 EDITH 가 포트만 달리 뜨면 쿠키가 겹친다
 const cookieKey = (req: Pick<IncomingMessage, 'headers'>, port: string) => req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)edith-${port}=([^;]+)`))?.[1];
@@ -407,7 +415,7 @@ export function serve(port: number) {
       if (req.method === 'POST' && path === '/api/upload') return reply(res, 200, { path: upload(await body(req, UPLOAD_MAX * 1.4) as Record<string, unknown>) });
       if (path === '/api/herdr') return reply(res, 200, await withPush(await snapshot()));   // 승인 대기 pane 은 main 푸시인지(push)도
       // 이 화면을 어디서 보는지 — 들어온 포트가 이 서버 포트와 다르면 다른 기기가 SSH 터널로 연 것(machines.ts)
-      if (path === '/api/view') { const board = deployBoardUrl(); return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot, stale: stale(), web: webBuilt(), restart: canRestart, ...(board ? { board } : {}) }); }
+      if (path === '/api/view') { const board = deployBoardUrl(), editor = runEditorUrl(); return reply(res, 200, { remote: hp !== String(port), host: machineName, version: VERSION, shot: canShoot, stale: stale(), web: webBuilt(), restart: canRestart, ...(board ? { board } : {}), ...(editor ? { editor } : {}) }); }
       if (req.method === 'POST' && path === '/api/restart') {
         if (!canRestart) return reply(res, 409, '여기서는 다시 켤 수 없다 — 터미널에서 Ctrl+C 뒤 edith');
         reply(res, 200, { ok: true });

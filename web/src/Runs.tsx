@@ -3,7 +3,7 @@
 // 런 이름은 「티켓 [안건] 짧은 제목」(받은 요청 · 배포 목록 · 엔진 요약에서)을 크게, 「#번호 엔진 이름」 은 그 위에 작게.
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { get, post, useHerdr } from './api.ts';
+import { get, post, useHerdr, useView } from './api.ts';
 import { Button } from '@/components/ui/button';
 import { AgentPane } from './AgentPane.tsx';
 import { Empty, Icon, Md, Tag } from './ui.tsx';
@@ -550,6 +550,8 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
   };
   // 끝난 런의 워크스페이스가 아직 열려 있으면 「워크스페이스 닫기」 — 배포 「정리」 로 이어지지 않는 런도 치우게(src/cleanup.ts closeRunSpaces)
   const herdr = useHerdr(), mine = [r.pane, ...Object.values(r.panes ?? {}).map(o => o.pane)];
+  // 「에디터로 열기」 — 설정 run-editor 의 앱 주소. 다른 기기 EDITH 를 볼 때는 그 런 폴더가 이 기기에 없어서 뺀다
+  const site = useView().data, editor = site?.editor && !site.remote ? site.editor.replaceAll('{id}', String(r.id)) : null;
   const spacesOpen = ended(r.state) && !!herdr.data?.panes.some(p => mine.includes(p.id));
   const closeSpaces = async () => {
     setBusy(true);
@@ -579,6 +581,7 @@ function RunDetail({ r, out }: { r: Run; out?: number }) {
               <svg viewBox="0 0 24 24" fill="currentColor" className="size-3.5 shrink-0" aria-hidden><path d={NOTION} /></svg>노션
             </a>
           )}
+          {editor && <Button asChild size="sm" variant="outline" className="h-7 text-xs"><a href={editor} title="이 런이 고친 저장소를 에디터로 연다(설정 run-editor)">에디터로 열기</a></Button>}
           <span role="group" aria-label="보기" className="flex rounded-md border bg-card p-0.5">
             {VIEWS.filter(([v]) => v !== 'summary' || hasSummary).map(([v, label]) => (
               <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
